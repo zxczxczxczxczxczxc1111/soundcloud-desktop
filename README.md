@@ -18,11 +18,7 @@
 </div>
 
 <p align="center">
-  <picture>
-    <source media="(prefers-color-scheme: dark)" srcset="assets/preview/soundcloud-preview-dark.webp">
-    <source media="(prefers-color-scheme: light)" srcset="assets/preview/soundcloud-preview-light.webp">
-    <img src="assets/preview/soundcloud-preview-dark.webp" width="900" alt="Окно клиента со страницей SoundCloud">
-  </picture>
+  <img src="assets/preview/soundcloud-preview-dark.webp" width="900" alt="Окно клиента со страницей SoundCloud">
 </p>
 
 ## Моя волна
