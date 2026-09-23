@@ -57,6 +57,7 @@ export class NotificationManager {
                 ...(isMac ? { spellcheck: false } : {}),
             },
         });
+        this.view.setBackgroundColor('#00000000');
         return this.view;
     }
 

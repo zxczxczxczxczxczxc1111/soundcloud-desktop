@@ -79,6 +79,7 @@ export class SettingsManager {
                 spellcheck: false,
             },
         });
+        this.view.setBackgroundColor('#00000000');
         trustLocalFile(this.view.webContents, join(__dirname, 'settings.html'));
         this.parentWindow.contentView.addChildView(this.view);
         this.updateBounds();

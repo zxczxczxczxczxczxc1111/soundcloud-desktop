@@ -18,6 +18,7 @@ vi.mock('electron', () => ({
             mocks.created();
         }
         setBounds() {}
+        setBackgroundColor() {}
     },
     ipcMain: {
         handle: mocks.handle,

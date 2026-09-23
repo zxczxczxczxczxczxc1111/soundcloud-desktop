@@ -46,6 +46,7 @@ export async function showHomepageConfirmDialog(mainWindow: BrowserWindow, url: 
         },
     });
 
+    confirmPopupView.setBackgroundColor('#00000000');
     mainWindow.contentView.addChildView(confirmPopupView);
     updateHomepageConfirmBounds(mainWindow);
 
