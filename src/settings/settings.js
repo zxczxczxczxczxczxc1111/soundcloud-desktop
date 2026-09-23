@@ -351,6 +351,11 @@ async function initializeSettings() {
         ipcRenderer.send('setting-changed', { key: 'displayWhenIdling', value: e.target.checked });
     });
 
+    document.getElementById('displayGithubLink')?.addEventListener('change', (e) => {
+        ipcRenderer.send('setting-changed', { key: 'displayGithubLink', value: e.target.checked });
+        ipcRenderer.invoke('get-current-track').then(updatePreview).catch(console.error);
+    });
+
     document.getElementById('displaySCSmallIcon')?.addEventListener('change', (e) => {
         ipcRenderer.send('setting-changed', { key: 'displaySCSmallIcon', value: e.target.checked });
     });
@@ -421,6 +426,33 @@ async function initializeSettings() {
         return el;
     }
 
+    function appendSmallBadge(imageWrap, options) {
+        if (options.displaySCSmallIcon || options.displayGithubLink) {
+            const smallIcon = document.createElement('div');
+            smallIcon.className = 'small-icon-preview';
+            const icon = document.createElement('img');
+            icon.src = options.displayGithubLink
+                ? 'https://github.githubassets.com/images/modules/logos_page/GitHub-Mark.png'
+                : 'https://cdn.discordapp.com/app-assets/1090770350251458592/1090771481627197580.png?size=160';
+            icon.alt = options.displayGithubLink ? 'GitHub' : 'SoundCloud';
+            if (options.displayGithubLink) {
+                smallIcon.title = 'SoundCloud Desktop на GitHub';
+                smallIcon.style.cursor = 'pointer';
+                smallIcon.setAttribute('role', 'link');
+                smallIcon.tabIndex = 0;
+                const openRepository = () => shell.openExternal('https://github.com/zxczxczxczxczxczxc1111/soundcloud-desktop');
+                smallIcon.addEventListener('click', openRepository);
+                smallIcon.addEventListener('keydown', event => { if (event.key === 'Enter') openRepository(); });
+            }
+            icon.style.width = '16px';
+            icon.style.height = '16px';
+            icon.style.borderRadius = '50%';
+            smallIcon.appendChild(icon);
+            imageWrap.appendChild(smallIcon);
+        }
+
+    }
+
     function createPlayingPreview(trackInfo, options) {
         const fragment = document.createDocumentFragment();
         fragment.appendChild(createTextElement('activity-header-preview', 'Listening to SoundCloud'));
@@ -447,18 +479,7 @@ async function initializeSettings() {
             imageWrap.appendChild(img);
         }
 
-        if (options.displaySCSmallIcon) {
-            const smallIcon = document.createElement('div');
-            smallIcon.className = 'small-icon-preview';
-            const icon = document.createElement('img');
-            icon.src = 'https://cdn.discordapp.com/app-assets/1090770350251458592/1090771481627197580.png?size=160';
-            icon.alt = 'SoundCloud';
-            icon.style.width = '16px';
-            icon.style.height = '16px';
-            icon.style.borderRadius = '50%';
-            smallIcon.appendChild(icon);
-            imageWrap.appendChild(smallIcon);
-        }
+        appendSmallBadge(imageWrap, options);
 
         const details = document.createElement('div');
         details.className = 'activity-details-preview';
@@ -523,6 +544,7 @@ async function initializeSettings() {
 
         const imageWrap = document.createElement('div');
         imageWrap.className = 'activity-image-preview';
+        appendSmallBadge(imageWrap, options);
         const details = document.createElement('div');
         details.className = 'activity-details-preview';
         details.appendChild(createTextElement('activity-details-text-preview', 'Paused'));
@@ -540,6 +562,7 @@ async function initializeSettings() {
         const displayWhenIdling = document.getElementById('displayWhenIdling')?.checked || false;
         const displaySCSmallIcon = document.getElementById('displaySCSmallIcon')?.checked || false;
         const displayButtons = document.getElementById('displayButtons')?.checked || false;
+        const displayGithubLink = document.getElementById('displayGithubLink')?.checked || false;
 
         if (!trackInfo || (!trackInfo.isPlaying && !displayWhenIdling)) {
             if (noActivity) noActivity.style.display = 'block';
@@ -561,13 +584,14 @@ async function initializeSettings() {
             activityContent.appendChild(
                 createPlayingPreview(trackInfo, {
                     displaySCSmallIcon,
+                    displayGithubLink,
                     displayButtons,
                     inlineRow: true,
                 }),
             );
             startProgressUpdate(trackInfo);
         } else if (displayWhenIdling) {
-            activityContent.appendChild(createPausedPreview({ inlineRow: false }));
+            activityContent.appendChild(createPausedPreview({ inlineRow: false, displayGithubLink, displaySCSmallIcon }));
         }
 
         if (activitySection) activitySection.appendChild(activityContent);

@@ -3,7 +3,7 @@ import { join, resolve } from 'path';
 
 const events = new Set(['session.start', 'session.end', 'performance', 'runtime.error', 'runtime.warn', 'renderer.gone', 'renderer.unresponsive', 'renderer.responsive', 'page.loaded', 'page.load-failed', 'system.suspend', 'system.resume', 'gpu.status', 'process.gone']);
 const numbers = new Set(['cpuPercent', 'workingSetMiB', 'privateMiB', 'processes', 'loopP95Ms', 'loopMaxMs', 'updates', 'trackChanges', 'sinceUpdateMs', 'sinceProgressMs', 'exitCode', 'errorCode', 'line', 'droppedEvents', 'uptimeSeconds']);
-const flags = new Set(['playing', 'hasTrack', 'windowVisible', 'windowMinimized', 'settingsOpen', 'previousUnclean', 'adblock', 'proxy', 'dirty']);
+const flags = new Set(['playing', 'hasTrack', 'windowVisible', 'windowMinimized', 'settingsOpen', 'previousUnclean', 'adblock', 'proxy', 'dirty', 'discord', 'githubBadge']);
 const reasons = new Set(['clean-exit', 'abnormal-exit', 'killed', 'crashed', 'oom', 'launch-failed', 'integrity-failure', 'memory-eviction']);
 const errorTypes = new Set(['Error', 'TypeError', 'RangeError', 'ReferenceError', 'SyntaxError', 'URIError', 'AggregateError']);
 const sourceFiles = new Set(['main', 'presenceService', 'proxyService', 'adblockService', 'webhookService', 'pluginService', 'pluginProcess', 'themeService', 'settingsManager', 'notificationManager', 'rendererRecovery', 'playbackController', 'viewStyles', 'gpu', 'utility', 'process']);

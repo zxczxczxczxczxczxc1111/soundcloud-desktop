@@ -30,7 +30,7 @@ vi.mock('@xhayper/discord-rpc', () => ({
         }
     },
 }));
-import { PresenceService, PRESENCE_INTERVAL_MS } from './presenceService';
+import { PresenceService, PRESENCE_INTERVAL_MS, GITHUB_ICON_URL, GITHUB_REPOSITORY_URL } from './presenceService';
 
 const track: TrackInfo = {
     title: 'First',
@@ -44,6 +44,7 @@ const track: TrackInfo = {
 };
 let service: PresenceService;
 let enabled: boolean;
+let githubEnabled: boolean;
 beforeEach(() => {
     vi.useFakeTimers();
     vi.setSystemTime(100000);
@@ -53,8 +54,9 @@ beforeEach(() => {
     mocks.setActivity.mockResolvedValue(undefined);
     mocks.destroy.mockResolvedValue(undefined);
     enabled = true;
+    githubEnabled = true;
     service = new PresenceService(
-        { get: (key, fallback) => (key === 'discordRichPresence' ? enabled : fallback) },
+        { get: (key, fallback) => (key === 'discordRichPresence' ? enabled : key === 'displayGithubLink' ? githubEnabled : fallback) },
         new TranslationService(),
     );
 });
@@ -132,4 +134,22 @@ describe('Discord presence', () => {
         expect(mocks.login).not.toHaveBeenCalled();
         expect(vi.getTimerCount()).toBe(0);
     });
+});
+
+it('shows a clickable GitHub badge and removes its URL when disabled', async () => {
+    await service.updatePresence(track);
+    expect(mocks.setActivity).toHaveBeenLastCalledWith(expect.objectContaining({ smallImageKey: GITHUB_ICON_URL, smallImageUrl: GITHUB_REPOSITORY_URL }));
+    githubEnabled = false;
+    service.updateDisplaySettings(false, true);
+    await vi.advanceTimersByTimeAsync(PRESENCE_INTERVAL_MS);
+    const activity = mocks.setActivity.mock.calls[mocks.setActivity.mock.calls.length - 1][0];
+    expect(activity.smallImageKey).toBe('soundcloud-logo');
+    expect(activity.smallImageUrl).toBeUndefined();
+});
+
+it('does not lose the first track immediately after changing settings', async () => {
+    service.updateDisplaySettings(false, true);
+    await service.updatePresence(track);
+    await vi.advanceTimersByTimeAsync(0);
+    expect(mocks.setActivity).toHaveBeenCalledTimes(1);
 });

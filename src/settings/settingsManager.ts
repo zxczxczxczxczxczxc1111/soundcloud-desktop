@@ -24,6 +24,7 @@ const defaults: Record<string, string | number | boolean> = {
     discordRichPresence: true,
     displayWhenIdling: false,
     displaySCSmallIcon: false,
+    displayGithubLink: true,
     displayButtons: false,
     statusDisplayType: 1,
     richPresencePreviewEnabled: false,
@@ -45,7 +46,9 @@ export class SettingsManager {
             view.setVisible(true);
             view.webContents.focus();
             return view.webContents.executeJavaScript("requestAnimationFrame(() => requestAnimationFrame(() => document.body.classList.add('visible')))");
-        }).catch(console.error);
+        }).catch((error: unknown) => {
+            if (this.view === view && !view.webContents.isDestroyed()) console.error('Не удалось показать настройки:', error);
+        });
     };
 
     constructor(

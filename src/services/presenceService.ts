@@ -8,6 +8,8 @@ interface Settings {
     get(key: string, fallback?: unknown): unknown;
 }
 export const PRESENCE_INTERVAL_MS = 5000;
+export const GITHUB_REPOSITORY_URL = 'https://github.com/zxczxczxczxczxczxc1111/soundcloud-desktop';
+export const GITHUB_ICON_URL = 'https://github.githubassets.com/images/modules/logos_page/GitHub-Mark.png';
 
 function seconds(value: string): number {
     const parts = value.trim().replace(/^-/, '').split(':').map(Number);
@@ -57,6 +59,12 @@ export class PresenceService {
         }, delay);
         this.timer.unref?.();
     }
+    private smallBadge(): Pick<SetActivity, 'smallImageKey' | 'smallImageText' | 'smallImageUrl'> {
+        if (this.store.get('displayGithubLink', true) === true) {
+            return { smallImageKey: GITHUB_ICON_URL, smallImageText: 'SoundCloud Desktop на GitHub', smallImageUrl: GITHUB_REPOSITORY_URL };
+        }
+        return { smallImageKey: this.displaySCSmallIcon ? 'soundcloud-logo' : undefined, smallImageText: this.displaySCSmallIcon ? 'SoundCloud' : undefined };
+    }
     private activity(): SetActivity | null {
         if (this.store.get('discordRichPresence') !== true || !this.latest) return null;
         const { track, observedAt } = this.latest;
@@ -67,6 +75,7 @@ export class PresenceService {
                       details: 'Listening to SoundCloud',
                       state: 'Paused',
                       largeImageKey: 'idling',
+                      ...this.smallBadge(),
                   }
                 : null;
         if (!track.title || !track.author) return null;
@@ -88,8 +97,7 @@ export class PresenceService {
             largeImageKey: track.artwork ? track.artwork.replace('50x50.', '500x500.') : undefined,
             startTimestamp,
             endTimestamp: startTimestamp + duration * 1000,
-            smallImageKey: this.displaySCSmallIcon ? 'soundcloud-logo' : undefined,
-            smallImageText: this.displaySCSmallIcon ? 'SoundCloud' : undefined,
+            ...this.smallBadge(),
             statusDisplayType: this.statusDisplayType,
             buttons:
                 this.displayButtons && track.url
@@ -105,11 +113,13 @@ export class PresenceService {
             this.schedule(delay);
             return;
         }
+        const revision = this.revision;
         this.running = this.send();
         try {
             await this.running;
         } finally {
             this.running = null;
+            if (revision !== this.revision && !this.timer && this.activity()) this.schedule(0);
         }
     }
     private async send(): Promise<void> {

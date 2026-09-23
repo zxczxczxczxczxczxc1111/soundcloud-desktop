@@ -76,6 +76,7 @@ const store = new Store<Record<string, unknown>>({
         webhookTriggerPercentage: 50,
         displayWhenIdling: false,
         displaySCSmallIcon: false,
+        displayGithubLink: true,
         discordRichPresence: true,
         displayButtons: false,
         statusDisplayType: 1,
@@ -585,6 +586,7 @@ async function init() {
             hasTrack: !!lastTrackInfo.title, windowVisible: !!mainWindow && !mainWindow.isDestroyed() && mainWindow.isVisible(),
             windowMinimized: !!mainWindow && !mainWindow.isDestroyed() && mainWindow.isMinimized(), settingsOpen: !!settingsManager?.getView(),
             adblock: store.get('adBlocker') === true, proxy: store.get('proxyEnabled') === true,
+            discord: store.get('discordRichPresence') === true, githubBadge: store.get('displayGithubLink', true) === true,
             droppedEvents: diagnostics.droppedEvents,
         });
         loopDelay.reset();
@@ -941,6 +943,8 @@ async function init() {
             presenceService.updateDisplaySettings(displayWhenIdling, displaySCSmallIcon);
         } else if (key === 'displaySCSmallIcon') {
             displaySCSmallIcon = data.value;
+            presenceService.updateDisplaySettings(displayWhenIdling, displaySCSmallIcon);
+        } else if (key === 'displayGithubLink') {
             presenceService.updateDisplaySettings(displayWhenIdling, displaySCSmallIcon);
         } else if (key === 'displayButtons') {
             presenceService.updateDisplaySettings(displayWhenIdling, displaySCSmallIcon, data.value);
