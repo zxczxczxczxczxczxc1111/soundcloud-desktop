@@ -20,6 +20,17 @@ function label(value: string): string {
     const chars = Array.from(value);
     return (chars.length > 128 ? chars.slice(0, 125).join('') + '...' : value).padEnd(2, ' ');
 }
+// Ссылки для кликабельных полей: только страницы SoundCloud.
+function soundcloudLink(value: string): string | undefined {
+    try {
+        const url = new URL(value);
+        return url.protocol === 'https:' && (url.hostname === 'soundcloud.com' || url.hostname.endsWith('.soundcloud.com'))
+            ? url.toString()
+            : undefined;
+    } catch {
+        return undefined;
+    }
+}
 
 export class PresenceService {
     private rpc: DiscordClient | null = null;
@@ -31,7 +42,6 @@ export class PresenceService {
     private lastSentAt = -Infinity;
     private lastPayload: string | null = null;
     private retryMs = 2000;
-    private displayWhenIdling: boolean;
     private displaySCSmallIcon: boolean;
     private displayButtons: boolean;
     private statusDisplayType: number;
@@ -40,10 +50,9 @@ export class PresenceService {
         private store: Settings,
         private translationService: Pick<TranslationService, 'translate'>,
     ) {
-        this.displayWhenIdling = store.get('displayWhenIdling', false) === true;
         this.displaySCSmallIcon = store.get('displaySCSmallIcon', false) === true;
         this.displayButtons = store.get('displayButtons', false) === true;
-        this.statusDisplayType = Number(store.get('statusDisplayType', 1));
+        this.statusDisplayType = Number(store.get('statusDisplayType', 0));
     }
     public async updatePresence(track: TrackInfo): Promise<void> {
         if (this.disposed) return;
@@ -68,17 +77,8 @@ export class PresenceService {
     private activity(): SetActivity | null {
         if (this.store.get('discordRichPresence') !== true || !this.latest) return null;
         const { track, observedAt } = this.latest;
-        if (!track.isPlaying)
-            return this.displayWhenIdling
-                ? {
-                      type: ActivityType.Listening,
-                      details: 'Listening to SoundCloud',
-                      state: 'Paused',
-                      largeImageKey: 'idling',
-                      ...this.smallBadge(),
-                  }
-                : null;
-        if (!track.title || !track.author) return null;
+        // На паузе статус не транслируется.
+        if (!track.isPlaying || !track.title || !track.author) return null;
         const elapsed = Math.max(0, seconds(track.elapsed));
         const rawDuration = seconds(track.duration);
         const duration = rawDuration < 0 ? elapsed - rawDuration : rawDuration;
@@ -89,12 +89,16 @@ export class PresenceService {
             this.store.get('trackParserEnabled', true) === true,
         );
         const startTimestamp = observedAt - elapsed * 1000;
+        const trackUrl = soundcloudLink(track.url);
         return {
             type: ActivityType.Listening,
             name: this.statusDisplayType === 1 ? normalized.artist : 'SoundCloud',
             details: label(normalized.track),
+            detailsUrl: trackUrl,
             state: label(normalized.artist),
+            stateUrl: soundcloudLink(track.artistUrl),
             largeImageKey: track.artwork ? track.artwork.replace('50x50.', '500x500.') : undefined,
+            largeImageUrl: trackUrl,
             startTimestamp,
             endTimestamp: startTimestamp + duration * 1000,
             ...this.smallBadge(),
@@ -161,8 +165,7 @@ export class PresenceService {
             }
         }
     }
-    public updateDisplaySettings(idling: boolean, smallIcon: boolean, buttons?: boolean): void {
-        this.displayWhenIdling = idling;
+    public updateDisplaySettings(smallIcon: boolean, buttons?: boolean): void {
         this.displaySCSmallIcon = smallIcon;
         if (buttons !== undefined) this.displayButtons = buttons;
         this.revision++;

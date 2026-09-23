@@ -23,7 +23,6 @@
     "webhookTrigger": "Disparar em",
     "webhookDescription": "Enviar dados da faixa para uma URL de webhook quando a reprodução atingir a porcentagem especificada",
     "enableRichPresence": "Ativar Rich Presence",
-    "displayWhenPaused": "Mostrar quando pausado",
     "displaySmallIcon": "Mostrar ícone pequeno",
     "displayButtons": "Exibir botões",
     "useArtistInStatusLine": "Usar nome do artista em vez do nome do aplicativo",

@@ -23,7 +23,6 @@
     "webhookTrigger": "Trigger at",
     "webhookDescription": "Send track data to a webhook URL when playback reaches the specified percentage",
     "enableRichPresence": "Enable Rich Presence",
-    "displayWhenPaused": "Display when paused",
     "displaySmallIcon": "Display small icon",
     "displayButtons": "Display buttons",
     "useArtistInStatusLine": "Display artist name instead of application name",

@@ -22,6 +22,8 @@ export interface TrackInfo {
     isLiked: boolean;
     /** SoundCloud URL of the track */
     url: string;
+    /** SoundCloud URL of the artist profile */
+    artistUrl: string;
 }
 
 /**
@@ -89,7 +91,6 @@ export interface Translations {
     webhookDescription: string;
     showWebhookExample: string;
     enableRichPresence: string;
-    displayWhenPaused: string;
     displaySmallIcon: string;
     displayButtons: string;
     useArtistInStatusLine: string;

@@ -41,6 +41,7 @@ const track: TrackInfo = {
     isPlaying: true,
     isLiked: false,
     url: 'https://soundcloud.com/artist/first',
+    artistUrl: 'https://soundcloud.com/artist',
 };
 let service: PresenceService;
 let enabled: boolean;
@@ -140,7 +141,7 @@ it('shows a clickable GitHub badge and removes its URL when disabled', async () 
     await service.updatePresence(track);
     expect(mocks.setActivity).toHaveBeenLastCalledWith(expect.objectContaining({ smallImageKey: GITHUB_ICON_URL, smallImageUrl: GITHUB_REPOSITORY_URL }));
     githubEnabled = false;
-    service.updateDisplaySettings(false, true);
+    service.updateDisplaySettings(true);
     await vi.advanceTimersByTimeAsync(PRESENCE_INTERVAL_MS);
     const activity = mocks.setActivity.mock.calls[mocks.setActivity.mock.calls.length - 1][0];
     expect(activity.smallImageKey).toBe('soundcloud-logo');
@@ -148,8 +149,37 @@ it('shows a clickable GitHub badge and removes its URL when disabled', async () 
 });
 
 it('does not lose the first track immediately after changing settings', async () => {
-    service.updateDisplaySettings(false, true);
+    service.updateDisplaySettings(true);
     await service.updatePresence(track);
     await vi.advanceTimersByTimeAsync(0);
+    expect(mocks.setActivity).toHaveBeenCalledTimes(1);
+});
+
+it('по умолчанию показывает SoundCloud и делает трек, артиста и обложку кликабельными', async () => {
+    await service.updatePresence(track);
+    expect(mocks.setActivity).toHaveBeenLastCalledWith(
+        expect.objectContaining({
+            name: 'SoundCloud',
+            statusDisplayType: 0,
+            detailsUrl: 'https://soundcloud.com/artist/first',
+            stateUrl: 'https://soundcloud.com/artist',
+            largeImageUrl: 'https://soundcloud.com/artist/first',
+        }),
+    );
+});
+
+it('не отправляет ссылки не на SoundCloud', async () => {
+    await service.updatePresence({ ...track, url: 'https://example.com/first', artistUrl: 'https://example.com/artist' });
+    const activity = mocks.setActivity.mock.calls[mocks.setActivity.mock.calls.length - 1][0];
+    expect(activity.detailsUrl).toBeUndefined();
+    expect(activity.stateUrl).toBeUndefined();
+    expect(activity.largeImageUrl).toBeUndefined();
+});
+
+it('на паузе убирает статус', async () => {
+    await service.updatePresence(track);
+    await vi.advanceTimersByTimeAsync(PRESENCE_INTERVAL_MS);
+    await service.updatePresence({ ...track, isPlaying: false });
+    expect(mocks.clearActivity).toHaveBeenCalledTimes(1);
     expect(mocks.setActivity).toHaveBeenCalledTimes(1);
 });

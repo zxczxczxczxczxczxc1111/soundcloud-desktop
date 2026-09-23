@@ -156,6 +156,7 @@ describe('validateTrackInfo', () => {
             isPlaying: true,
             isLiked: true,
             url: 'https://soundcloud.com/artist/my-track',
+            artistUrl: 'https://soundcloud.com/artist',
         };
 
         const result = validateTrackInfo(input);
@@ -221,6 +222,7 @@ describe('validateTrackInfo', () => {
             isPlaying: false,
             isLiked: false,
             url: '',
+            artistUrl: '',
         });
     });
 

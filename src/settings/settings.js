@@ -1,3 +1,6 @@
+// Тёмный значок SoundCloud для предпросмотра статуса, тот же, что загружен в Discord.
+const SOUNDCLOUD_BADGE = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAEAAAABACAIAAAAlC+aJAAAFIUlEQVR42u2aO4sUWxCAq04/pl+z06PICuOO+EJMVBAWFUQwMFD8CRqIroEmC8IGCgqLYDKKyQYamhiogaJgaCKmKmykiAiLyTrTz9Ovc84NijvB5eL07l6vCl3B0D00feqrdw2DmzZtgj9ZGPzh0gA0AA1AA9AANAANQAPQADQADUAD0AA0AOsU/WcfgIiapimlpJQAwBhDRCkl3f7uAIyxPM+TJGGMtVotRMzzXAjhOI5t21JKpdRvCsAYA4A0Tfv9/unTp48cOTIzM8MYW1lZefv27fPnz5eXlzudjqZpG3QF/ozfhZRSRVEIIY4fP/7o0SPf9//xQBzHDx48uHXrVp7ntm0LIX5xEiulKBg0TQMA0zSPHTuWZdnRo0d938+yTAhBcS+EqKrK87z5+fmXL19u3ryZc07u+gUAiMgYU0ppmqbrulIqDMMkSbZu3bq0tGTbdpqmSild1zVNY4wxxsZPlmU5Ozv75MkT0zSFEIj4fwMgYlVVnPMgCK5cuXL58uUgCC5dutTv9xljvu9bliWl/FfNENEwjLIsDx06dP369SAINE1bHwNbq9J0DCJmWbZz586bN29KKffv3793714p5Y0bNw4cOKCU8n3fcZyqqn5UQHRdSjk3N7dnzx7yFbnoZwEgYlEURVEgoq7reZ7v2rXr/PnziNjpdGzb1jTNdV2yPSI6jvPj7EREpZTruidPnkzT1LKsOI6/f/8+NtN/BkDNqCzLbdu29Xq9sizTNK2qqt1u27btuu7U1JTnee12u9VqdTqdVqsFAHXKC6XQwsLC+/fv37x58+LFi4sXL+Z5XlVVzczWa8Z6VVVJkty7d68sy7m5ufv379++fds0Tdu2p6ambNvO89x1XQBwXdeyLAKYWOPJ0r1er9frAcD27dtPnDhx5syZc+fOVVVFLXxDHkBEzvnu3bsXFxcBYMeOHf1+3zCMCxcu7Nu3j+LV8zzTNE3TdBwHACzLMk2TLmo2KRo0qMgWRXHq1KnBYBDHcR0nsIku5pzPzs7Oz893u13f97vd7pYtWwBgenqaFHUch5LPMAwAMAxD13W6qDkpUDkev0QIcfbs2YMHD9IMslEPKKWmp6eVUjMzM7quO47j+z4idrtdCgDTNMcajMe1cXisozrTSw4fPpxl2UYBSMjShmGQonRLnwBQVRUFABVNShgAWPeQQ33d87w6DqyVxGEYAsBoNCJd0zQFgLIsi6KgiU0IUZYl5xwA8jzPsgwAOOfrdgIifv78uU4S6xONgYjfvn2TUq6srGRZlud5EAQ0kJGiYRhyzjnnURQBQJIkSZIQ2DoAhBA0tL5+/drzvIlunAAgpbQs68OHD0tLS5zz4XDIOSdXDIfDsizLshyNRkEQBEEQRVFRFKPRKI5jKWUYhpqmCSHqjzo0OAHA1atXV1dXfd+f2Ekme8C27Y8fP167dg0Avn79WhQF7SjD4VAplf4tcRxTg4uiKEkSKWUQBFRY1jQdrK6uLiwsPH78uI72tXKArEK1ZTAYUN28e/fuly9fAODOnTuGYTx79ixJEtM0B4PB8vJyGIaLi4tSylevXj18+ND3fQrFHx+Upum7d++ePn366dOnbrdbc0lYw0JDsxDVnyiKqG2ladputylfLcuKosiyLE3T4jhut9vUv2leqFl8qJHXX3HWtpGRFWkBGC/plHaUMPQ9PUChv6ZlBRGFEGtalLH5q0ED0AA0AA1AA9AANAANQAPQADQADUAD0AD8mfIX6D7c8Va+XZUAAAAASUVORK5CYII=';
+
 async function initializeSettings() {
     const initial = await window.settingsAPI.invoke('get-settings-state');
     for (const [key, value] of Object.entries(initial)) {
@@ -347,10 +350,6 @@ async function initializeSettings() {
         ipcRenderer.send('setting-changed', { key: 'richPresencePreviewEnabled', value: isEnabled });
     });
 
-    document.getElementById('displayWhenIdling')?.addEventListener('change', (e) => {
-        ipcRenderer.send('setting-changed', { key: 'displayWhenIdling', value: e.target.checked });
-    });
-
     document.getElementById('displayGithubLink')?.addEventListener('change', (e) => {
         ipcRenderer.send('setting-changed', { key: 'displayGithubLink', value: e.target.checked });
         ipcRenderer.invoke('get-current-track').then(updatePreview).catch(console.error);
@@ -433,7 +432,7 @@ async function initializeSettings() {
             const icon = document.createElement('img');
             icon.src = options.displayGithubLink
                 ? 'https://github.githubassets.com/images/modules/logos_page/GitHub-Mark.png'
-                : 'https://cdn.discordapp.com/app-assets/1090770350251458592/1090771481627197580.png?size=160';
+                : SOUNDCLOUD_BADGE;
             icon.alt = options.displayGithubLink ? 'GitHub' : 'SoundCloud';
             if (options.displayGithubLink) {
                 smallIcon.title = 'SoundCloud Desktop на GitHub';
@@ -529,42 +528,16 @@ async function initializeSettings() {
         return fragment;
     }
 
-    function createPausedPreview(options) {
-        const fragment = document.createDocumentFragment();
-        fragment.appendChild(createTextElement('activity-header-preview', 'Using SoundCloud'));
-
-        const row = document.createElement('div');
-        if (options.inlineRow) {
-            row.style.display = 'flex';
-            row.style.alignItems = 'flex-start';
-            row.style.gap = '12px';
-        } else {
-            row.className = 'activity-row-preview';
-        }
-
-        const imageWrap = document.createElement('div');
-        imageWrap.className = 'activity-image-preview';
-        appendSmallBadge(imageWrap, options);
-        const details = document.createElement('div');
-        details.className = 'activity-details-preview';
-        details.appendChild(createTextElement('activity-details-text-preview', 'Paused'));
-        row.appendChild(imageWrap);
-        row.appendChild(details);
-        fragment.appendChild(row);
-        return fragment;
-    }
-
     function updatePreview(trackInfo) {
 
         const activitySection = document.getElementById('activitySectionPreview');
         const noActivity = document.getElementById('noActivityPreview');
 
-        const displayWhenIdling = document.getElementById('displayWhenIdling')?.checked || false;
         const displaySCSmallIcon = document.getElementById('displaySCSmallIcon')?.checked || false;
         const displayButtons = document.getElementById('displayButtons')?.checked || false;
         const displayGithubLink = document.getElementById('displayGithubLink')?.checked || false;
 
-        if (!trackInfo || (!trackInfo.isPlaying && !displayWhenIdling)) {
+        if (!trackInfo || !trackInfo.isPlaying) {
             if (noActivity) noActivity.style.display = 'block';
             const existingContent = activitySection?.querySelector('.activity-content-preview');
             if (existingContent) existingContent.remove();
@@ -580,19 +553,15 @@ async function initializeSettings() {
         const activityContent = document.createElement('div');
         activityContent.className = 'activity-content-preview';
 
-        if (trackInfo.isPlaying) {
-            activityContent.appendChild(
-                createPlayingPreview(trackInfo, {
-                    displaySCSmallIcon,
-                    displayGithubLink,
-                    displayButtons,
-                    inlineRow: true,
-                }),
-            );
-            startProgressUpdate(trackInfo);
-        } else if (displayWhenIdling) {
-            activityContent.appendChild(createPausedPreview({ inlineRow: false, displayGithubLink, displaySCSmallIcon }));
-        }
+        activityContent.appendChild(
+            createPlayingPreview(trackInfo, {
+                displaySCSmallIcon,
+                displayGithubLink,
+                displayButtons,
+                inlineRow: true,
+            }),
+        );
+        startProgressUpdate(trackInfo);
 
         if (activitySection) activitySection.appendChild(activityContent);
     }

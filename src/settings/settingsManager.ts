@@ -22,11 +22,10 @@ const defaults: Record<string, string | number | boolean> = {
     webhookUrl: '',
     webhookTriggerPercentage: 50,
     discordRichPresence: true,
-    displayWhenIdling: false,
     displaySCSmallIcon: false,
     displayGithubLink: true,
     displayButtons: false,
-    statusDisplayType: 1,
+    statusDisplayType: 0,
     richPresencePreviewEnabled: false,
 };
 

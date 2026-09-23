@@ -74,12 +74,11 @@ const store = new Store<Record<string, unknown>>({
         webhookEnabled: false,
         webhookUrl: '',
         webhookTriggerPercentage: 50,
-        displayWhenIdling: false,
         displaySCSmallIcon: false,
         displayGithubLink: true,
         discordRichPresence: true,
         displayButtons: false,
-        statusDisplayType: 1,
+        statusDisplayType: 0,
         theme: 'dark',
         minimizeToTray: false,
         navigationControlsEnabled: false,
@@ -211,7 +210,6 @@ Object.defineProperty(app, 'isQuitting', {
 });
 
 // display settings
-let displayWhenIdling = store.get('displayWhenIdling') as boolean;
 let displaySCSmallIcon = store.get('displaySCSmallIcon') as boolean;
 
 
@@ -389,6 +387,7 @@ let lastTrackInfo: TrackInfo = {
     isPlaying: false,
     isLiked: false,
     url: '',
+    artistUrl: '',
 };
 
 function isTrustedSoundCloudSender(event: IpcMainEvent): boolean {
@@ -858,7 +857,7 @@ async function init() {
         isQuitting: () => isQuitting,
         onCrash: () => {
             presenceService.clearActivity();
-            lastTrackInfo = { title: '', author: '', artwork: '', elapsed: '', duration: '', isPlaying: false, isLiked: false, url: '' };
+            lastTrackInfo = { title: '', author: '', artwork: '', elapsed: '', duration: '', isPlaying: false, isLiked: false, url: '', artistUrl: '' };
         },
         onRepeatedCrash: () => queueToastNotification('Плеер завершился с ошибкой. Нажмите Ctrl+R для повторной загрузки.'),
     });
@@ -938,16 +937,13 @@ async function init() {
 
         console.log(key);
 
-        if (key === 'displayWhenIdling') {
-            displayWhenIdling = data.value;
-            presenceService.updateDisplaySettings(displayWhenIdling, displaySCSmallIcon);
-        } else if (key === 'displaySCSmallIcon') {
+        if (key === 'displaySCSmallIcon') {
             displaySCSmallIcon = data.value;
-            presenceService.updateDisplaySettings(displayWhenIdling, displaySCSmallIcon);
+            presenceService.updateDisplaySettings(displaySCSmallIcon);
         } else if (key === 'displayGithubLink') {
-            presenceService.updateDisplaySettings(displayWhenIdling, displaySCSmallIcon);
+            presenceService.updateDisplaySettings(displaySCSmallIcon);
         } else if (key === 'displayButtons') {
-            presenceService.updateDisplaySettings(displayWhenIdling, displaySCSmallIcon, data.value);
+            presenceService.updateDisplaySettings(displaySCSmallIcon, data.value);
         } else if (key === 'statusDisplayType') {
             presenceService.setStatusDisplayType(data.value as number);
         } else if (key === 'minimizeToTray') {
@@ -1294,7 +1290,6 @@ function setupTranslationHandlers() {
             webhookDescription: translationService.translate('webhookDescription'),
             showWebhookExample: translationService.translate('showWebhookExample'),
             enableRichPresence: translationService.translate('enableRichPresence'),
-            displayWhenPaused: translationService.translate('displayWhenPaused'),
             displaySmallIcon: translationService.translate('displaySmallIcon'),
             displayButtons: translationService.translate('displayButtons'),
             useArtistInStatusLine: translationService.translate('useArtistInStatusLine'),

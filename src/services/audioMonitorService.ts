@@ -35,6 +35,7 @@ export function installAudioMonitor(): void {
         elapsed: '',
         duration: '',
         url: '',
+        artistUrl: '',
         isPlaying: false,
         isLiked: false,
     });
@@ -43,6 +44,7 @@ export function installAudioMonitor(): void {
         const query = (selector: string): Element | null => root?.querySelector(selector) ?? null;
         const artwork = query('.playbackSoundBadge__avatar .image__lightOutline span') as HTMLElement | null;
         const title = query('.playbackSoundBadge__titleLink') as HTMLAnchorElement | null;
+        const artist = query('.playbackSoundBadge__lightLink');
         const metadata = navigator.mediaSession?.metadata;
         const play = query('.playControls__play, .playControl');
         const useMedia = media !== null && Number.isFinite(media.duration) && media.duration > 0;
@@ -53,7 +55,7 @@ export function installAudioMonitor(): void {
                 title?.textContent?.trim() ||
                 metadata?.title ||
                 '',
-            author: query('.playbackSoundBadge__lightLink')?.textContent?.trim() || metadata?.artist || '',
+            author: artist?.textContent?.trim() || metadata?.artist || '',
             artwork:
                 artwork?.style.backgroundImage.replace(/^url\(["']?|["']?\)$/g, '') || metadata?.artwork[0]?.src || '',
             elapsed: useMedia
@@ -63,6 +65,7 @@ export function installAudioMonitor(): void {
                 ? format(media!.duration)
                 : query('.playbackTimeline__duration span:last-child')?.textContent?.trim() || '',
             url: title?.href.split('?')[0] || '',
+            artistUrl: artist instanceof HTMLAnchorElement ? artist.href.split('?')[0] : '',
             isPlaying: play ? play.classList.contains('playing') : useMedia && !media!.paused && !media!.ended,
             isLiked: query('.playbackSoundBadge__like')?.classList.contains('sc-button-selected') ?? false,
         };
