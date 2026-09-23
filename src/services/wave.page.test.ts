@@ -255,6 +255,52 @@ it('ПКМ по артисту: волна от его треков, его тр
     expect(document.querySelector('#sc-wave .scw-hint')?.textContent).toBe('Wave from artist Art');
 });
 
+// Замкнутый круг, как у «Steel Lullaby»: похожие это четыре трека того же артиста, похожие на них снова они же
+const closedCircle = (seed: number): WaveTrack[] =>
+    seed >= 555 && seed < 560 ? [556, 557, 558, 559].filter((id) => id !== seed).map((id): WaveTrack => ({ id, kind: 'track', user_id: 900, duration: 200000, title: 'Circle ' + id })) : [];
+const stationExtra: Extra = (name, path, query) => {
+    if (name === 'resolve' && String(query.url).startsWith('https://soundcloud.com/discover/sets/track-stations:'))
+        return { kind: 'system-playlist', tracks: Array.from({ length: 30 }, (_, i) => ({ id: 7000 + i })) };
+    if (name === 'trackBatch')
+        return String(query.ids).split(',').map((id): WaveTrack => ({ id: Number(id), kind: 'track', user_id: 3000 + (Number(id) % 20), duration: 200000, title: 'Station ' + id }));
+    return siteExtra(name, path, query);
+};
+
+it('волна по треку из замкнутого круга похожих идёт дальше по станции трека', async () => {
+    const site = fakeSite(closedCircle, stationExtra);
+    fakeExclusions();
+    const row = listRow();
+    window.eval(waveScript());
+    await vi.advanceTimersByTimeAsync(100);
+    rightClick(row.querySelector('.soundTitle__title')!);
+    choose('wave-track');
+    await vi.advanceTimersByTimeAsync(100);
+    expect(site.api.callEndpoint).toHaveBeenCalledWith('resolve', {}, { url: 'https://soundcloud.com/discover/sets/track-stations:555' });
+    const queued = site.player.replaceQueue.mock.calls[site.player.replaceQueue.mock.calls.length - 1][0] as FakeItem[];
+    expect(queued[0].sound.id).toBe(555);
+    expect(queued).toHaveLength(11);
+    expect(queued.filter((item) => item.sound.id >= 7000).length).toBeGreaterThan(0);
+});
+
+it('исчерпанная подборка перед последним треком возвращает автоплей сайта', async () => {
+    const few = (seed: number): WaveTrack[] => [0, 1].map((i) => ({ id: seed * 1000 + i, kind: 'track', user_id: seed * 10 + i, duration: 200000, title: 'Few ' + seed + '-' + i }));
+    const site = fakeSite(few);
+    window.eval(waveScript());
+    await vi.advanceTimersByTimeAsync(100);
+    document.querySelector<HTMLButtonElement>('#sc-wave .scw-play')!.click();
+    await vi.advanceTimersByTimeAsync(100);
+    const queued = site.player.replaceQueue.mock.calls[0][0] as FakeItem[];
+    expect(queued).toHaveLength(6);
+    expect(site.states.fallbackEnabled).toBe(false);
+    site.setItems(queued, 4);
+    await vi.advanceTimersByTimeAsync(1100);
+    expect(site.states.fallbackEnabled).toBe(false);
+    site.setItems(queued, 5);
+    await vi.advanceTimersByTimeAsync(1100);
+    // После последнего трека волны играет автоплей SoundCloud, а не тишина
+    expect(site.states.fallbackEnabled).toBe(true);
+});
+
 it('«Не нравится» уводит трек из очереди, играющий сменяется следующим, отметка уходит в main', async () => {
     const site = fakeSite(relatedTracks);
     const bridge = fakeExclusions();
