@@ -157,7 +157,11 @@ function applyMacMemoryOptimizations(): void {
 }
 
 applyMacMemoryOptimizations();
-if (shouldRunGpuInProcess(process.platform, process.env, process.argv)) app.commandLine.appendSwitch('in-process-gpu');
+if (shouldRunGpuInProcess(process.platform, process.env, process.argv)) {
+    app.commandLine.appendSwitch('in-process-gpu');
+    // С DirectComposition GPU в главном процессе показывает пустое окно
+    app.commandLine.appendSwitch('disable-direct-composition');
+}
 // header height for header BrowserView
 const HEADER_HEIGHT = 32;
 // macOS check
