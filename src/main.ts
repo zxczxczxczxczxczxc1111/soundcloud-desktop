@@ -287,12 +287,17 @@ function resetThemeAndPlugins(): void {
     themeService.removeCustomTheme();
     for (const plugin of pluginService.getPlugins()) if (plugin.enabled) pluginService.setPluginEnabled(plugin.id, false);
     if (settingsManager?.getView()) settingsManager.toggle();
-    if (mainWindow && !mainWindow.isDestroyed()) {
-        if (!mainWindow.isVisible()) mainWindow.show();
-        if (mainWindow.isMinimized()) mainWindow.restore();
-        mainWindow.focus();
-    }
+    showMainWindow();
     notificationManager?.show('Тема и плагины отключены');
+}
+
+// prevent rendering engine deadlocks when waking hidden/minimized windows from tray
+function showMainWindow(): void {
+    if (!mainWindow || mainWindow.isDestroyed()) return;
+    if (mainWindow.isMinimized()) mainWindow.restore();
+    if (!mainWindow.isVisible()) mainWindow.show();
+    mainWindow.focus();
+    adjustContentViews();
 }
 
 function setupTray() {
@@ -314,20 +319,14 @@ function setupTray() {
     const contextMenu = Menu.buildFromTemplate([
         {
             label: 'SoundCloud',
-            click: () => {
-                if (mainWindow) {
-                    if (!mainWindow.isVisible()) mainWindow.show();
-                    if (mainWindow.isMinimized()) mainWindow.restore();
-                    mainWindow.focus();
-                }
-            },
+            click: () => showMainWindow(),
         },
         {
             label: 'Настройки',
+            // Из трея настройки только открываются: окно могло быть спрятано, а панель уже открыта
             click: () => {
-                if (settingsManager) {
-                    settingsManager.toggle();
-                }
+                showMainWindow();
+                if (settingsManager && !settingsManager.getView()) settingsManager.toggle();
             },
         },
         {
@@ -345,25 +344,7 @@ function setupTray() {
 
     tray.setContextMenu(contextMenu);
 
-    // prevent rendering engine deadlocks when waking hidden/minimized windows from tray
-    tray.on('click', () => {
-        if (mainWindow) {
-            const isMinimized = mainWindow.isMinimized();
-            const isVisible = mainWindow.isVisible();
-
-            if (isMinimized) {
-                mainWindow.restore();
-            }
-
-            if (!isVisible) {
-                mainWindow.show();
-            }
-
-            mainWindow.focus();
-
-            adjustContentViews();
-        }
-    });
+    tray.on('click', () => showMainWindow());
 }
 
 // browser window config
