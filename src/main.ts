@@ -834,7 +834,7 @@ async function init() {
         });
         if (result.canceled || !result.filePath) return false;
         try { diagnostics.exportTo(result.filePath); return true; }
-        catch (error) { console.error('Не удалось сохранить журнал:', error); throw new Error('Не удалось сохранить журнал'); }
+        catch (error) { console.error('Не удалось сохранить журнал:', error); throw new Error('Не удалось сохранить журнал', { cause: error }); }
     });
     setupTranslationHandlers();
     setupAudioHandler();

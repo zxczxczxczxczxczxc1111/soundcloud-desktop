@@ -95,7 +95,7 @@
     },
     "devDependencies": {
         "@eslint/eslintrc": "^3.3.7",
-        "@eslint/js": "^9.37.0",
+        "@eslint/js": "^10.0.1",
         "@types/jsdom": "21.1.7",
         "@types/node": "^24.13.6",
         "@typescript-eslint/eslint-plugin": "^8.70.1",
@@ -103,7 +103,7 @@
         "cpx": "^1.5.0",
         "electron": "https://github.com/castlabs/electron-releases#v41.10.7+wvcus",
         "electron-builder": "^26.15.3",
-        "eslint": "^9.33.0",
+        "eslint": "^10.11.0",
         "jsdom": "26.1.0",
         "prettier": "3.9.9",
         "typescript": "^6.0.3",
