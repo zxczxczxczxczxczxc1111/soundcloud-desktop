@@ -9,6 +9,7 @@ import { PlaybackController } from './services/playbackController';
 import { AdblockService } from './services/adblockService';
 import { ViewStyles, splitThemeCSS } from './services/viewStyles';
 import { pageFeaturesScript } from './services/pageFeatures';
+import { shouldRunGpuInProcess } from './services/gpuProcessMode';
 import {
     app,
     BrowserWindow,
@@ -156,6 +157,7 @@ function applyMacMemoryOptimizations(): void {
 }
 
 applyMacMemoryOptimizations();
+if (shouldRunGpuInProcess(process.platform, process.env, process.argv)) app.commandLine.appendSwitch('in-process-gpu');
 // header height for header BrowserView
 const HEADER_HEIGHT = 32;
 // macOS check
