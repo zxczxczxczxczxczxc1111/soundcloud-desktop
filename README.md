@@ -15,9 +15,6 @@
 
 </div>
 
-> [!IMPORTANT]
-> Версия 0.1.0 в разработке. Сборки предназначены для проверки: воспроизведение, вход, Discord и восстановление после сбоя окна проверены вручную, но длительная работа и все сценарии ещё не пройдены.
-
 <p align="center">
   <picture>
     <source media="(prefers-color-scheme: dark)" srcset="assets/preview/soundcloud-preview-dark.webp">
