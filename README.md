@@ -7,7 +7,7 @@
 [![Проверка Windows](https://github.com/zxczxczxczxczxczxc1111/soundcloud-desktop/actions/workflows/windows.yml/badge.svg)](https://github.com/zxczxczxczxczxczxc1111/soundcloud-desktop/actions/workflows/windows.yml)
 ![Версия](https://img.shields.io/badge/%D0%B2%D0%B5%D1%80%D1%81%D0%B8%D1%8F-0.3.0-ff5500?style=flat-square)
 ![Windows x64](https://img.shields.io/badge/Windows-x64-0078d4?style=flat-square)
-![Electron](https://img.shields.io/badge/Castlabs_Electron-41.1.1-47848f?style=flat-square&logo=electron&logoColor=white)
+![Electron](https://img.shields.io/badge/Castlabs_Electron-41.10.7-47848f?style=flat-square&logo=electron&logoColor=white)
 ![TypeScript](https://img.shields.io/badge/TypeScript-strict-3178c6?style=flat-square&logo=typescript&logoColor=white)
 ![Лицензия MIT](https://img.shields.io/badge/%D0%BB%D0%B8%D1%86%D0%B5%D0%BD%D0%B7%D0%B8%D1%8F-MIT-3fb950?style=flat-square)
 
