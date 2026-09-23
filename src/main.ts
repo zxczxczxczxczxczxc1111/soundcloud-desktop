@@ -11,6 +11,7 @@ import { AdblockService } from './services/adblockService';
 import { ViewStyles, splitThemeCSS } from './services/viewStyles';
 import { pageFeaturesScript } from './services/pageFeatures';
 import { shouldRunGpuInProcess } from './services/gpuProcessMode';
+import { tintIcon } from './services/devIcon';
 import {
     app,
     BrowserWindow,
@@ -24,6 +25,7 @@ import {
     dialog,
     powerMonitor,
     type IpcMainEvent,
+    type NativeImage,
 } from 'electron';
 import { readFileSync, writeFileSync, existsSync, mkdirSync, copyFileSync } from 'fs';
 import { setupDarwinMenu } from './macos/menu';
@@ -49,6 +51,19 @@ import { platform, release } from 'os';
 import Store from 'electron-store';
 import windowStateManager from 'electron-window-state';
 
+let buildInfo: Record<string, unknown> = { build: 'development', dirty: true };
+const buildInfoPath = path.join(__dirname, 'build-info.json');
+try {
+    if (existsSync(buildInfoPath)) {
+        const parsed: unknown = JSON.parse(readFileSync(buildInfoPath, 'utf8'));
+        if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) buildInfo = parsed as Record<string, unknown>;
+    }
+} catch (error) { console.warn('Не удалось прочитать версию сборки:', error); }
+
+// Dev-запуск и тестовая сборка отличаются от установленного клиента названием, иконкой и кнопкой на панели задач
+const buildLabel = !app.isPackaged ? 'Dev' : buildInfo.channel === 'test' ? 'Test' : '';
+const appTitle = buildLabel ? `SoundCloud Desktop ${buildLabel}` : 'SoundCloud Desktop';
+
 app.setName('SoundCloud Desktop');
 const portableDirectory = app.isPackaged && process.platform === 'win32' ? process.env.PORTABLE_EXECUTABLE_DIR : undefined;
 const profilePath = portableDirectory
@@ -57,13 +72,18 @@ const profilePath = portableDirectory
 mkdirSync(profilePath, { recursive: true });
 app.setPath('userData', profilePath);
 if (process.platform === 'win32') {
-    app.setAppUserModelId('io.github.zxczxczxczxczxczxc1111.soundcloud-desktop');
+    app.setAppUserModelId('io.github.zxczxczxczxczxczxc1111.soundcloud-desktop' + (buildLabel ? '.' + buildLabel.toLowerCase() : ''));
 }
 
 export const RESOURCES_PATH = app.isPackaged
     ? path.join(process.resourcesPath, 'assets')
     : path.join(__dirname, '../assets');
 console.log(`Resources path: ${RESOURCES_PATH}`);
+
+function loadAppIcon(file: string): NativeImage {
+    const image = nativeImage.createFromPath(path.join(RESOURCES_PATH, 'icons', file));
+    return buildLabel && !image.isEmpty() ? tintIcon(image) : image;
+}
 
 // Store configuration
 const store = new Store<Record<string, unknown>>({
@@ -179,14 +199,6 @@ if (!isMas) {
     }
 }
 
-let buildInfo: Record<string, unknown> = { build: 'development', dirty: true };
-const buildInfoPath = path.join(__dirname, 'build-info.json');
-try {
-    if (existsSync(buildInfoPath)) {
-        const parsed: unknown = JSON.parse(readFileSync(buildInfoPath, 'utf8'));
-        if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) buildInfo = parsed as Record<string, unknown>;
-    }
-} catch (error) { console.warn('Не удалось прочитать версию сборки:', error); }
 const diagnostics = new DiagnosticJournal(path.join(profilePath, 'diagnostics'), {
     build: buildInfo.build, dirty: buildInfo.dirty, version: app.getVersion(), electron: process.versions.electron, chrome: process.versions.chrome,
     node: process.versions.node, os: release(), arch: process.arch,
@@ -274,18 +286,13 @@ function setupTray() {
     }
 
     // create tray icon
-    const iconPath = path.join(
-        RESOURCES_PATH,
-        'icons',
-        process.platform === 'win32' ? 'soundcloud-win.ico' : 'soundcloud.png',
-    );
-    const icon = nativeImage.createFromPath(iconPath);
+    const icon = loadAppIcon(process.platform === 'win32' ? 'soundcloud-win.ico' : 'soundcloud.png');
 
     // resize icon
     const trayIcon = icon.resize({ width: 16, height: 16 });
 
     tray = new Tray(trayIcon);
-    tray.setToolTip('SoundCloud Desktop');
+    tray.setToolTip(appTitle);
 
     // create tray menu
     const contextMenu = Menu.buildFromTemplate([
@@ -346,8 +353,8 @@ function createBrowserWindow(windowState: ReturnType<typeof windowStateManager>)
         height: windowState.height,
         x: windowState.x,
         y: windowState.y,
-        title: 'SoundCloud Desktop',
-        icon: path.join(RESOURCES_PATH, 'icons', 'soundcloud.png'),
+        title: appTitle,
+        icon: loadAppIcon('soundcloud.png'),
         frame: process.platform === 'darwin',
         titleBarStyle: process.platform === 'darwin' ? 'hidden' : undefined,
         trafficLightPosition: process.platform === 'darwin' ? { x: 10, y: 10 } : undefined,
