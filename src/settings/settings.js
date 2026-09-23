@@ -607,7 +607,7 @@ async function initializeSettings() {
                 : SOUNDCLOUD_BADGE;
             icon.alt = options.displayGithubLink ? 'GitHub' : 'SoundCloud';
             if (options.displayGithubLink) {
-                smallIcon.title = 'SoundCloud Desktop на GitHub';
+                smallIcon.title = 'SoundCloud на GitHub';
                 smallIcon.style.cursor = 'pointer';
                 smallIcon.setAttribute('role', 'link');
                 smallIcon.tabIndex = 0;
