@@ -735,6 +735,7 @@ async function init() {
         notify: queueToastNotification,
         onState: (state) => settingsManager.getView()?.webContents.send('update-state', state),
         loadUpdater: () => autoUpdater,
+        language: () => (store.get('siteLanguage', 'ru') === 'en' ? 'en' : 'ru'),
     });
     updateService.start();
     ipcMain.handle('get-update-state', (event) => {
@@ -1035,7 +1036,11 @@ async function init() {
         }
         store.set(key, data.value);
         if (key.startsWith('proxy') || key === 'adBlocker') networkSettingsDirty = true;
-        if (key === 'siteLanguage') pageReloadNeeded = true;
+        if (key === 'siteLanguage') {
+            pageReloadNeeded = true;
+            // F1 переключается сразу, статус обновлений тоже приходит на новом языке
+            if (updateService) settingsManager.getView()?.webContents.send('update-state', updateService.getState());
+        }
 
         console.log(key);
 

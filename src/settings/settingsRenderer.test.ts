@@ -10,7 +10,7 @@ afterEach(() => {
 async function openSettings(
     state: Record<string, unknown>,
     exclusions: { tracks: object[]; artists: object[] } = { tracks: [], artists: [] },
-): Promise<{ send: ReturnType<typeof vi.fn>; invoke: ReturnType<typeof vi.fn> }> {
+): Promise<{ send: ReturnType<typeof vi.fn>; invoke: ReturnType<typeof vi.fn>; emit: (channel: string, ...args: unknown[]) => void }> {
     const html = readFileSync(resolve('src/settings/settings.html'), 'utf8');
     document.documentElement.innerHTML = html.replace(/<!doctype html>/i, '');
     expect(document.querySelectorAll('script:not([src])')).toHaveLength(0);
@@ -32,17 +32,26 @@ async function openSettings(
             case 'get-accounts':
                 return { accounts: [], currentAccountId: 'default' };
             case 'get-update-state':
-                return { mode: 'portable', version: '0.1.0', enabled: true, hint: 'Подсказка.', status: 'Установлена последняя версия.', releaseUrl: '' };
+                return updateState(state.siteLanguage === 'en' ? 'en' : 'ru');
             case 'get-current-track':
                 return { title: '', author: '', duration: '', elapsed: '', isPlaying: false, artwork: '' };
             default:
                 throw new Error(channel);
         }
     });
-    Object.assign(window, { settingsAPI: { send, invoke, on: vi.fn(), openExternal: vi.fn(), openPath: vi.fn() } });
+    const listeners = new Map<string, (...args: unknown[]) => void>();
+    const on = (channel: string, listener: (...args: unknown[]) => void): void => void listeners.set(channel, listener);
+    Object.assign(window, { settingsAPI: { send, invoke, on, openExternal: vi.fn(), openPath: vi.fn() } });
+    window.eval(readFileSync(resolve('src/settings/settingsText.js'), 'utf8'));
     window.eval(readFileSync(resolve('src/settings/settings.js'), 'utf8'));
     await vi.waitFor(() => expect(send).toHaveBeenCalledWith('settings-ready'));
-    return { send, invoke };
+    return { send, invoke, emit: (channel, ...args) => listeners.get(channel)?.(...args) };
+}
+
+// Строки обновлений main присылает уже на языке панели
+function updateState(language: 'ru' | 'en'): Record<string, unknown> {
+    const [hint, status] = language === 'en' ? ['Hint.', 'You have the latest version.'] : ['Подсказка.', 'Установлена последняя версия.'];
+    return { mode: 'portable', version: '0.1.0', enabled: true, hint, status, releaseUrl: '' };
 }
 
 it('загружает настройки из IPC и подключает закрытие без встроенных скриптов', async () => {
@@ -92,6 +101,65 @@ it('показывает исключённое из волны и возвра�
     expect(invoke).toHaveBeenCalledWith('remove-wave-exclusion', 'track', 5);
     await vi.waitFor(() => expect(tracks.textContent).toBe('Пусто'));
     expect(document.getElementById('waveExcludedTracksCount')?.textContent).toBe('0');
+});
+
+// Кириллица вне data-no-i18n: там только пользовательские названия и самоназвание языка
+function russianLeft(): string[] {
+    const left: string[] = [];
+    const cyrillic = /[А-Яа-яЁё]/;
+    const walker = document.createTreeWalker(document.body, NodeFilter.SHOW_TEXT);
+    for (let node = walker.nextNode(); node; node = walker.nextNode())
+        if (cyrillic.test(node.nodeValue ?? '') && !node.parentElement?.closest('[data-no-i18n]')) left.push(node.nodeValue ?? '');
+    for (const element of document.body.querySelectorAll('[title], [aria-label], [placeholder], [alt]'))
+        for (const name of ['title', 'aria-label', 'placeholder', 'alt']) {
+            const value = element.getAttribute(name);
+            if (value && cyrillic.test(value) && !element.closest('[data-no-i18n]')) left.push(value);
+        }
+    return left;
+}
+
+it('переводит панель на английский и обратно без перезагрузки', async () => {
+    const { send, emit } = await openSettings({ theme: 'dark', siteLanguage: 'ru' }, { tracks: [], artists: [{ id: 7, title: 'Станции', artist: '', url: '', at: 1 }] });
+    const artists = document.getElementById('waveExcludedArtists') as HTMLElement;
+    await vi.waitFor(() => expect(artists.querySelector('button')?.textContent).toBe('Вернуть'));
+    expect(document.documentElement.lang).toBe('ru');
+    const theme = document.getElementById('customThemeSelector')?.parentElement?.querySelector('.dropdown-label') as HTMLElement;
+    expect(theme.textContent).toBe('Без темы');
+
+    const language = document.getElementById('siteLanguage') as HTMLSelectElement;
+    language.value = 'en';
+    language.dispatchEvent(new Event('change', { bubbles: true }));
+    expect(send).toHaveBeenCalledWith('setting-changed', { key: 'siteLanguage', value: 'en' });
+    expect(document.documentElement.lang).toBe('en');
+    expect(document.getElementById('settingsTitle')?.textContent).toBe('Settings');
+    expect(document.getElementById('close-settings')?.getAttribute('title')).toBe('Close, F1 or Esc');
+    expect(document.getElementById('homeMore')?.closest('label')?.textContent).toBe('More of what you like');
+    expect(language.closest('.row')?.querySelector('.text')?.textContent).toBe('Language');
+    await vi.waitFor(() => expect(artists.querySelector('button')?.textContent).toBe('Restore'));
+    // Название совпало с подписью панели, но это данные
+    expect(artists.querySelector('.excluded-title')?.textContent).toBe('Станции');
+    expect(document.getElementById('waveExcludedTracks')?.textContent).toBe('Empty');
+    await vi.waitFor(() => expect(document.getElementById('pluginList')?.textContent).toBe('The plugins folder is empty'));
+    await vi.waitFor(() => expect(theme.textContent).toBe('No theme'));
+    emit('update-state', updateState('en'));
+    expect(document.getElementById('updateHint')?.textContent).toBe('Version 0.1.0. Hint.');
+    expect(russianLeft()).toEqual([]);
+
+    language.value = 'ru';
+    language.dispatchEvent(new Event('change', { bubbles: true }));
+    expect(document.documentElement.lang).toBe('ru');
+    expect(document.getElementById('settingsTitle')?.textContent).toBe('Настройки');
+    expect(document.getElementById('proxyHost')?.getAttribute('placeholder')).toBe('Адрес');
+    await vi.waitFor(() => expect(artists.querySelector('button')?.textContent).toBe('Вернуть'));
+    await vi.waitFor(() => expect(theme.textContent).toBe('Без темы'));
+});
+
+it('открывается сразу на английском, если сайт английский', async () => {
+    await openSettings({ theme: 'dark', siteLanguage: 'en' });
+    expect(document.getElementById('settingsTitle')?.textContent).toBe('Settings');
+    await vi.waitFor(() => expect(document.getElementById('waveExcludedTracks')?.textContent).toBe('Empty'));
+    expect(document.getElementById('proxyHost')?.getAttribute('placeholder')).toBe('Host');
+    expect(russianLeft()).toEqual([]);
 });
 
 it('волна на главной включается с вкладки «Моя волна»', async () => {

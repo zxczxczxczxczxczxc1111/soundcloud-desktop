@@ -108,6 +108,16 @@ it('выключенная настройка не проверяет и сни�
     expect(service.getState().status).toBe('Автообновление выключено.');
 });
 
+it('пишет статус и подсказку на выбранном языке и переключается без новой проверки', async () => {
+    let language: 'ru' | 'en' = 'ru';
+    const { service } = create('portable', { fetch: vi.fn(async () => release('v0.2.0')), language: () => language });
+    await service.check();
+    expect(service.getState().status).toBe('Вышла версия 0.2.0. Скачать её можно на странице релиза.');
+    language = 'en';
+    expect(service.getState().status).toBe('Version 0.2.0 is out. You can download it from the release page.');
+    expect(service.getState().hint).toContain('portable version');
+});
+
 it('в режиме разработки ничего не проверяет', async () => {
     const fetch = vi.fn(async () => release('v9.0.0'));
     const { service } = create('dev', { fetch });

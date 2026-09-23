@@ -3,6 +3,10 @@ const SOUNDCLOUD_BADGE = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAEAAAABA
 
 async function initializeSettings() {
     const initial = await window.settingsAPI.invoke('get-settings-state');
+    // Панель говорит на языке сайта. Ключ словаря это русская строка, поэтому разметка остаётся русской
+    const englishText = window.SETTINGS_EN || {};
+    let language = initial.siteLanguage === 'en' ? 'en' : 'ru';
+    const tr = (text) => (language === 'en' && Object.hasOwn(englishText, text) ? englishText[text] : text);
     for (const [key, value] of Object.entries(initial)) {
         const element = document.getElementById(key);
         if (!(element instanceof HTMLInputElement)) continue;
@@ -103,7 +107,10 @@ async function initializeSettings() {
             list.innerHTML = '';
 
             if (!plugins || plugins.length === 0) {
-                list.innerHTML = '<div class="no-plugins">Папка плагинов пуста</div>';
+                const empty = document.createElement('div');
+                empty.className = 'no-plugins';
+                empty.textContent = tr('Папка плагинов пуста');
+                list.appendChild(empty);
                 return;
             }
 
@@ -122,7 +129,7 @@ async function initializeSettings() {
                 nameEl.textContent = p.metadata.name || p.id;
                 if (hasHomepage) {
                     nameEl.dataset.homepage = p.metadata.homepage;
-                    nameEl.title = 'Открыть страницу плагина';
+                    nameEl.title = tr('Открыть страницу плагина');
                     nameEl.addEventListener('click', (e) => {
                         e.stopPropagation();
                         ipcRenderer.send('show-plugin-homepage-dialog', nameEl.dataset.homepage);
@@ -163,7 +170,7 @@ async function initializeSettings() {
                 if (p.metadata.author && p.metadata.author !== 'Unknown') {
                     const authorEl = document.createElement('div');
                     authorEl.className = 'plugin-author';
-                    authorEl.textContent = 'Автор: ' + p.metadata.author;
+                    authorEl.textContent = tr('Автор:') + ' ' + p.metadata.author;
                     card.appendChild(authorEl);
                 }
 
@@ -200,10 +207,10 @@ async function initializeSettings() {
         status.textContent = '';
         try {
             const saved = await ipcRenderer.invoke('export-diagnostics');
-            status.textContent = saved ? 'Журнал сохранён, его можно отправить для разбора проблемы' : '';
+            status.textContent = saved ? tr('Журнал сохранён, его можно отправить для разбора проблемы') : '';
         } catch (error) {
             console.error('Не удалось сохранить журнал:', error);
-            status.textContent = 'Не удалось сохранить журнал, попробуй другую папку';
+            status.textContent = tr('Не удалось сохранить журнал, попробуй другую папку');
         } finally { button.disabled = false; }
     });
 
@@ -219,7 +226,7 @@ async function initializeSettings() {
         document.getElementById('checkUpdates').disabled = state.mode === 'dev' || !state.enabled;
         // В режиме разработки подсказка совпадает со статусом, второй раз её не выводим
         const hint = state.hint !== state.status ? state.hint : '';
-        document.getElementById('updateHint').textContent = ['Версия ' + state.version + '.', hint].filter(Boolean).join(' ');
+        document.getElementById('updateHint').textContent = [tr('Версия') + ' ' + state.version + '.', hint].filter(Boolean).join(' ');
         document.getElementById('updateStatus').textContent = state.status;
     }
 
@@ -257,6 +264,8 @@ async function initializeSettings() {
         button.setAttribute('aria-label', select.getAttribute('aria-label') || '');
         const label = document.createElement('span');
         label.className = 'dropdown-label';
+        // Подпись и список повторяют текст option, переводится только он
+        label.setAttribute('data-no-i18n', '');
         button.appendChild(label);
         const chevron = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
         chevron.setAttribute('class', 'chev');
@@ -270,6 +279,7 @@ async function initializeSettings() {
         list.className = 'dropdown-list';
         list.id = select.id + 'List';
         list.setAttribute('role', 'listbox');
+        list.setAttribute('data-no-i18n', '');
         list.hidden = true;
         button.setAttribute('aria-controls', list.id);
         wrap.appendChild(button);
@@ -349,6 +359,37 @@ async function initializeSettings() {
         const select = document.getElementById(id);
         if (select) enhanceSelect(select);
     }
+
+    // Статичные подписи меняются на месте, русский оригинал узла хранится для обратного переключения.
+    // Внутри data-no-i18n пользовательские названия, а свои подписи там код рисует через tr()
+    const sourceText = new WeakMap();
+    const sourceAttributes = new WeakMap();
+    const words = (text) => text.replace(/\s+/g, ' ').trim();
+    function applyLanguage() {
+        document.documentElement.lang = language;
+        const walker = document.createTreeWalker(document.body, window.NodeFilter.SHOW_TEXT);
+        for (let node = walker.nextNode(); node; node = walker.nextNode()) {
+            if (node.parentElement?.closest('[data-no-i18n]')) continue;
+            if (!sourceText.has(node)) {
+                if (!Object.hasOwn(englishText, words(node.nodeValue))) continue;
+                sourceText.set(node, node.nodeValue);
+            }
+            const source = sourceText.get(node);
+            const next = language === 'en' ? englishText[words(source)] : source;
+            if (node.nodeValue !== next) node.nodeValue = next;
+        }
+        for (const element of document.body.querySelectorAll('[title], [aria-label], [placeholder], [alt]')) {
+            if (element.closest('[data-no-i18n]')) continue;
+            const sources = sourceAttributes.get(element) || {};
+            for (const name of ['title', 'aria-label', 'placeholder', 'alt']) {
+                const value = element.getAttribute(name);
+                if (!(name in sources) && value !== null && Object.hasOwn(englishText, value)) sources[name] = value;
+                if (name in sources) element.setAttribute(name, tr(sources[name]));
+            }
+            sourceAttributes.set(element, sources);
+        }
+    }
+    applyLanguage();
 
     // initilization
 
@@ -447,10 +488,17 @@ async function initializeSettings() {
         ipcRenderer.send('setting-changed', { key: 'fullShuffle', value: e.target.checked });
     });
 
-    // Перевод сайта ставится до его скриптов, поэтому язык меняется только перезагрузкой
+    // Перевод сайта ставится до его скриптов, поэтому сайт ждёт перезагрузки, а панель переводится сразу.
+    // Строки обновлений main присылает заново уже на новом языке
     document.getElementById('siteLanguage').addEventListener('change', (e) => {
         ipcRenderer.send('setting-changed', { key: 'siteLanguage', value: e.target.value });
         showNetworkNotice();
+        language = e.target.value === 'en' ? 'en' : 'ru';
+        applyLanguage();
+        document.getElementById('diagnosticsStatus').textContent = '';
+        loadPlugins();
+        loadWaveExclusions();
+        updatePreview(lastTrackInfo);
     });
 
     // Блоки главной и волна на главной прячутся сразу, без перезагрузки
@@ -469,7 +517,7 @@ async function initializeSettings() {
         if (!entries.length) {
             const empty = document.createElement('div');
             empty.className = 'hint pad';
-            empty.textContent = 'Пусто';
+            empty.textContent = tr('Пусто');
             box.appendChild(empty);
             return;
         }
@@ -480,7 +528,7 @@ async function initializeSettings() {
             text.className = 'text';
             const title = document.createElement('span');
             title.className = 'excluded-title';
-            title.textContent = entry.title || (kind === 'track' ? 'Трек ' : 'Артист ') + entry.id;
+            title.textContent = entry.title || tr(kind === 'track' ? 'Трек' : 'Артист') + ' ' + entry.id;
             title.title = title.textContent;
             text.appendChild(title);
             if (entry.artist) {
@@ -492,7 +540,7 @@ async function initializeSettings() {
             const restore = document.createElement('button');
             restore.type = 'button';
             restore.className = 'text-btn';
-            restore.textContent = 'Вернуть';
+            restore.textContent = tr('Вернуть');
             restore.addEventListener('click', () => {
                 restore.disabled = true;
                 ipcRenderer.invoke('remove-wave-exclusion', kind, entry.id).then(loadWaveExclusions, (error) => {
@@ -713,7 +761,7 @@ async function initializeSettings() {
         if (artworkUrl) {
             const img = document.createElement('img');
             img.src = artworkUrl;
-            img.alt = 'Обложка трека';
+            img.alt = tr('Обложка трека');
             img.addEventListener('error', () => {
                 img.style.display = 'none';
             });
@@ -724,9 +772,9 @@ async function initializeSettings() {
 
         const details = document.createElement('div');
         details.className = 'activity-details-preview';
-        details.appendChild(createTextElement('activity-name-preview', safeText(trackInfo.title, 'Без названия')));
+        details.appendChild(createTextElement('activity-name-preview', safeText(trackInfo.title, tr('Без названия'))));
         details.appendChild(
-            createTextElement('activity-details-text-preview', safeText(trackInfo.author, 'Неизвестный артист')),
+            createTextElement('activity-details-text-preview', safeText(trackInfo.author, tr('Неизвестный артист'))),
         );
 
         const progressContainer = document.createElement('div');
@@ -770,7 +818,7 @@ async function initializeSettings() {
 
         const member = document.createElement('div');
         member.className = 'member-line-preview';
-        member.textContent = 'Под ником: ';
+        member.textContent = tr('Под ником:') + ' ';
         const memberText = document.createElement('b');
         memberText.textContent = 'Listening to ' + (options.artistInStatus ? safeText(trackInfo.author, 'SoundCloud') : 'SoundCloud');
         member.appendChild(memberText);
@@ -803,6 +851,8 @@ async function initializeSettings() {
 
         const activityContent = document.createElement('div');
         activityContent.className = 'activity-content-preview';
+        // Название трека это данные. «Слушать в SoundCloud» и «SoundCloud на GitHub» Discord показывает по-русски, как здесь
+        activityContent.setAttribute('data-no-i18n', '');
 
         activityContent.appendChild(
             createPlayingPreview(trackInfo, {
