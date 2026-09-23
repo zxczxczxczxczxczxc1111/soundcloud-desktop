@@ -1,5 +1,6 @@
 import { trustLocalFile } from '../trustedViews';
 import { ViewStyles } from '../services/viewStyles';
+import { homeBlockDefaults } from '../services/homeBlocks';
 import { WebContentsView, BrowserWindow, ipcMain, type IpcMainInvokeEvent } from 'electron';
 import type ElectronStore from 'electron-store';
 import type { ThemeColors } from '../utils/colorExtractor';
@@ -14,6 +15,8 @@ const defaults: Record<string, string | number | boolean> = {
     hideEventsNearYou: true,
     hideArtistUpsells: true,
     fullShuffle: true,
+    siteLanguage: 'ru',
+    ...homeBlockDefaults,
     adBlocker: true,
     proxyEnabled: false,
     proxyHost: '',

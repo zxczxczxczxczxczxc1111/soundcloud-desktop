@@ -243,6 +243,16 @@ label.row:hover {
     display: flex;
     gap: 2px;
 }
+/* Подзаголовок группы внутри раздела */
+.group {
+    font-size: 12px;
+    color: var(--text-secondary);
+    padding: 14px 8px 4px;
+}
+.row .dropdown {
+    flex: none;
+    width: 140px;
+}
 
 .toggle {
     position: relative;

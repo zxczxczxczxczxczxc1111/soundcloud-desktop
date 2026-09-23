@@ -41,3 +41,16 @@ it('отключение функции удаляет CSS iframe и наблю�
     expect(frame.contentDocument!.head.querySelector('style')).toBeNull();
     expect(vi.getTimerCount()).toBe(0);
 });
+it('узнаёт врезку Artist tools после перевода title', () => {
+    const container = document.createElement('div');
+    container.className = 'webiEmbeddedModuleContainer';
+    const frame = document.createElement('iframe');
+    frame.title = 'Что-то переведённое';
+    container.appendChild(frame);
+    document.body.appendChild(container);
+    installPageFeatures(true);
+    const doc = frame.contentDocument!;
+    doc.body.innerHTML = '<svg aria-label="Paywalled feature"></svg>';
+    frame.dispatchEvent(new Event('load'));
+    expect(container.style.display).toBe('none');
+});

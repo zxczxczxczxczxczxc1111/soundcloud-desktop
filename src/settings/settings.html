@@ -29,6 +29,7 @@
                 <nav class="nav-list" aria-label="Разделы настроек">
                     <button data-target="general" aria-current="true">Основное</button>
                     <button data-target="soundcloud">SoundCloud</button>
+                    <button data-target="home">Главная</button>
                     <button data-target="discord">Discord</button>
                     <button data-target="extensions">Темы и плагины</button>
                     <button data-target="account">Аккаунт</button>
@@ -45,6 +46,13 @@
 
                     <section class="section" id="soundcloud" hidden>
                         <h2>SoundCloud</h2>
+                        <div class="row">
+                            <span class="text">Язык сайта</span>
+                            <select id="siteLanguage" class="input" aria-label="Язык сайта">
+                                <option value="ru">Русский</option>
+                                <option value="en">English</option>
+                            </select>
+                        </div>
                         <label class="row"><span class="text">Блокировать рекламу</span><span class="toggle"><input type="checkbox" id="adBlocker" /><span class="slider"></span></span></label>
                         <label class="row"><span class="text">Скрывать рекламные блоки</span><span class="toggle"><input type="checkbox" id="hidePromotions" /><span class="slider"></span></span></label>
                         <label class="row"><span class="text">Скрывать концерты поблизости</span><span class="toggle"><input type="checkbox" id="hideEventsNearYou" /><span class="slider"></span></span></label>
@@ -53,6 +61,28 @@
                             <span class="text"><span>Перемешивать всю очередь</span><span class="hint">Сам SoundCloud перемешивает только загруженные треки</span></span>
                             <span class="toggle"><input type="checkbox" id="fullShuffle" /><span class="slider"></span></span>
                         </label>
+                    </section>
+
+                    <section class="section" id="home" hidden>
+                        <h2>Главная</h2>
+                        <label class="row"><span class="text">Моя волна</span><span class="toggle"><input type="checkbox" id="homeWave" /><span class="slider"></span></span></label>
+                        <div class="group">Полки</div>
+                        <label class="row"><span class="text">Больше того, что тебе нравится</span><span class="toggle"><input type="checkbox" id="homeMore" /><span class="slider"></span></span></label>
+                        <label class="row"><span class="text">Недавно играло</span><span class="toggle"><input type="checkbox" id="homeRecent" /><span class="slider"></span></span></label>
+                        <label class="row"><span class="text">Миксы для тебя</span><span class="toggle"><input type="checkbox" id="homeMixed" /><span class="slider"></span></span></label>
+                        <label class="row"><span class="text">Станции</span><span class="toggle"><input type="checkbox" id="homeStations" /><span class="slider"></span></span></label>
+                        <label class="row"><span class="text">В тренде по жанрам</span><span class="toggle"><input type="checkbox" id="homeTrending" /><span class="slider"></span></span></label>
+                        <label class="row"><span class="text">Для тебя</span><span class="toggle"><input type="checkbox" id="homeMade" /><span class="slider"></span></span></label>
+                        <label class="row"><span class="text">Подборки SoundCloud</span><span class="toggle"><input type="checkbox" id="homeCurated" /><span class="slider"></span></span></label>
+                        <label class="row"><span class="text">Альбомы для тебя</span><span class="toggle"><input type="checkbox" id="homeAlbums" /><span class="slider"></span></span></label>
+                        <label class="row"><span class="text">Лайкнули</span><span class="toggle"><input type="checkbox" id="homeLiked" /><span class="slider"></span></span></label>
+                        <label class="row"><span class="text">Артисты, за которыми стоит следить</span><span class="toggle"><input type="checkbox" id="homeBuzzing" /><span class="slider"></span></span></label>
+                        <div class="group">Справа</div>
+                        <label class="row"><span class="text">Новые треки</span><span class="toggle"><input type="checkbox" id="homeNewTracks" /><span class="slider"></span></span></label>
+                        <label class="row"><span class="text">Кого послушать</span><span class="toggle"><input type="checkbox" id="homeFollow" /><span class="slider"></span></span></label>
+                        <label class="row"><span class="text">Лайки</span><span class="toggle"><input type="checkbox" id="homeLikes" /><span class="slider"></span></span></label>
+                        <label class="row"><span class="text">История прослушивания</span><span class="toggle"><input type="checkbox" id="homeHistory" /><span class="slider"></span></span></label>
+                        <label class="row"><span class="text">SoundCloud на телефоне и подвал</span><span class="toggle"><input type="checkbox" id="homeMobile" /><span class="slider"></span></span></label>
                     </section>
 
                     <section class="section" id="discord" hidden>

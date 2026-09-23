@@ -1,7 +1,9 @@
-const booleanKeys = new Set(['adBlocker', 'proxyEnabled', 'webhookEnabled', 'displaySCSmallIcon', 'displayGithubLink', 'discordRichPresence', 'displayButtons', 'minimizeToTray', 'navigationControlsEnabled', 'trackParserEnabled', 'richPresencePreviewEnabled', 'hidePromotions', 'hideEventsNearYou', 'hideArtistUpsells', 'fullShuffle', 'autoUpdateEnabled']);
-type BooleanKey = 'adBlocker' | 'proxyEnabled' | 'webhookEnabled' | 'displaySCSmallIcon' | 'displayGithubLink' | 'discordRichPresence' | 'displayButtons' | 'minimizeToTray' | 'navigationControlsEnabled' | 'trackParserEnabled' | 'richPresencePreviewEnabled' | 'hidePromotions' | 'hideEventsNearYou' | 'hideArtistUpsells' | 'fullShuffle' | 'autoUpdateEnabled';
+import { HOME_BLOCK_KEYS, type HomeBlockKey } from '../services/homeBlocks';
+
+const booleanKeys = new Set(['adBlocker', 'proxyEnabled', 'webhookEnabled', 'displaySCSmallIcon', 'displayGithubLink', 'discordRichPresence', 'displayButtons', 'minimizeToTray', 'navigationControlsEnabled', 'trackParserEnabled', 'richPresencePreviewEnabled', 'hidePromotions', 'hideEventsNearYou', 'hideArtistUpsells', 'fullShuffle', 'autoUpdateEnabled', ...HOME_BLOCK_KEYS]);
+type BooleanKey = 'adBlocker' | 'proxyEnabled' | 'webhookEnabled' | 'displaySCSmallIcon' | 'displayGithubLink' | 'discordRichPresence' | 'displayButtons' | 'minimizeToTray' | 'navigationControlsEnabled' | 'trackParserEnabled' | 'richPresencePreviewEnabled' | 'hidePromotions' | 'hideEventsNearYou' | 'hideArtistUpsells' | 'fullShuffle' | 'autoUpdateEnabled' | HomeBlockKey;
 type StringKey = 'proxyHost' | 'proxyPort' | 'proxyUsername' | 'proxyPassword' | 'webhookUrl' | 'customTheme';
-export type SettingChange = { key: BooleanKey; value: boolean } | { key: StringKey; value: string } | { key: 'webhookTriggerPercentage' | 'statusDisplayType'; value: number } | { key: 'theme'; value: 'dark' | 'light' };
+export type SettingChange = { key: BooleanKey; value: boolean } | { key: StringKey; value: string } | { key: 'webhookTriggerPercentage' | 'statusDisplayType'; value: number } | { key: 'theme'; value: 'dark' | 'light' } | { key: 'siteLanguage'; value: 'ru' | 'en' };
 
 export function validateSettingChange(input: unknown): input is SettingChange {
     if (!input || typeof input !== 'object' || Array.isArray(input)) return false;
@@ -9,6 +11,7 @@ export function validateSettingChange(input: unknown): input is SettingChange {
     if (typeof key !== 'string') return false;
     if (booleanKeys.has(key)) return typeof value === 'boolean';
     if (key === 'theme') return value === 'dark' || value === 'light';
+    if (key === 'siteLanguage') return value === 'ru' || value === 'en';
     if (key === 'statusDisplayType') return value === 0 || value === 1 || value === 2;
     if (key === 'webhookTriggerPercentage') return typeof value === 'number' && Number.isFinite(value) && value >= 0 && value <= 100;
     if (typeof value !== 'string') return false;

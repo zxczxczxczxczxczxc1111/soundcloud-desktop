@@ -11,9 +11,14 @@ import { AdblockService } from './services/adblockService';
 import { ViewStyles, splitThemeCSS } from './services/viewStyles';
 import { pageFeaturesScript } from './services/pageFeatures';
 import { fullShuffleScript } from './services/fullShuffle';
+import { homeBlockDefaults, homeBlocksCss, homePageScript, isHomeBlockKey } from './services/homeBlocks';
+import { waveScript } from './services/wave';
+import { WaveJournal } from './services/waveJournal';
+import { getSiteDictionary } from './services/siteDictionary';
 import { shouldRunGpuInProcess } from './services/gpuProcessMode';
 import { tintIcon } from './services/devIcon';
 import { revealWindow } from './services/revealWindow';
+import { watchHiddenPage } from './services/hiddenPageWatchdog';
 import {
     app,
     BrowserWindow,
@@ -45,7 +50,7 @@ import { ShortcutService } from './services/shortcutService';
 import { PluginService } from './services/pluginService';
 import { audioMonitorScript } from './services/audioMonitorService';
 import { showHomepageConfirmDialog, updateDialogBounds } from './settings/confirmPopup';
-import type { TrackInfo } from './types';
+import type { SiteDictionary, TrackInfo } from './types';
 import { validateTrackUpdatePayload } from './validation';
 import path from 'path';
 import { platform, release } from 'os';
@@ -115,6 +120,8 @@ const store = new Store<Record<string, unknown>>({
         hideEventsNearYou: true,
         hideArtistUpsells: true,
         fullShuffle: true,
+        siteLanguage: 'ru',
+        ...homeBlockDefaults,
         accounts: [{ id: 'default', name: 'Основной аккаунт' }],
         currentAccountId: 'default',
     },
@@ -143,6 +150,9 @@ let settingsManager: SettingsManager;
 let proxyService: ProxyService;
 let adblockService: AdblockService;
 let networkSettingsDirty = false;
+// Язык сайта встаёт только при загрузке страницы
+let pageReloadNeeded = false;
+let waveJournal: WaveJournal | null = null;
 let presenceService: PresenceService;
 let webhookService: WebhookService;
 let updateService: UpdateService | null = null;
@@ -393,7 +403,7 @@ let lastTrackInfo: TrackInfo = {
     artistUrl: '',
 };
 
-function isTrustedSoundCloudSender(event: IpcMainEvent): boolean {
+function isTrustedSoundCloudSender(event: Pick<IpcMainEvent, 'sender' | 'senderFrame'>): boolean {
     if (!contentView || event.sender.id !== contentView.webContents.id || event.senderFrame !== event.sender.mainFrame) return false;
 
     const frameUrl = event.senderFrame?.url || event.sender.getURL();
@@ -683,6 +693,9 @@ async function init() {
     });
 
     mainWindow.addBrowserView(contentView);
+    watchHiddenPage(mainWindow, () =>
+        contentView.webContents.isDestroyed() ? Promise.resolve('gone') : contentView.webContents.executeJavaScript('document.visibilityState'),
+    );
     contentView.setBounds({
         x: 0,
         y: 32,
@@ -748,6 +761,25 @@ async function init() {
         if (!isTrustedSoundCloudSender(event)) return;
         if (command !== 'play' && command !== 'pause' && command !== 'next' && command !== 'previous') return;
         void playbackController.execute(command).catch(console.error);
+    });
+    // Словарь перевода сайта для preload. Запрос синхронный: ответ уходит при первом же присваивании
+    // returnValue, поэтому оно одно и стоит на любом пути, иначе страница встанет
+    ipcMain.on('soundcloud:site-translation', (event) => {
+        let dictionary: SiteDictionary | null = null;
+        try {
+            if (isTrustedSoundCloudSender(event) && store.get('siteLanguage', 'ru') === 'ru') dictionary = getSiteDictionary();
+        } catch (error) {
+            console.error('Словарь перевода сайта не загружен:', error);
+        }
+        event.returnValue = dictionary;
+    });
+    waveJournal?.flush();
+    waveJournal = new WaveJournal(path.join(app.getPath('userData'), 'wave'));
+    ipcMain.removeHandler('soundcloud:wave-journal:load');
+    ipcMain.removeAllListeners('soundcloud:wave-journal:add');
+    ipcMain.handle('soundcloud:wave-journal:load', (event, userId: unknown) => (isTrustedSoundCloudSender(event) ? waveJournal?.load(userId) ?? [] : []));
+    ipcMain.on('soundcloud:wave-journal:add', (event, userId: unknown, ids: unknown) => {
+        if (isTrustedSoundCloudSender(event)) waveJournal?.add(userId, ids);
     });
     if (platform() === 'win32') {
         thumbarService = new ThumbarService(translationService, RESOURCES_PATH, playbackController);
@@ -946,6 +978,8 @@ async function init() {
             // Inject audio monitoring script
             await contentView.webContents.executeJavaScript(audioMonitorScript);
             await contentView.webContents.executeJavaScript(fullShuffleScript(store.get('fullShuffle', true) === true));
+            await contentView.webContents.executeJavaScript(homePageScript());
+            await contentView.webContents.executeJavaScript(waveScript());
 
             // Re-inject all enabled plugin content scripts
             if (pluginService) {
@@ -972,6 +1006,7 @@ async function init() {
         }
         store.set(key, data.value);
         if (key.startsWith('proxy') || key === 'adBlocker') networkSettingsDirty = true;
+        if (key === 'siteLanguage') pageReloadNeeded = true;
 
         console.log(key);
 
@@ -1018,7 +1053,7 @@ async function init() {
             }
             // Re-apply the theme to all content
             applyThemeToContent(isDarkTheme);
-        } else if (key === 'hidePromotions' || key === 'hideEventsNearYou' || key === 'hideArtistUpsells') {
+        } else if (key === 'hidePromotions' || key === 'hideEventsNearYou' || key === 'hideArtistUpsells' || isHomeBlockKey(key)) {
             applyThemeToContent(isDarkTheme);
         } else if (key === 'fullShuffle') {
             void contentView.webContents.executeJavaScript(fullShuffleScript(data.value === true)).catch(console.error);
@@ -1092,6 +1127,10 @@ async function init() {
                 await proxyService.apply();
                 await adblockService.setEnabled(store.get('adBlocker') === true);
                 networkSettingsDirty = false;
+                pageReloadNeeded = true;
+            }
+            if (pageReloadNeeded) {
+                pageReloadNeeded = false;
                 contentView.webContents.reload();
             }
             if (store.get('discordRichPresence')) await presenceService.updatePresence(lastTrackInfo);
@@ -1174,6 +1213,7 @@ function applyThemeToContent(isDark: boolean) {
         'html{scrollbar-width:thin;scrollbar-color:' + (isDark ? 'rgba(255,255,255,.2) rgba(255,255,255,.05)' : 'rgba(0,0,0,.2) rgba(0,0,0,.05)') + '}',
         store.get('hidePromotions', true) ? '.banner.m-promotion{display:none!important}' : '',
         store.get('hideEventsNearYou', true) ? '.velvetCakeModule{display:none!important}' : '',
+        homeBlocksCss((key) => store.get(key, homeBlockDefaults[key]) === true),
         store.get('hideArtistUpsells', true) ? '.creatorSubscriptionsButton.header__creatorUpsell,.artistConnectItem.m-upsellNextPro,.dropdownMenu [href*="checkout.soundcloud.com"],.spotlight:has(.spotlight__upsellBanner),.spotlight__upsellBanner,.spotlight__upsellCTA,.sidebarContent:has(.velvetCakeIframe),.artistConnectContainer .tileGallery__sliderPeekForward,.artistConnectContainer .tileGallery__sliderPeekBackward,.MuiBox-root:has(a[href*="getstarted/fan-support"]){display:none!important}' : '',
         sections.all, sections.content,
     ].join('\n');
@@ -1269,6 +1309,7 @@ app.on('before-quit', () => {
     proxyService?.dispose();
     adblockService?.dispose();
     webhookService?.dispose();
+    waveJournal?.flush();
     updateService?.dispose();
     pluginService?.dispose();
     themeService?.dispose();

@@ -121,6 +121,16 @@ export interface Translations {
 }
 
 /**
+ * Словарь перевода сайта: ключ это английская фраза сайта, перед ней «контекст::», если он есть
+ */
+export interface SiteDictionary {
+    /** Обычные фразы, параметры [[name]] как в оригинале */
+    phrases: Record<string, string>;
+    /** Множественное число: ключ по фразе в единственном числе, формы для 1, 2-4 и 5+, число подставляется в %d */
+    plurals: Record<string, string[]>;
+}
+
+/**
  * Update reason for track state changes
  */
 export type TrackUpdateReason =

@@ -16,6 +16,7 @@ async function initializeSettings() {
     });
     document.getElementById('darkMode').checked = initial.theme !== 'light';
     document.getElementById('useArtistInStatusLineToggle').checked = initial.statusDisplayType === 1;
+    document.getElementById('siteLanguage').value = initial.siteLanguage === 'en' ? 'en' : 'ru';
     document.documentElement.classList.toggle('theme-light', initial.theme === 'light');
     for (const [id, setting] of [
         ['proxyFields', 'proxyEnabled'],
@@ -48,7 +49,7 @@ async function initializeSettings() {
 
     document.getElementById('backdrop').addEventListener('click', () => window.settingsAPI.send('toggle-settings'));
 
-    // Прокси и блокировке рекламы нужна перезагрузка страницы, остальное применяется сразу
+    // Прокси, блокировке рекламы и языку сайта нужна перезагрузка страницы, остальное применяется сразу
     const networkNotice = document.getElementById('networkNotice');
     const showNetworkNotice = () => {
         networkNotice.hidden = false;
@@ -344,7 +345,7 @@ async function initializeSettings() {
         new MutationObserver(sync).observe(select, { childList: true, subtree: true, characterData: true });
         sync();
     }
-    for (const id of ['customThemeSelector', 'accountSelector']) {
+    for (const id of ['customThemeSelector', 'accountSelector', 'siteLanguage']) {
         const select = document.getElementById(id);
         if (select) enhanceSelect(select);
     }
@@ -445,6 +446,18 @@ async function initializeSettings() {
     document.getElementById('fullShuffle')?.addEventListener('change', (e) => {
         ipcRenderer.send('setting-changed', { key: 'fullShuffle', value: e.target.checked });
     });
+
+    // Перевод сайта ставится до его скриптов, поэтому язык меняется только перезагрузкой
+    document.getElementById('siteLanguage').addEventListener('change', (e) => {
+        ipcRenderer.send('setting-changed', { key: 'siteLanguage', value: e.target.value });
+        showNetworkNotice();
+    });
+
+    // Блоки главной прячутся сразу, без перезагрузки
+    for (const input of document.querySelectorAll('#home input[type="checkbox"]'))
+        input.addEventListener('change', (e) => {
+            ipcRenderer.send('setting-changed', { key: e.target.id, value: e.target.checked });
+        });
 
     document.getElementById('proxyEnabled')?.addEventListener('change', (e) => {
         const isEnabled = e.target.checked;

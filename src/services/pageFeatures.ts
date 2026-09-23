@@ -43,8 +43,9 @@ export function installPageFeatures(hideArtistUpsells: boolean): void {
         }
     }
     function attachFrame(frame: HTMLIFrameElement): void {
-        if (!hideArtistUpsells || frames.has(frame) || !['Artist tools', 'Sidebar modules'].includes(frame.title))
-            return;
+        // Перевод сайта меняет title, поэтому врезка узнаётся и по контейнеру
+        const known = ['Artist tools', 'Sidebar modules', 'Инструменты артиста', 'Блоки боковой панели'].includes(frame.title);
+        if (!hideArtistUpsells || frames.has(frame) || !(known || frame.closest('.webiEmbeddedModuleContainer'))) return;
         let observer: MutationObserver | null = null;
         let style: HTMLStyleElement | null = null;
         const container = frame.closest<HTMLElement>('.webiEmbeddedModuleContainer');
