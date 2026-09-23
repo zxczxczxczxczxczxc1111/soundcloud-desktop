@@ -13,6 +13,7 @@ import { pageFeaturesScript } from './services/pageFeatures';
 import { fullShuffleScript } from './services/fullShuffle';
 import { shouldRunGpuInProcess } from './services/gpuProcessMode';
 import { tintIcon } from './services/devIcon';
+import { revealWindow } from './services/revealWindow';
 import {
     app,
     BrowserWindow,
@@ -291,12 +292,9 @@ function resetThemeAndPlugins(): void {
     notificationManager?.show('Тема и плагины отключены');
 }
 
-// prevent rendering engine deadlocks when waking hidden/minimized windows from tray
 function showMainWindow(): void {
     if (!mainWindow || mainWindow.isDestroyed()) return;
-    if (mainWindow.isMinimized()) mainWindow.restore();
-    if (!mainWindow.isVisible()) mainWindow.show();
-    mainWindow.focus();
+    revealWindow(mainWindow);
     adjustContentViews();
 }
 

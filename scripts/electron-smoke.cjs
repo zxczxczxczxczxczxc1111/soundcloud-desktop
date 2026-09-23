@@ -1,4 +1,4 @@
-const { app, BrowserWindow, ipcMain, session } = require('electron');
+const { app, BrowserWindow, WebContentsView, ipcMain, session } = require('electron');
 const assert = require('node:assert/strict');
 const path = require('node:path');
 
@@ -176,6 +176,33 @@ app.whenReady().then(async () => {
         proxyWindow.destroy();
         await new Promise(resolve => proxy.close(resolve));
     }
+    // Свёрнутое в трей окно возвращается с живой страницей: при restore() раньше show() она оставалась скрытой
+    const { revealWindow } = require('../tsc/services/revealWindow');
+    const trayWindow = new BrowserWindow({ width: 320, height: 240, webPreferences: { sandbox: true } });
+    const trayPage = new WebContentsView({ webPreferences: { sandbox: true } });
+    trayWindow.contentView.addChildView(trayPage);
+    trayPage.setBounds({ x: 0, y: 0, width: 320, height: 240 });
+    await trayPage.webContents.loadURL('data:text/html,<body>tray</body>');
+    const visibility = async (expected) => {
+        for (let attempt = 0; attempt < 30; attempt++) {
+            const state = await trayPage.webContents.executeJavaScript('document.visibilityState');
+            if (state === expected) return state;
+            await new Promise(resolve => setTimeout(resolve, 100));
+        }
+        return trayPage.webContents.executeJavaScript('document.visibilityState');
+    };
+    try {
+        for (let run = 0; run < 2; run++) {
+            trayWindow.minimize();
+            trayWindow.hide();
+            assert.equal(await visibility('hidden'), 'hidden');
+            revealWindow(trayWindow);
+            assert.equal(await visibility('visible'), 'visible');
+        }
+    } finally {
+        trayWindow.destroy();
+    }
+    console.log('PASS: window restored from tray');
     win.destroy();
     console.log('PASS: CSS boundary, 30 settings cycles, quoted plugin ID, isolated plugin callbacks and hung worker termination, IPC rejection, dialogs, proxy authentication and disable.');
     app.quit();
