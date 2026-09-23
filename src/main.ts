@@ -1367,6 +1367,7 @@ app.on('activate', function () {
 
 app.on('before-quit', () => {
     isQuitting = true;
+    if (presenceService) void presenceService.dispose();
     if (shortcutService) {
         shortcutService.destroy();
     }

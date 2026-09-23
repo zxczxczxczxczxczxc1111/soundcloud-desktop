@@ -1,176 +1,188 @@
-import type ElectronStore = require('electron-store');
 import { ActivityType } from 'discord-api-types/v10';
-import { Client as DiscordClient, SetActivity } from '@xhayper/discord-rpc';
-import { TranslationService } from './translationService';
+import { Client as DiscordClient, type SetActivity } from '@xhayper/discord-rpc';
+import type { TranslationService } from './translationService';
 import { normalizeTrackInfo } from '../utils/trackParser';
 import type { TrackInfo } from '../types';
 
-export interface Info {
-    rpc: DiscordClient;
-    ready: boolean;
-    autoReconnect: boolean;
+interface Settings {
+    get(key: string, fallback?: unknown): unknown;
+}
+export const PRESENCE_INTERVAL_MS = 5000;
+
+function seconds(value: string): number {
+    const parts = value.trim().replace(/^-/, '').split(':').map(Number);
+    if (parts.some((part) => !Number.isFinite(part) || part < 0)) return 0;
+    return parts.reduce((total, part) => total * 60 + part, 0) * (value.trim().startsWith('-') ? -1 : 1);
+}
+function label(value: string): string {
+    const chars = Array.from(value);
+    return (chars.length > 128 ? chars.slice(0, 125).join('') + '...' : value).padEnd(2, ' ');
 }
 
 export class PresenceService {
-    private store: ElectronStore;
-    private info: Info;
+    private rpc: DiscordClient | null = null;
+    private latest: { track: TrackInfo; observedAt: number } | null = null;
+    private timer: ReturnType<typeof setTimeout> | null = null;
+    private running: Promise<void> | null = null;
+    private disposed = false;
+    private revision = 0;
+    private lastSentAt = -Infinity;
+    private lastPayload: string | null = null;
+    private retryMs = 2000;
     private displayWhenIdling: boolean;
     private displaySCSmallIcon: boolean;
     private displayButtons: boolean;
     private statusDisplayType: number;
-    private translationService: TranslationService;
 
-    constructor(store: ElectronStore, translationService: TranslationService) {
-        this.store = store;
-        this.displayWhenIdling = store.get('displayWhenIdling', false) as boolean;
-        this.displaySCSmallIcon = store.get('displaySCSmallIcon', false) as boolean;
-        this.displayButtons = store.get('displayButtons', false) as boolean;
-        this.translationService = translationService;
-        this.statusDisplayType = (store.get('statusDisplayType') as number) ?? 1; // default STATE
-
-        this.info = {
-            rpc: new DiscordClient({
-                clientId: '1090770350251458592',
-            }),
-            ready: false,
-            autoReconnect: true,
+    constructor(
+        private store: Settings,
+        private translationService: Pick<TranslationService, 'translate'>,
+    ) {
+        this.displayWhenIdling = store.get('displayWhenIdling', false) === true;
+        this.displaySCSmallIcon = store.get('displaySCSmallIcon', false) === true;
+        this.displayButtons = store.get('displayButtons', false) === true;
+        this.statusDisplayType = Number(store.get('statusDisplayType', 1));
+    }
+    public async updatePresence(track: TrackInfo): Promise<void> {
+        if (this.disposed) return;
+        this.latest = { track: { ...track }, observedAt: Date.now() };
+        this.revision++;
+        if (!this.timer) await this.flush();
+    }
+    private schedule(delay: number): void {
+        if (this.disposed || this.timer) return;
+        this.timer = setTimeout(() => {
+            this.timer = null;
+            void this.flush();
+        }, delay);
+        this.timer.unref?.();
+    }
+    private activity(): SetActivity | null {
+        if (this.store.get('discordRichPresence') !== true || !this.latest) return null;
+        const { track, observedAt } = this.latest;
+        if (!track.isPlaying)
+            return this.displayWhenIdling
+                ? {
+                      type: ActivityType.Listening,
+                      details: 'Listening to SoundCloud',
+                      state: 'Paused',
+                      largeImageKey: 'idling',
+                  }
+                : null;
+        if (!track.title || !track.author) return null;
+        const elapsed = Math.max(0, seconds(track.elapsed));
+        const rawDuration = seconds(track.duration);
+        const duration = rawDuration < 0 ? elapsed - rawDuration : rawDuration;
+        if (duration <= 0) return null;
+        const normalized = normalizeTrackInfo(
+            track.title,
+            track.author,
+            this.store.get('trackParserEnabled', true) === true,
+        );
+        const startTimestamp = observedAt - elapsed * 1000;
+        return {
+            type: ActivityType.Listening,
+            name: this.statusDisplayType === 1 ? normalized.artist : 'SoundCloud',
+            details: label(normalized.track),
+            state: label(normalized.artist),
+            largeImageKey: track.artwork ? track.artwork.replace('50x50.', '500x500.') : undefined,
+            startTimestamp,
+            endTimestamp: startTimestamp + duration * 1000,
+            smallImageKey: this.displaySCSmallIcon ? 'soundcloud-logo' : undefined,
+            smallImageText: this.displaySCSmallIcon ? 'SoundCloud' : undefined,
+            statusDisplayType: this.statusDisplayType,
+            buttons:
+                this.displayButtons && track.url
+                    ? [{ label: this.translationService.translate('listenOnSoundcloud'), url: track.url }]
+                    : undefined,
         };
-
-        this.info.rpc.login().catch(console.error);
     }
-
-    public async updatePresence(trackInfo: TrackInfo): Promise<void> {
+    private async flush(): Promise<void> {
+        if (this.disposed) return;
+        if (this.running) return this.running;
+        const delay = this.lastSentAt + PRESENCE_INTERVAL_MS - Date.now();
+        if (delay > 0) {
+            this.schedule(delay);
+            return;
+        }
+        this.running = this.send();
         try {
-            if (!this.store.get('discordRichPresence')) {
-                this.clearActivity();
-                return;
+            await this.running;
+        } finally {
+            this.running = null;
+        }
+    }
+    private async send(): Promise<void> {
+        try {
+            if (this.activity() && !this.rpc?.isConnected) {
+                const rpc = this.rpc ?? new DiscordClient({ clientId: '1090770350251458592' });
+                if (!this.rpc) {
+                    this.rpc = rpc;
+                    rpc.on('disconnected', () => {
+                        if (this.rpc !== rpc || this.disposed) return;
+                        this.lastPayload = null;
+                        if (this.activity()) this.schedule(2000);
+                    });
+                }
+                await rpc.login();
             }
-
-            if (trackInfo.isPlaying) {
-                if (!trackInfo.title || !trackInfo.author) {
-                    console.log('Incomplete track info:', trackInfo);
-                    return;
-                }
-
-                const normalizedTrack = normalizeTrackInfo(
-                    trackInfo.title,
-                    trackInfo.author,
-                    this.store.get('trackParserEnabled', true) as boolean,
-                );
-
-                const currentTrack = {
-                    author: normalizedTrack.artist,
-                    title: normalizedTrack.track,
-                    url: trackInfo.url,
-                };
-
-                const [elapsedTime, totalTime] = [trackInfo.elapsed, trackInfo.duration];
-                const artworkUrl = trackInfo.artwork;
-
-                const parseTimeToMs = (time: string): number => {
-                    if (!time) return 0;
-                    const isNegative = time.trim().startsWith('-');
-                    const raw = isNegative ? time.trim().slice(1) : time.trim();
-                    const parts = raw.split(':').map((p) => Number(p));
-                    // Support H:MM:SS or MM:SS
-                    let seconds = 0;
-                    for (const part of parts) {
-                        seconds = seconds * 60 + (isNaN(part) ? 0 : part);
-                    }
-                    const ms = seconds * 1000;
-                    return isNegative ? -ms : ms;
-                };
-
-                const elapsedMilliseconds = Math.max(0, parseTimeToMs(elapsedTime));
-                const parsedTotal = parseTimeToMs(totalTime);
-                const totalMilliseconds =
-                    parsedTotal < 0
-                        ? elapsedMilliseconds + Math.abs(parsedTotal) // total time = elapsed + remaining
-                        : parsedTotal;
-
-                if (totalMilliseconds <= 0) return;
-
-                if (!this.info.rpc.isConnected) {
-                    if (await !this.info.rpc.login().catch(console.error)) {
-                        return;
-                    }
-                }
-
-                const now = Date.now();
-                const startTimestamp = now - elapsedMilliseconds;
-                const endTimestamp = startTimestamp + totalMilliseconds;
-
-                const activity: SetActivity & { name?: string; statusDisplayType?: number } = {
-                    type: ActivityType.Listening,
-                    name: this.statusDisplayType === 1 ? currentTrack.author : 'SoundCloud',
-                    details: `${this.shortenString(currentTrack.title)}${currentTrack.title.length < 2 ? '⠀⠀' : ''}`,
-                    state: `${this.shortenString(currentTrack.author)}${currentTrack.author.length < 2 ? '⠀⠀' : ''}`,
-                    largeImageKey: artworkUrl.replace('50x50.', '500x500.'),
-                    startTimestamp,
-                    endTimestamp,
-                    smallImageKey: this.displaySCSmallIcon ? 'soundcloud-logo' : '',
-                    smallImageText: this.displaySCSmallIcon ? 'SoundCloud' : '',
-                    statusDisplayType: this.statusDisplayType,
-                    instance: false,
-                };
-
-                if (this.displayButtons && currentTrack.url) {
-                    activity.buttons = [
-                        {
-                            label: `▶️ ${this.translationService.translate('listenOnSoundcloud')}`,
-                            url: currentTrack.url,
-                        },
-                    ];
-                }
-
-                this.info.rpc.user?.setActivity(activity);
-            } else if (this.displayWhenIdling && this.store.get('discordRichPresence')) {
-                this.info.rpc.user?.setActivity({
-                    details: 'Listening to SoundCloud',
-                    state: 'Paused',
-                    largeImageKey: 'idling',
-                    largeImageText: 'Paused',
-                    smallImageKey: 'soundcloud-logo',
-                    smallImageText: 'SoundCloud',
-                    instance: false,
-                });
-            } else {
-                this.info.rpc.user?.clearActivity();
-            }
+            if (this.disposed) return;
+            // Пока шло подключение, трек или настройка могли измениться.
+            const revision = this.revision;
+            const activity = this.activity();
+            const payload = JSON.stringify(activity);
+            if (!this.rpc?.isConnected || !this.rpc.user || payload === this.lastPayload) return;
+            if (activity) await this.rpc.user.setActivity(activity);
+            else await this.rpc.user.clearActivity();
+            this.lastPayload = payload;
+            this.lastSentAt = Date.now();
+            this.retryMs = 2000;
+            if (revision !== this.revision) this.schedule(PRESENCE_INTERVAL_MS);
         } catch (error) {
-            console.error('Error during RPC update:', error);
+            console.error('Discord: не удалось обновить активность:', error);
+            const failed = this.rpc;
+            this.rpc = null;
+            this.lastPayload = null;
+            if (failed)
+                await failed.destroy().catch((cause: unknown) => console.error('Discord: ошибка закрытия:', cause));
+            if (this.activity()) {
+                this.schedule(this.retryMs);
+                this.retryMs = Math.min(this.retryMs * 2, 30000);
+            }
         }
     }
-
-    public updateDisplaySettings(
-        displayWhenIdling: boolean,
-        displaySCSmallIcon: boolean,
-        displayButtons?: boolean,
-    ): void {
-        this.displayWhenIdling = displayWhenIdling;
-        this.displaySCSmallIcon = displaySCSmallIcon;
-        if (displayButtons !== undefined) {
-            this.displayButtons = displayButtons;
-        }
+    public updateDisplaySettings(idling: boolean, smallIcon: boolean, buttons?: boolean): void {
+        this.displayWhenIdling = idling;
+        this.displaySCSmallIcon = smallIcon;
+        if (buttons !== undefined) this.displayButtons = buttons;
+        this.revision++;
+        void this.flush();
     }
-
-    public setStatusDisplayType(statusDisplayType: number): void {
-        this.statusDisplayType = statusDisplayType;
+    public setStatusDisplayType(value: number): void {
+        this.statusDisplayType = value;
+        this.revision++;
+        void this.flush();
     }
-
     public async reconnect(): Promise<void> {
-        await this.info.rpc.login().catch(console.error);
+        this.lastPayload = null;
+        await this.flush();
     }
-
     public isConnected(): boolean {
-        return this.info.rpc.isConnected;
+        return this.rpc?.isConnected ?? false;
     }
-
     public clearActivity(): void {
-        this.info.rpc.user?.clearActivity();
+        this.latest = null;
+        this.revision++;
+        if (this.timer) clearTimeout(this.timer);
+        this.timer = null;
+        void this.flush();
     }
-
-    private shortenString(str: string): string {
-        return str.length > 128 ? str.substring(0, 128) + '...' : str;
+    public async dispose(): Promise<void> {
+        this.disposed = true;
+        if (this.timer) clearTimeout(this.timer);
+        this.timer = null;
+        const rpc = this.rpc;
+        this.rpc = null;
+        if (rpc) await rpc.destroy().catch((error: unknown) => console.error('Discord: ошибка закрытия:', error));
     }
 }
