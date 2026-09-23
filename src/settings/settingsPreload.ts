@@ -1,6 +1,7 @@
 import { contextBridge, ipcRenderer, type IpcRendererEvent } from 'electron';
 
 const SEND_CHANNELS = new Set([
+    'settings-ready',
     'apply-changes',
     'setting-changed',
     'show-plugin-homepage-dialog',
@@ -11,6 +12,8 @@ const SEND_CHANNELS = new Set([
 ]);
 
 const INVOKE_CHANNELS = new Set([
+    'get-settings-state',
+    'get-current-track',
     'apply-custom-theme',
     'get-current-custom-theme',
     'get-custom-themes',

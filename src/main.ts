@@ -1,3 +1,5 @@
+import { ViewStyles, splitThemeCSS } from './services/viewStyles';
+import { pageFeaturesScript } from './services/pageFeatures';
 import {
     app,
     BrowserWindow,
@@ -308,7 +310,7 @@ function createBrowserWindow(windowState: any): BrowserWindow {
             plugins: true,
             experimentalFeatures: false,
             devTools: devMode,
-            backgroundThrottling: false,
+            backgroundThrottling: true,
             ...(isMac ? { spellcheck: false } : {}),
         },
         backgroundColor: isDarkTheme ? '#121212' : '#ffffff',
@@ -615,7 +617,7 @@ async function init() {
         applyThemeToContent(isDarkTheme);
     });
     notificationManager = new NotificationManager(mainWindow);
-    settingsManager = new SettingsManager(mainWindow, store, translationService);
+    settingsManager = new SettingsManager(mainWindow, store);
     proxyService = new ProxyService(mainWindow, store, queueToastNotification);
     presenceService = new PresenceService(store, translationService);
     webhookService = new WebhookService(store);
@@ -803,7 +805,7 @@ async function init() {
         }
 
         // Update the language in the settings manager
-        settingsManager.updateTranslations(translationService);
+        settingsManager.updateTranslations();
 
         // Update navigation state after page load
         updateNavigationState();
@@ -957,55 +959,17 @@ async function init() {
         }
     });
 
-    // bg username poller (handles dynamic logins and window resizing)
-    setInterval(async () => {
-        if (!contentView) return;
-        try {
-            const username = await contentView.webContents.executeJavaScript(`
-				(() => {
-					try {
-						// Look for the main profile button in the nav
-						const profileBtn = document.querySelector('.header__userNav [data-menu-name="profile"]');
-						if (profileBtn && profileBtn.href) {
-							// href is "https://soundcloud.com/elricfd"
-							const parts = profileBtn.href.split('/');
-							return parts[parts.length - 1]; // returns "elricfd"
-						}
-						
-						// Fallback selector
-						const userBtn = document.querySelector('.header__userNavUsernameButton');
-						if (userBtn && userBtn.href) {
-							const parts = userBtn.href.split('/');
-							return parts[parts.length - 1];
-						}
-						
-						return null;
-					} catch(err) {
-						return null;
-					}
-				})()
-			`);
-
-            if (username && typeof username === 'string' && username.trim() !== '') {
-                const accounts = store.get('accounts', [{ id: 'default', name: 'Main Account' }]);
-                const currentId = store.get('currentAccountId', 'default');
-                const accountIndex = accounts.findIndex((a: any) => a.id === currentId);
-
-                if (accountIndex !== -1 && accounts[accountIndex].name !== username) {
-                    console.log(`[Account Manager] Found new username: ${username}. Updating database...`);
-
-                    accounts[accountIndex].name = username;
-                    store.set('accounts', [...accounts]); // Write to disk
-
-                    if (settingsManager && settingsManager.getView()) {
-                        settingsManager.getView()?.webContents.send('accounts-updated');
-                    }
-                }
-            }
-        } catch (e) {
-            // silently ignore if page navigating
+    ipcMain.on('soundcloud:profile-update', (event, username: unknown) => {
+        if (!isTrustedSoundCloudSender(event) || typeof username !== 'string' || !/^[a-zA-Z0-9_.-]{1,100}$/.test(username)) return;
+        const accounts = store.get('accounts', [{ id: 'default', name: 'Main Account' }]) as { id: string; name: string }[];
+        const currentId = store.get('currentAccountId', 'default');
+        const account = accounts.find((item) => item.id === currentId);
+        if (account && account.name !== username) {
+            account.name = username;
+            store.set('accounts', accounts);
+            settingsManager.getView()?.webContents.send('accounts-updated');
         }
-    }, 5000);
+    });
 }
 
 function setupMemoryPressureHandler() {
@@ -1073,218 +1037,27 @@ function setupThemeHandlers() {
     });
 }
 
+const viewStyles = new ViewStyles();
 function applyThemeToContent(isDark: boolean) {
-    if (!contentView) return;
-
-    const customThemeCSS = themeService.getCurrentCustomThemeCSS();
+    if (!contentView || contentView.webContents.isDestroyed()) return;
+    const sections = splitThemeCSS(themeService.getCurrentCustomThemeCSS());
     const themeColors = themeService.getCurrentThemeColors();
-
-    // Update theme colors for all UI components
-    if (notificationManager) {
-        notificationManager.setThemeColors(themeColors);
-    }
-    if (settingsManager) {
-        settingsManager.setThemeColors(themeColors);
-    }
-    if (headerView && headerView.webContents) {
-        headerView.webContents.send('theme-colors-changed', themeColors);
-    }
-
-    // fetch settings for component toggles
-    const hidePromotions = store.get('hidePromotions', true);
-    const hideEventsNearYou = store.get('hideEventsNearYou', true);
-    const hideArtistUpsells = store.get('hideArtistUpsells', true);
-
-    // /* @target all|content|header|settings */ ... /* @end */
-    const sections = (function splitSections(css: string | null) {
-        const res = { all: '', content: '', header: '', settings: '' } as Record<string, string>;
-        if (!css) return res;
-        const regex =
-            /\/\*\s*@target\s+(all|content|header|settings)\s*\*\/[\s\S]*?(?=(\/\*\s*@target\s+(?:all|content|header|settings)\s*\*\/)|$)/gi;
-        let match: RegExpExecArray | null;
-        let any = false;
-        while ((match = regex.exec(css)) !== null) {
-            any = true;
-            const block = match[0];
-            const targetMatch = /@target\s+(all|content|header|settings)/i.exec(block);
-            const target = (targetMatch?.[1] || '').toLowerCase();
-            const body = block.replace(/^[\s\S]*?\*\//, '').trim();
-            res[target] += (res[target] ? '\n' : '') + body;
-        }
-        if (!any) {
-            // no markers: treat entire CSS as content
-            res.content = css;
-        }
-        return res;
-    })(customThemeCSS);
-
-    const themeScript = `
-        (function() {
-            try {
-                document.documentElement.classList.toggle('theme-light', !${isDark});
-                document.documentElement.classList.toggle('theme-dark', ${isDark});
-                document.body.classList.toggle('theme-light', !${isDark});
-                document.body.classList.toggle('theme-dark', ${isDark});
-                
-                if (${isDark}) {
-                    document.documentElement.style.setProperty('--background-base', '#121212');
-                    document.documentElement.style.setProperty('--background-surface', '#212121');
-                    document.documentElement.style.setProperty('--text-base', '#ffffff');
-                } else {
-                    document.documentElement.style.setProperty('--background-base', '#ffffff');
-                    document.documentElement.style.setProperty('--background-surface', '#f2f2f2');
-                    document.documentElement.style.setProperty('--text-base', '#333333');
-                }
-                
-                const style = document.createElement('style');
-                style.id = 'custom-scrollbar-style';
-                style.textContent = \`
-                    ::-webkit-scrollbar-button {
-                        display: none;
-                    }
-                    
-                    ::-webkit-scrollbar {
-                        width: 8px;
-                        height: 8px;
-                        background-color: ${isDark ? 'rgba(255, 255, 255, 0.05)' : 'rgba(0, 0, 0, 0.05)'};
-                    }
-                    
-                    ::-webkit-scrollbar-track {
-                        background-color: transparent;
-                    }
-                    
-                    ::-webkit-scrollbar-thumb {
-                        background-color: ${isDark ? 'rgba(255, 255, 255, 0.2)' : 'rgba(0, 0, 0, 0.2)'};
-                        border-radius: 4px;
-                        transition: background-color 0.3s;
-                    }
-                    
-                    ::-webkit-scrollbar-thumb:hover {
-                        background-color: ${isDark ? 'rgba(255, 255, 255, 0.3)' : 'rgba(0, 0, 0, 0.3)'};
-                    }
-                    
-                    ::-webkit-scrollbar-corner {
-                        background-color: transparent;
-                    }
-                    
-                    ${hidePromotions ? '.banner.m-promotion { display: none !important; }' : ''}
-                    
-                    ${hideEventsNearYou ? '.velvetCakeModule { display: none !important; }' : ''}
-                    
-					${hideArtistUpsells ? '.creatorSubscriptionsButton.header__creatorUpsell, .artistConnectItem.m-upsellNextPro, .dropdownMenu [href*="checkout.soundcloud.com"], .dropdownMenu *:has(> svg.profileMenu__icon path[fill="#F50"]), .spotlight:has(.spotlight__upsellBanner), .spotlight__upsellBanner, .spotlight__upsellCTA, .sidebarContent:has(.velvetCakeIframe), .artistConnectContainer .tileGallery__sliderPeekForward, .artistConnectContainer .tileGallery__sliderPeekBackward, .MuiBox-root:has(a[href*="getstarted/fan-support"]) { display: none !important; }' : ''}
-                \`;
-                
-                const existingStyle = document.getElementById('custom-scrollbar-style');
-                if (existingStyle) {
-                    existingStyle.remove();
-                }
-                document.head.appendChild(style);
-				
-				// Handle iframe-based artist upsells
-                if (window._artistUpsellInterval) clearInterval(window._artistUpsellInterval);
-                window._artistUpsellInterval = setInterval(() => {
-                    // Grab both Artist tools AND Sidebar modules iframes
-                    document.querySelectorAll('iframe[title="Artist tools"], iframe[title="Sidebar modules"]').forEach(iframe => {
-                        try {
-                            const doc = iframe.contentDocument || iframe.contentWindow?.document;
-                            const container = iframe.closest('.webiEmbeddedModuleContainer');
-                            
-                            if (container && doc) {
-                                // inject CSS directly INSIDE iframe to hide waitlist card
-                                if (!doc.getElementById('custom-iframe-style')) {
-                                    const iframeStyle = doc.createElement('style');
-                                    iframeStyle.id = 'custom-iframe-style';
-                                    // notice single quotes so  evaluates to valid JS string
-                                    iframeStyle.textContent = '${hideArtistUpsells ? '.MuiBox-root:has(a[href*="getstarted/fan-support"]) { display: none !important; }' : ''}';
-                                    doc.head.appendChild(iframeStyle);
-                                }
-
-                                // 2. If we find a paywall lock, hide the entire parent wrapper
-                                if (${hideArtistUpsells} && doc.querySelector('svg[aria-label="Paywalled feature"]')) {
-                                    container.style.display = 'none';
-                                } else {
-                                    container.style.display = '';
-                                }
-                            }
-                        } catch(e) {
-                            // silently fail if iframe not fully loaded yet
-                        }
-                    });
-                }, 1000);
-
-                // apply custom theme CSS (content section + all) if available
-                const contentCSS = \`${sections.all + (sections.all && sections.content ? '\n' : '') + sections.content || ''}\`;
-                if (contentCSS.trim()) {
-                    const customStyle = document.createElement('style');
-                    customStyle.id = 'custom-theme-style';
-                    customStyle.textContent = contentCSS;
-                    
-                    const existingCustomStyle = document.getElementById('custom-theme-style');
-                    if (existingCustomStyle) {
-                        existingCustomStyle.remove();
-                    }
-                    document.head.appendChild(customStyle);
-                    console.log('Applied custom theme CSS');
-                } else {
-                    // Remove custom theme if none is selected
-                    const existingCustomStyle = document.getElementById('custom-theme-style');
-                    if (existingCustomStyle) {
-                        existingCustomStyle.remove();
-                        console.log('Removed custom theme CSS');
-                    }
-                }
-            } catch(e) {
-                console.error('Error applying theme:', e);
-            }
-        })();
-    `;
-
-    contentView.webContents.executeJavaScript(themeScript).catch(console.error);
-
-    // inject into header & settings views using specific sections
-    const headerCSS = sections.all + (sections.all && sections.header ? '\n' : '') + sections.header || '';
-    if (headerView && headerView.webContents) {
-        const headerScript = `
-            (function(){
-                try {
-                    const css = \`${headerCSS}\`;
-                    const id = 'custom-theme-style';
-                    const existing = document.getElementById(id);
-                    if (existing) existing.remove();
-                    if (css.trim()){
-                        const style = document.createElement('style');
-                        style.id = id;
-                        style.textContent = css;
-                        document.head.appendChild(style);
-                        console.log('Applied custom header theme CSS');
-                    }
-                } catch(e){ console.error('Header theme inject error:', e); }
-            })();
-        `;
-        headerView.webContents.executeJavaScript(headerScript).catch(console.error);
-    }
-
-    if (settingsManager) {
-        const settingsCSS = sections.all + (sections.all && sections.settings ? '\n' : '') + sections.settings || '';
-        const settingsScript = `
-            (function(){
-                try {
-                    const css = \`${settingsCSS}\`;
-                    const id = 'custom-theme-style';
-                    const existing = document.getElementById(id);
-                    if (existing) existing.remove();
-                    if (css.trim()){
-                        const style = document.createElement('style');
-                        style.id = id;
-                        style.textContent = css;
-                        document.head.appendChild(style);
-                        console.log('Applied custom settings theme CSS');
-                    }
-                } catch(e){ console.error('Settings theme inject error:', e); }
-            })();
-        `;
-        settingsManager.getView()?.webContents.executeJavaScript(settingsScript).catch(console.error);
-    }
+    notificationManager?.setThemeColors(themeColors);
+    settingsManager?.setThemeColors(themeColors);
+    headerView?.webContents.send('theme-colors-changed', themeColors);
+    const css = [
+        ':root{--background-base:' + (isDark ? '#121212' : '#ffffff') + ';--background-surface:' + (isDark ? '#212121' : '#f2f2f2') + ';--text-base:' + (isDark ? '#ffffff' : '#333333') + ';}',
+        '::-webkit-scrollbar-button{display:none!important}::-webkit-scrollbar{width:8px;height:8px;background-color:' + (isDark ? 'rgba(255,255,255,.05)' : 'rgba(0,0,0,.05)') + ';}::-webkit-scrollbar-thumb{border-radius:4px;background-color:' + (isDark ? 'rgba(255,255,255,.2)' : 'rgba(0,0,0,.2)') + ';}::-webkit-scrollbar-corner{background:transparent}',
+        store.get('hidePromotions', true) ? '.banner.m-promotion{display:none!important}' : '',
+        store.get('hideEventsNearYou', true) ? '.velvetCakeModule{display:none!important}' : '',
+        store.get('hideArtistUpsells', true) ? '.creatorSubscriptionsButton.header__creatorUpsell,.artistConnectItem.m-upsellNextPro,.dropdownMenu [href*="checkout.soundcloud.com"],.spotlight:has(.spotlight__upsellBanner),.spotlight__upsellBanner,.spotlight__upsellCTA,.sidebarContent:has(.velvetCakeIframe),.artistConnectContainer .tileGallery__sliderPeekForward,.artistConnectContainer .tileGallery__sliderPeekBackward,.MuiBox-root:has(a[href*="getstarted/fan-support"]){display:none!important}' : '',
+        sections.all, sections.content,
+    ].join('\n');
+    void viewStyles.apply(contentView.webContents, css).catch(console.error);
+    void contentView.webContents.executeJavaScript('document.documentElement.classList.toggle("theme-light",' + JSON.stringify(!isDark) + ');document.documentElement.classList.toggle("theme-dark",' + JSON.stringify(isDark) + ');document.body.classList.toggle("theme-light",' + JSON.stringify(!isDark) + ');document.body.classList.toggle("theme-dark",' + JSON.stringify(isDark) + ');').catch(console.error);
+    void contentView.webContents.executeJavaScript(pageFeaturesScript(store.get('hideArtistUpsells', true) === true)).catch(console.error);
+    if (headerView) void viewStyles.apply(headerView.webContents, sections.all + '\n' + sections.header).catch(console.error);
+    settingsManager?.setCustomCSS(sections.all + '\n' + sections.settings);
 }
 
 function initializeShortcuts() {

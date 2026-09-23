@@ -38,13 +38,8 @@ export function extractThemeColors(cssContent: string): ThemeColors | null {
             return value;
         }
 
-        // Handle rgb/rgba
-        if (value.match(/^rgba?\(/i)) {
-            return value;
-        }
-
-        // Handle hsl/hsla
-        if (value.match(/^hsla?\(/i)) {
+        // Палитра также попадает в HTML уведомлений: допускается только синтаксис цвета.
+        if (value.match(/^(?:rgba?|hsla?)\(\s*(?:[-+\d.%\s,/]|deg|grad|rad|turn)+\)$/i)) {
             return value;
         }
 
