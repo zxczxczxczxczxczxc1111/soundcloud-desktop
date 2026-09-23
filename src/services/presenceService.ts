@@ -125,7 +125,7 @@ export class PresenceService {
     private async send(): Promise<void> {
         try {
             if (this.activity() && !this.rpc?.isConnected) {
-                const rpc = this.rpc ?? new DiscordClient({ clientId: '1090770350251458592' });
+                const rpc = this.rpc ?? new DiscordClient({ clientId: '1552246011626389554' });
                 if (!this.rpc) {
                     this.rpc = rpc;
                     rpc.on('disconnected', () => {
