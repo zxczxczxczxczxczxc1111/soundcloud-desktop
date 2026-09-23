@@ -4,6 +4,7 @@ import { installRendererRecovery } from './services/rendererRecovery';
 import { mediaControlsScript } from './services/mediaControls';
 import { protectContent } from './contentPolicy';
 import { validateSettingChange } from './settings/validateSetting';
+import { applyPreferenceMigrations } from './settings/preferenceMigrations';
 import { isTrustedLocalSender, trustLocalFile } from './trustedViews';
 import { PlaybackController } from './services/playbackController';
 import { AdblockService } from './services/adblockService';
@@ -68,7 +69,7 @@ console.log(`Resources path: ${RESOURCES_PATH}`);
 const store = new Store<Record<string, unknown>>({
     name: 'preferences',
     defaults: {
-        adBlocker: false,
+        adBlocker: true,
         proxyEnabled: false,
         proxyHost: '',
         proxyPort: '',
@@ -96,6 +97,7 @@ const store = new Store<Record<string, unknown>>({
     },
     clearInvalidConfig: true,
 });
+applyPreferenceMigrations(store);
 
 interface Account { id: string; name: string }
 function getAccounts(): Account[] {
