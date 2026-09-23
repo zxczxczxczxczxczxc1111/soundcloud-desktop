@@ -16,6 +16,12 @@ const compat = new FlatCompat({
 
 export default defineConfig([
     {
+        files: ['src/**/*.js'],
+        languageOptions: {
+            globals: Object.fromEntries(['window', 'document', 'navigator', 'console', 'URL', 'HTMLInputElement', 'setTimeout', 'clearTimeout', 'setInterval', 'clearInterval', 'requestAnimationFrame', 'cancelAnimationFrame'].map((name) => [name, 'readonly'])),
+        },
+    },
+    {
         extends: compat.extends(
             'eslint:recommended',
             'plugin:@typescript-eslint/eslint-recommended',

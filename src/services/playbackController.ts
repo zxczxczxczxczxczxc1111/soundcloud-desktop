@@ -11,7 +11,7 @@ export function executePageCommand(command: PlaybackCommand): boolean {
         like: '.playbackSoundBadge__like',
     };
     const button = document.querySelector<HTMLElement>(selectors[command]);
-    if (!button || button.getAttribute('aria-disabled') === 'true' || button.hasAttribute('disabled')) return false;
+    if (!button || button.getAttribute('aria-disabled') === 'true' || button.hasAttribute('disabled') || button.classList.contains('disabled')) return false;
     const playing = button.classList.contains('playing');
     if ((command === 'play' && playing) || (command === 'pause' && !playing)) return true;
     button.click();

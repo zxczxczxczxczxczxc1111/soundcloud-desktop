@@ -1,7 +1,10 @@
-import { BrowserView, BrowserWindow, ipcMain } from 'electron';
+import { isTrustedLocalSender, trustLocalView } from '../trustedViews';
+import { randomBytes } from 'crypto';
+import { WebContentsView, BrowserWindow, ipcMain } from 'electron';
 import { join } from 'path';
 
-let confirmPopupView: BrowserView | null = null;
+let confirmPopupView: WebContentsView | null = null;
+let finishPending: (() => void) | null = null;
 const devMode = process.argv.includes('--dev');
 const isMac = process.platform === 'darwin';
 
@@ -23,16 +26,12 @@ function updateHomepageConfirmBounds(mainWindow: BrowserWindow): void {
 export async function showHomepageConfirmDialog(mainWindow: BrowserWindow, url: string): Promise<boolean> {
     if (!mainWindow) return false;
 
-    if (confirmPopupView) {
-        mainWindow.removeBrowserView(confirmPopupView);
-        (confirmPopupView as any).webContents.destroy();
-        confirmPopupView = null;
-    }
+    finishPending?.();
 
     const requestId = `homepage-confirm-${Date.now()}-${Math.random().toString(36).slice(2)}`;
     const safeUrl = escapeHtml(url);
 
-    confirmPopupView = new BrowserView({
+    confirmPopupView = new WebContentsView({
         webPreferences: {
             nodeIntegration: false,
             contextIsolation: true,
@@ -47,11 +46,13 @@ export async function showHomepageConfirmDialog(mainWindow: BrowserWindow, url: 
         },
     });
 
-    mainWindow.addBrowserView(confirmPopupView);
+    mainWindow.contentView.addChildView(confirmPopupView);
     updateHomepageConfirmBounds(mainWindow);
-    confirmPopupView.setAutoResize({ width: true, height: true });
 
+
+    const nonce = randomBytes(16).toString('base64');
     const html = `
+        <meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'unsafe-inline'; font-src https://assets.web.soundcloud.cloud; script-src 'nonce-${nonce}'">
         <style>
             @font-face {
                 font-family: 'SC-Font';
@@ -152,7 +153,7 @@ export async function showHomepageConfirmDialog(mainWindow: BrowserWindow, url: 
                     <button id="confirmBtn" class="confirm" type="button">Open in Browser</button>
                 </div>
             </div>
-            <script>
+            <script nonce="${nonce}">
                 requestAnimationFrame(() => {
                     document.body.classList.add('visible');
                 });
@@ -180,23 +181,33 @@ export async function showHomepageConfirmDialog(mainWindow: BrowserWindow, url: 
         </body>
     `;
 
-    await confirmPopupView.webContents.loadURL(`data:text/html,${encodeURIComponent(html)}`);
-    confirmPopupView.webContents.focus();
-
+    const view = confirmPopupView;
+    const target = 'data:text/html,' + encodeURIComponent(html);
+    trustLocalView(view.webContents, target);
     return new Promise((resolve) => {
-        ipcMain.once('homepage-confirm-result', (_event, data: { requestId: string; result: boolean }) => {
-            if (data?.requestId !== requestId) {
-                resolve(false);
-                return;
-            }
-
-            if (confirmPopupView && mainWindow) {
-                mainWindow.removeBrowserView(confirmPopupView);
-                (confirmPopupView as any).webContents.destroy();
-                confirmPopupView = null;
-            }
-            resolve(!!data.result);
-        });
+        let finished = false;
+        const onDestroyed = (): void => finish(false);
+        const finish = (result: boolean): void => {
+            if (finished) return;
+            finished = true;
+            ipcMain.removeListener('homepage-confirm-result', handler);
+            mainWindow.removeListener('closed', onDestroyed);
+            view.webContents.removeListener('destroyed', onDestroyed);
+            if (confirmPopupView === view) { confirmPopupView = null; finishPending = null; }
+            if (!mainWindow.isDestroyed()) mainWindow.contentView.removeChildView(view);
+            if (!view.webContents.isDestroyed()) view.webContents.close();
+            resolve(result);
+        };
+        const handler = (event: Electron.IpcMainEvent, data: unknown): void => {
+            if (event.sender !== view.webContents || !isTrustedLocalSender(event) || !data || typeof data !== 'object') return;
+            const response = data as Record<string, unknown>;
+            if (response.requestId === requestId && typeof response.result === 'boolean') finish(response.result);
+        };
+        finishPending = () => finish(false);
+        ipcMain.on('homepage-confirm-result', handler);
+        mainWindow.once('closed', onDestroyed);
+        view.webContents.once('destroyed', onDestroyed);
+        void view.webContents.loadURL(target).then(() => { if (!finished) view.webContents.focus(); }).catch((error: unknown) => { console.error('Ошибка диалога:', error); finish(false); });
     });
 }
 

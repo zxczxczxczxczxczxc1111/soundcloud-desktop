@@ -1,5 +1,6 @@
+import { isTrustedLocalSender } from '../trustedViews';
 import { app, ipcMain } from 'electron';
-import { readFileSync, existsSync, readdirSync, statSync, watch } from 'fs';
+import { readFileSync, existsSync, readdirSync, statSync, watch, mkdirSync } from 'fs';
 import { join, basename, extname } from 'path';
 import type ElectronStore from 'electron-store';
 import { EventEmitter } from 'events';
@@ -38,7 +39,7 @@ export class ThemeService {
     private ensureThemesDirectory(): void {
         try {
             if (!existsSync(this.themesPath)) {
-                require('fs').mkdirSync(this.themesPath, { recursive: true });
+                mkdirSync(this.themesPath, { recursive: true });
                 console.log(`Created themes directory at: ${this.themesPath}`);
             }
         } catch (error) {
@@ -137,7 +138,7 @@ export class ThemeService {
             this.stopWatching = () => {
                 try {
                     watcher.close();
-                } catch {}
+                } catch (error) { console.error('Не удалось закрыть наблюдение за темами:', error); }
             };
         } catch (error) {
             console.error('Failed to watch themes folder:', error);
@@ -145,7 +146,9 @@ export class ThemeService {
     }
 
     private setupIpcHandlers(): void {
-        ipcMain.handle('get-custom-themes', () => {
+        ipcMain.handle('get-custom-themes', (event) => {
+            if (!isTrustedLocalSender(event)) throw new Error('Недопустимый отправитель IPC');
+
             return Array.from(this.customThemes.values()).map((theme) => ({
                 name: theme.name,
                 filePath: theme.filePath,
@@ -153,23 +156,33 @@ export class ThemeService {
             }));
         });
 
-        ipcMain.handle('get-current-custom-theme', () => {
+        ipcMain.handle('get-current-custom-theme', (event) => {
+            if (!isTrustedLocalSender(event)) throw new Error('Недопустимый отправитель IPC');
+
             return this.currentCustomTheme;
         });
 
         ipcMain.handle('apply-custom-theme', (_, themeName: string) => {
+            if (!isTrustedLocalSender(_)) throw new Error('Недопустимый отправитель IPC');
+
             return this.applyCustomTheme(themeName);
         });
 
-        ipcMain.handle('remove-custom-theme', () => {
+        ipcMain.handle('remove-custom-theme', (event) => {
+            if (!isTrustedLocalSender(event)) throw new Error('Недопустимый отправитель IPC');
+
             return this.removeCustomTheme();
         });
 
-        ipcMain.handle('get-themes-folder-path', () => {
+        ipcMain.handle('get-themes-folder-path', (event) => {
+            if (!isTrustedLocalSender(event)) throw new Error('Недопустимый отправитель IPC');
+
             return this.themesPath;
         });
 
-        ipcMain.handle('refresh-custom-themes', () => {
+        ipcMain.handle('refresh-custom-themes', (event) => {
+            if (!isTrustedLocalSender(event)) throw new Error('Недопустимый отправитель IPC');
+
             this.customThemes.clear();
             this.loadCustomThemes();
             return Array.from(this.customThemes.values()).map((theme) => ({
@@ -179,7 +192,9 @@ export class ThemeService {
             }));
         });
 
-        ipcMain.handle('get-theme-colors', () => {
+        ipcMain.handle('get-theme-colors', (event) => {
+            if (!isTrustedLocalSender(event)) throw new Error('Недопустимый отправитель IPC');
+
             return this.getCurrentThemeColors();
         });
     }
@@ -240,6 +255,11 @@ export class ThemeService {
         }
 
         return extractThemeColors(css);
+    }
+
+    public dispose(): void {
+        this.stopWatching?.();
+        this.emitter.removeAllListeners();
     }
 
     public getThemesPath(): string {

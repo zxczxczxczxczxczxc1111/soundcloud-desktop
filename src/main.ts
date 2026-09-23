@@ -1,3 +1,7 @@
+import { mediaControlsScript } from './services/mediaControls';
+import { protectContent } from './contentPolicy';
+import { validateSettingChange } from './settings/validateSetting';
+import { isTrustedLocalSender, trustLocalFile } from './trustedViews';
 import { PlaybackController } from './services/playbackController';
 import { AdblockService } from './services/adblockService';
 import { ViewStyles, splitThemeCSS } from './services/viewStyles';
@@ -30,14 +34,19 @@ import { audioMonitorScript } from './services/audioMonitorService';
 import { showHomepageConfirmDialog, updateDialogBounds } from './settings/confirmPopup';
 import type { TrackInfo } from './types';
 import { validateTrackUpdatePayload } from './validation';
-import path = require('path');
+import path from 'path';
 import { platform } from 'os';
 
-const Store = require('electron-store');
-const windowStateManager = require('electron-window-state');
+import Store from 'electron-store';
+import windowStateManager from 'electron-window-state';
 
 app.setName('SoundCloud Desktop');
-app.setPath('userData', path.join(app.getPath('appData'), app.isPackaged ? 'soundcloud-desktop' : 'soundcloud-desktop-dev'));
+const portableDirectory = app.isPackaged && process.platform === 'win32' ? process.env.PORTABLE_EXECUTABLE_DIR : undefined;
+const profilePath = portableDirectory
+    ? path.join(portableDirectory, 'soundcloud-desktop-data')
+    : path.join(app.getPath('appData'), app.isPackaged ? 'soundcloud-desktop' : 'soundcloud-desktop-dev');
+mkdirSync(profilePath, { recursive: true });
+app.setPath('userData', profilePath);
 if (process.platform === 'win32') {
     app.setAppUserModelId('io.github.zxczxczxczxczxczxc1111.soundcloud-desktop');
 }
@@ -48,7 +57,7 @@ export const RESOURCES_PATH = app.isPackaged
 console.log(`Resources path: ${RESOURCES_PATH}`);
 
 // Store configuration
-const store = new Store({
+const store = new Store<Record<string, unknown>>({
     name: 'preferences',
     defaults: {
         adBlocker: false,
@@ -79,6 +88,18 @@ const store = new Store({
     clearInvalidConfig: true,
 });
 
+interface Account { id: string; name: string }
+function getAccounts(): Account[] {
+    const value = store.get('accounts');
+    if (!Array.isArray(value)) return [{ id: 'default', name: 'Main Account' }];
+    const accounts = value.filter((item): item is Account =>
+        item !== null && typeof item === 'object' &&
+        typeof item.id === 'string' && /^(default|acc_[0-9]+)$/.test(item.id) &&
+        typeof item.name === 'string');
+    if (!accounts.some((item) => item.id === 'default')) accounts.unshift({ id: 'default', name: 'Main Account' });
+    return accounts;
+}
+
 let isDarkTheme = store.get('theme') !== 'light';
 
 // Global variables
@@ -98,7 +119,6 @@ let shortcutService: ShortcutService;
 let pluginService: PluginService;
 let tray: Tray | null = null;
 let isQuitting = false;
-let memoryPressureHandlerRegistered = false;
 const devMode = process.argv.includes('--dev');
 const isMac = process.platform === 'darwin';
 const globalUserAgent = isMac
@@ -132,14 +152,6 @@ const HEADER_HEIGHT = 32;
 // macOS check
 const isMas = process.mas === true;
 
-// add missing property to app
-declare global {
-    namespace NodeJS {
-        interface Global {
-            app: any;
-        }
-    }
-}
 
 // multiple startup check
 if (!isMas) {
@@ -222,7 +234,7 @@ function setupTray() {
     const trayIcon = icon.resize({ width: 16, height: 16 });
 
     tray = new Tray(trayIcon);
-    tray.setToolTip('SoundCloud RPC');
+    tray.setToolTip('SoundCloud Desktop');
 
     // create tray menu
     const contextMenu = Menu.buildFromTemplate([
@@ -292,13 +304,13 @@ async function getLanguage() {
 }
 
 // browser window config
-function createBrowserWindow(windowState: any): BrowserWindow {
+function createBrowserWindow(windowState: ReturnType<typeof windowStateManager>): BrowserWindow {
     const window = new BrowserWindow({
         width: windowState.width,
         height: windowState.height,
         x: windowState.x,
         y: windowState.y,
-        title: 'SoundCloud',
+        title: 'SoundCloud Desktop',
         icon: path.join(RESOURCES_PATH, 'icons', 'soundcloud.png'),
         frame: process.platform === 'darwin',
         titleBarStyle: process.platform === 'darwin' ? 'hidden' : undefined,
@@ -321,7 +333,7 @@ function createBrowserWindow(windowState: any): BrowserWindow {
 
     window.webContents.setUserAgent(globalUserAgent);
 
-    
+
 
     return window;
 }
@@ -339,7 +351,7 @@ let lastTrackInfo: TrackInfo = {
 };
 
 function isTrustedSoundCloudSender(event: IpcMainEvent): boolean {
-    if (!contentView || event.sender.id !== contentView.webContents.id) return false;
+    if (!contentView || event.sender.id !== contentView.webContents.id || event.senderFrame !== event.sender.mainFrame) return false;
 
     const frameUrl = event.senderFrame?.url || event.sender.getURL();
     try {
@@ -379,7 +391,9 @@ function adjustContentViews() {
 function setupWindowControls() {
     if (!mainWindow) return;
 
-    ipcMain.on('minimize-window', () => {
+    ipcMain.on('minimize-window', (event) => {
+            if (!isTrustedLocalSender(event)) return;
+
         if (!mainWindow) return;
         const minimizeToTray = store.get('minimizeToTray', true);
         if (minimizeToTray) {
@@ -389,7 +403,9 @@ function setupWindowControls() {
         }
     });
 
-    ipcMain.on('maximize-window', () => {
+    ipcMain.on('maximize-window', (event) => {
+            if (!isTrustedLocalSender(event)) return;
+
         if (mainWindow) {
             if (mainWindow.isMaximized()) {
                 mainWindow.unmaximize();
@@ -399,7 +415,9 @@ function setupWindowControls() {
         }
     });
 
-    ipcMain.on('title-bar-double-click', () => {
+    ipcMain.on('title-bar-double-click', (event) => {
+            if (!isTrustedLocalSender(event)) return;
+
         if (mainWindow) {
             if (mainWindow.isMaximized()) {
                 mainWindow.unmaximize();
@@ -421,7 +439,9 @@ function setupWindowControls() {
         adjustContentViews();
     });
 
-    ipcMain.on('close-window', () => {
+    ipcMain.on('close-window', (event) => {
+            if (!isTrustedLocalSender(event)) return;
+
         if (mainWindow) {
             const minimizeToTray = store.get('minimizeToTray', true);
             if (minimizeToTray) {
@@ -433,19 +453,25 @@ function setupWindowControls() {
     });
 
     // nav handlers
-    ipcMain.on('navigate-back', () => {
+    ipcMain.on('navigate-back', (event) => {
+            if (!isTrustedLocalSender(event)) return;
+
         if (contentView && contentView.webContents.navigationHistory.canGoBack()) {
             contentView.webContents.navigationHistory.goBack();
         }
     });
 
-    ipcMain.on('navigate-forward', () => {
+    ipcMain.on('navigate-forward', (event) => {
+            if (!isTrustedLocalSender(event)) return;
+
         if (contentView && contentView.webContents.navigationHistory.canGoForward()) {
             contentView.webContents.navigationHistory.goForward();
         }
     });
 
-    ipcMain.on('refresh-page', () => {
+    ipcMain.on('refresh-page', (event) => {
+            if (!isTrustedLocalSender(event)) return;
+
         if (contentView) {
             if (headerView && headerView.webContents) {
                 headerView.webContents.send('refresh-state-changed', true);
@@ -455,7 +481,9 @@ function setupWindowControls() {
         }
     });
 
-    ipcMain.on('cancel-refresh', () => {
+    ipcMain.on('cancel-refresh', (event) => {
+            if (!isTrustedLocalSender(event)) return;
+
         if (contentView) {
             contentView.webContents.stop();
             if (headerView && headerView.webContents) {
@@ -464,7 +492,9 @@ function setupWindowControls() {
         }
     });
 
-    ipcMain.on('toggle-theme', () => {
+    ipcMain.on('toggle-theme', (event) => {
+            if (!isTrustedLocalSender(event)) return;
+
         isDarkTheme = !isDarkTheme;
         if (headerView && headerView.webContents) {
             headerView.webContents.send('theme-changed', isDarkTheme);
@@ -473,17 +503,23 @@ function setupWindowControls() {
     });
 
     // Handle is-maximized requests
-    ipcMain.handle('is-maximized', () => {
+    ipcMain.handle('is-maximized', (event) => {
+            if (!isTrustedLocalSender(event)) throw new Error('Недопустимый отправитель IPC');
+
         return mainWindow ? mainWindow.isMaximized() : false;
     });
 
     // Handle minimize to tray setting
-    ipcMain.handle('get-minimize-to-tray', () => {
+    ipcMain.handle('get-minimize-to-tray', (event) => {
+            if (!isTrustedLocalSender(event)) throw new Error('Недопустимый отправитель IPC');
+
         return store.get('minimizeToTray', true);
     });
 
     // handle nav controls enabled setting
-    ipcMain.handle('get-navigation-controls-enabled', () => {
+    ipcMain.handle('get-navigation-controls-enabled', (event) => {
+            if (!isTrustedLocalSender(event)) throw new Error('Недопустимый отправитель IPC');
+
         return store.get('navigationControlsEnabled', false);
     });
 
@@ -546,6 +582,7 @@ async function init() {
         },
     });
 
+    trustLocalFile(headerView.webContents, path.join(__dirname, 'header', 'header.html'));
     mainWindow.addBrowserView(headerView);
     headerView.setBounds({ x: 0, y: 0, width: mainWindow.getBounds().width, height: 32 });
     headerView.setAutoResize({ width: true, height: false });
@@ -560,7 +597,7 @@ async function init() {
             ...(sessionPartition ? { partition: sessionPartition } : {}),
             nodeIntegration: false,
             contextIsolation: true,
-            sandbox: false,
+            sandbox: true,
             webSecurity: true,
             allowRunningInsecureContent: false,
             nodeIntegrationInSubFrames: false,
@@ -580,6 +617,7 @@ async function init() {
     });
     contentView.setAutoResize({ width: true, height: true });
 
+    protectContent(contentView.webContents, (url) => shell.openExternal(url));
     contentView.webContents.setUserAgent(globalUserAgent);
 
     // Initialize services
@@ -593,6 +631,7 @@ async function init() {
     });
     notificationManager = new NotificationManager(mainWindow);
     settingsManager = new SettingsManager(mainWindow, store);
+    pluginService.onPluginsChanged(() => settingsManager.getView()?.webContents.send('plugins-changed'));
     proxyService = new ProxyService(contentView.webContents, store, queueToastNotification);
     adblockService = new AdblockService(contentView.webContents.session, path.join(app.getPath('userData'), 'adblock-engine.bin'));
     presenceService = new PresenceService(store, translationService);
@@ -600,17 +639,25 @@ async function init() {
     shortcutService = new ShortcutService(mainWindow);
     shortcutService.attachToWebContents(contentView.webContents);
     playbackController = new PlaybackController(contentView.webContents);
+    ipcMain.on('soundcloud:playback', (event, command: unknown) => {
+        if (!isTrustedSoundCloudSender(event)) return;
+        if (command !== 'play' && command !== 'pause' && command !== 'next' && command !== 'previous') return;
+        void playbackController.execute(command).catch(console.error);
+    });
     if (platform() === 'win32') thumbarService = new ThumbarService(translationService, RESOURCES_PATH, playbackController);
 
-    setupMemoryPressureHandler();
 
     // Add settings toggle handler
-    ipcMain.on('toggle-settings', () => {
+    ipcMain.on('toggle-settings', (event) => {
+            if (!isTrustedLocalSender(event)) return;
+
         settingsManager.toggle();
         applyThemeToContent(isDarkTheme);
     });
 
     ipcMain.handle('confirm-open-homepage', async (_event, url: string) => {
+            if (!isTrustedLocalSender(_event)) throw new Error('Недопустимый отправитель IPC');
+
         if (!url || typeof url !== 'string') return false;
         const normalizedUrl = url.trim();
         if (!/^https?:\/\//i.test(normalizedUrl)) return false;
@@ -624,6 +671,8 @@ async function init() {
     });
 
     ipcMain.on('show-plugin-homepage-dialog', async (_event, url: string) => {
+            if (!isTrustedLocalSender(_event)) return;
+
         if (!url || typeof url !== 'string') return;
         const normalizedUrl = url.trim();
         if (!/^https?:\/\//i.test(normalizedUrl)) return;
@@ -635,6 +684,8 @@ async function init() {
     });
 
     ipcMain.handle('open-external-url', async (_event, url: string) => {
+            if (!isTrustedLocalSender(_event)) throw new Error('Недопустимый отправитель IPC');
+
         if (!url || typeof url !== 'string') return '';
         const normalizedUrl = url.trim();
 
@@ -649,6 +700,8 @@ async function init() {
     });
 
     ipcMain.handle('open-path', async (_event, targetPath: string) => {
+            if (!isTrustedLocalSender(_event)) throw new Error('Недопустимый отправитель IPC');
+
         if (!targetPath || typeof targetPath !== 'string') return 'Invalid path';
         const allowedPaths = [themeService.getThemesPath(), pluginService.getPluginsPath()].map((allowedPath) =>
             path.resolve(allowedPath),
@@ -668,12 +721,14 @@ async function init() {
     setupAudioHandler();
 
     // Provide current track info to settings preview on demand
-    ipcMain.handle('get-current-track', () => {
+    ipcMain.handle('get-current-track', (event) => {
+            if (!isTrustedLocalSender(event)) throw new Error('Недопустимый отправитель IPC');
+
         return lastTrackInfo;
     });
 
     // Configure session
-    
+
 
     // Apply initial settings
 
@@ -712,11 +767,24 @@ async function init() {
         updateNavigationState();
     });
 
-    contentView.webContents.on('did-fail-load', () => {
+    contentView.webContents.on('did-fail-load', (_event, code, _description, _url, isMainFrame) => {
+        if (isMainFrame && code !== -3) queueToastNotification('Не удалось загрузить SoundCloud. Проверьте подключение и нажмите Ctrl+R.');
         if (headerView && headerView.webContents) {
             headerView.webContents.send('refresh-state-changed', false);
         }
         updateNavigationState();
+    });
+
+    let lastRendererRecovery = 0;
+    contentView.webContents.on('render-process-gone', (_event, details) => {
+        if (isQuitting || details.reason === 'clean-exit') return;
+        presenceService.clearActivity();
+        lastTrackInfo = { title: '', author: '', artwork: '', elapsed: '', duration: '', isPlaying: false, isLiked: false, url: '' };
+        const now = Date.now();
+        if (now - lastRendererRecovery > 60000) {
+            lastRendererRecovery = now;
+            contentView.webContents.reload();
+        } else queueToastNotification('Плеер завершился с ошибкой. Нажмите Ctrl+R для повторной загрузки.');
     });
 
     // Track if this is initial load
@@ -765,7 +833,7 @@ async function init() {
             }
 
             if (presenceService) {
-                await presenceService.updatePresence(lastTrackInfo as any);
+                await presenceService.updatePresence(lastTrackInfo);
             }
         } catch (error) {
             console.error('Failed to reinitialize after page load:', error);
@@ -774,6 +842,9 @@ async function init() {
 
     // Register settings related events
     ipcMain.on('setting-changed', async (_event, data) => {
+            if (!isTrustedLocalSender(_event)) return;
+            if (!validateSettingChange(data)) return;
+
         const key = data.key;
         if (key === 'proxyPassword') {
             try { proxyService.setPassword(data.value); networkSettingsDirty = true; } catch (error) { queueToastNotification(String(error)); }
@@ -828,22 +899,30 @@ async function init() {
     });
 
     // handle account switching
-    ipcMain.handle('get-accounts', () => {
+    ipcMain.handle('get-accounts', (event) => {
+            if (!isTrustedLocalSender(event)) throw new Error('Недопустимый отправитель IPC');
+
         return {
-            accounts: store.get('accounts', [{ id: 'default', name: 'Main Account' }]),
+            accounts: getAccounts(),
             currentAccountId: store.get('currentAccountId', 'default'),
         };
     });
 
     ipcMain.on('switch-account', (_, accountId) => {
+            if (!isTrustedLocalSender(_)) return;
+
+        const accounts = getAccounts();
+        if (typeof accountId !== 'string' || !accounts.some((account) => account.id === accountId)) return;
         store.set('currentAccountId', accountId);
         app.relaunch();
         app.quit();
     });
 
-    ipcMain.on('add-account', () => {
+    ipcMain.on('add-account', (event) => {
+            if (!isTrustedLocalSender(event)) return;
+
         const newId = `acc_${Date.now()}`;
-        const accounts = store.get('accounts', [{ id: 'default', name: 'Main Account' }]);
+        const accounts = getAccounts();
         accounts.push({ id: newId, name: 'New Account' });
         store.set('accounts', accounts);
         store.set('currentAccountId', newId);
@@ -851,7 +930,9 @@ async function init() {
         app.quit();
     });
 
-    ipcMain.on('logout-account', async () => {
+    ipcMain.on('logout-account', async (event) => {
+            if (!isTrustedLocalSender(event)) return;
+
         const currentId = store.get('currentAccountId', 'default');
 
         if (contentView) {
@@ -861,8 +942,8 @@ async function init() {
 
         // if not default account, remove from list
         if (currentId !== 'default') {
-            const accounts = store.get('accounts', [{ id: 'default', name: 'Main Account' }]);
-            const filteredAccounts = accounts.filter((a: any) => a.id !== currentId);
+            const accounts = getAccounts();
+            const filteredAccounts = accounts.filter((a: { id: string }) => a.id !== currentId);
 
             store.set('accounts', filteredAccounts);
             store.set('currentAccountId', 'default'); // Switch back to main
@@ -876,7 +957,9 @@ async function init() {
     });
 
     // handle applying all changes
-    ipcMain.on('apply-changes', async () => {
+    ipcMain.on('apply-changes', async (event) => {
+            if (!isTrustedLocalSender(event)) return;
+
         try {
             if (networkSettingsDirty) {
                 await proxyService.apply();
@@ -891,7 +974,7 @@ async function init() {
 
     ipcMain.on('soundcloud:profile-update', (event, username: unknown) => {
         if (!isTrustedSoundCloudSender(event) || typeof username !== 'string' || !/^[a-zA-Z0-9_.-]{1,100}$/.test(username)) return;
-        const accounts = store.get('accounts', [{ id: 'default', name: 'Main Account' }]) as { id: string; name: string }[];
+        const accounts = getAccounts();
         const currentId = store.get('currentAccountId', 'default');
         const account = accounts.find((item) => item.id === currentId);
         if (account && account.name !== username) {
@@ -910,35 +993,7 @@ async function init() {
 
 }
 
-function setupMemoryPressureHandler() {
-    if (memoryPressureHandlerRegistered) return;
-    if (!isMac) return;
-    memoryPressureHandlerRegistered = true;
 
-    app.on('memory-pressure' as any, async (_event: unknown, details: unknown) => {
-        const level = typeof details === 'string' ? details : 'unknown';
-        console.warn(`Memory pressure detected (${level}). Clearing caches and history.`);
-
-        if (contentView) {
-            contentView.webContents.clearHistory();
-        }
-
-        const session = contentView?.webContents.session;
-        if (!session) return;
-
-        try {
-            await session.clearCache();
-        } catch (error) {
-            console.warn('Failed to clear HTTP cache:', error);
-        }
-
-        try {
-            await session.clearStorageData({ storages: ['cachestorage'] });
-        } catch (error) {
-            console.warn('Failed to clear Cache Storage:', error);
-        }
-    });
-}
 
 function setupThemeHandlers() {
     // load initial theme from store
@@ -955,6 +1010,9 @@ function setupThemeHandlers() {
 
     // Listen for theme changes from settings or header
     ipcMain.on('setting-changed', (_, data) => {
+            if (!isTrustedLocalSender(_)) return;
+            if (!validateSettingChange(data)) return;
+
         if (data.key === 'theme') {
             isDarkTheme = data.value === 'dark';
             store.set('theme', data.value);
@@ -1082,6 +1140,10 @@ app.on('before-quit', () => {
     proxyService?.dispose();
     adblockService?.dispose();
     webhookService?.dispose();
+    pluginService?.dispose();
+    themeService?.dispose();
+    settingsManager?.dispose();
+    notificationManager?.dispose();
     if (shortcutService) {
         shortcutService.destroy();
     }
@@ -1122,7 +1184,9 @@ export function queueToastNotification(message: string) {
 }
 
 function setupTranslationHandlers() {
-    ipcMain.handle('get-translations', () => {
+    ipcMain.handle('get-translations', (event) => {
+            if (!isTrustedLocalSender(event)) throw new Error('Недопустимый отправитель IPC');
+
         return {
             client: translationService.translate('client'),
             darkMode: translationService.translate('darkMode'),
@@ -1195,6 +1259,9 @@ function setupAudioHandler() {
             console.debug(`Track update received: ${reason}`);
         }
 
+        if (result.title && (reason === 'track-change' || !lastTrackInfo.title)) {
+            void contentView.webContents.executeJavaScript(mediaControlsScript).catch(console.error);
+        }
         lastTrackInfo = result;
 
         if (pluginService) {

@@ -1,25 +1,49 @@
-import { BrowserView, BrowserWindow, ipcMain } from 'electron';
+import { isTrustedLocalSender, trustLocalView } from '../trustedViews';
+import { randomBytes } from 'crypto';
+import { WebContentsView, BrowserWindow, ipcMain } from 'electron';
 import type { ThemeColors } from '../utils/colorExtractor';
 import { join } from 'path';
 
 const isMac = process.platform === 'darwin';
 
 export class NotificationManager {
-    private view: BrowserView | null = null;
+    private view: WebContentsView | null = null;
     private queue: string[] = [];
     private isDisplaying = false;
     private parentWindow: BrowserWindow;
     private themeColors: ThemeColors | null = null;
     private devMode = process.argv.includes('--dev');
-    private useMacOptimizations = process.platform === 'darwin';
+    private disposed = false;
+    private timer: ReturnType<typeof setTimeout> | null = null;
+    private done = (event: Electron.IpcMainEvent): void => {
+        if (event.sender !== this.view?.webContents || !isTrustedLocalSender(event)) return;
+        this.finish();
+    };
+    private finish(): void {
+        if (this.disposed) return;
+        if (this.timer) clearTimeout(this.timer);
+        this.timer = null;
+        this.teardownView();
+        this.displayNext();
+    }
+    public dispose(): void {
+        this.disposed = true;
+        if (this.timer) clearTimeout(this.timer);
+        this.timer = null;
+        this.queue = [];
+        this.teardownView();
+        ipcMain.removeListener('notification-done', this.done);
+    }
 
     constructor(parentWindow: BrowserWindow) {
         this.parentWindow = parentWindow;
+        ipcMain.on('notification-done', this.done);
+        parentWindow.once('closed', () => this.dispose());
     }
 
-    private ensureView(): BrowserView {
+    private ensureView(): WebContentsView {
         if (this.view) return this.view;
-        this.view = new BrowserView({
+        this.view = new WebContentsView({
             webPreferences: {
                 nodeIntegration: false,
                 contextIsolation: true,
@@ -37,17 +61,11 @@ export class NotificationManager {
     }
 
     private teardownView(): void {
-        if (!this.view) return;
         const view = this.view;
-        try {
-            this.parentWindow.removeBrowserView(view);
-        } catch {}
-        if (this.useMacOptimizations) {
-            try {
-                (view.webContents as any).destroy();
-            } catch {}
-            this.view = null;
-        }
+        this.view = null;
+        if (!view) return;
+        if (!this.parentWindow.isDestroyed()) this.parentWindow.contentView.removeChildView(view);
+        if (!view.webContents.isDestroyed()) view.webContents.close();
     }
 
     public setThemeColors(colors: ThemeColors | null): void {
@@ -55,6 +73,7 @@ export class NotificationManager {
     }
 
     public show(message: string): void {
+        if (this.disposed) return;
         this.queue.push(message);
         if (!this.isDisplaying) {
             this.displayNext();
@@ -62,6 +81,7 @@ export class NotificationManager {
     }
 
     private displayNext(): void {
+        if (this.disposed || this.parentWindow.isDestroyed()) return;
         if (this.queue.length === 0) {
             this.isDisplaying = false;
             this.teardownView();
@@ -75,7 +95,7 @@ export class NotificationManager {
         const height = 70; // increased from 50
 
         const view = this.ensureView();
-        this.parentWindow.addBrowserView(view);
+        this.parentWindow.contentView.addChildView(view);
         view.setBounds({
             x: Math.floor((bounds.width - width) / 2),
             y: bounds.height - height - 100, // increased from 20 to move it up
@@ -87,7 +107,10 @@ export class NotificationManager {
         const backgroundColor = this.themeColors?.surface || '#303030';
         const textColor = this.themeColors?.text || '#ffffff';
 
+        const safeMessage = String(message ?? '').replace(/[&<>"']/g, (char) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[char]!);
+        const nonce = randomBytes(16).toString('base64');
         const html = `
+        <meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'unsafe-inline'; script-src 'nonce-${nonce}'">
         <style>
             body {
                 margin: 0;
@@ -128,8 +151,8 @@ export class NotificationManager {
             }
         </style>
         <body>
-            <div class="notification">${message}</div>
-            <script>
+            <div class="notification">${safeMessage}</div>
+            <script nonce="${nonce}">
                 setTimeout(() => document.body.style.opacity = '1', 100);
                 setTimeout(() => {
                     document.body.classList.add('fade-out');
@@ -141,11 +164,9 @@ export class NotificationManager {
             </script>
         </body>`;
 
-        // Set up one-time IPC listener for this notification
-        ipcMain.once('notification-done', () => {
-            setTimeout(() => this.displayNext(), 100);
-        });
-
-        view.webContents.loadURL(`data:text/html,${encodeURIComponent(html)}`);
+        const url = 'data:text/html,' + encodeURIComponent(html);
+        trustLocalView(view.webContents, url);
+        this.timer = setTimeout(() => this.finish(), 7000);
+        void view.webContents.loadURL(url).catch((error: unknown) => { if (this.view === view) { console.error('Ошибка уведомления:', error); this.finish(); } });
     }
 }

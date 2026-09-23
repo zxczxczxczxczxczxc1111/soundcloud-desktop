@@ -157,6 +157,7 @@ async function initializeSettings() {
 
     loadCustomThemes();
     loadPlugins();
+    ipcRenderer.on('plugins-changed', () => loadPlugins());
     loadAccounts();
 
     // account manager event listeners
@@ -212,15 +213,7 @@ async function initializeSettings() {
         }
     });
 
-    function escapeHtml(str) {
-        if (typeof str !== 'string') return '';
-        return str
-            .replace(/&/g, '&amp;')
-            .replace(/</g, '&lt;')
-            .replace(/>/g, '&gt;')
-            .replace(/"/g, '&quot;')
-            .replace(/'/g, '&#x27;');
-    }
+
 
     document.getElementById('openPluginsFolder')?.addEventListener('click', async () => {
         try {
@@ -365,7 +358,7 @@ async function initializeSettings() {
     });
 
     // rich presence preview logic
-    let currentTrack = null;
+
     let progressInterval = null;
 
     function parseTimeToMs(time) {
@@ -521,7 +514,7 @@ async function initializeSettings() {
     }
 
     function updatePreview(trackInfo) {
-        currentTrack = trackInfo;
+
         const activitySection = document.getElementById('activitySectionPreview');
         const noActivity = document.getElementById('noActivityPreview');
 

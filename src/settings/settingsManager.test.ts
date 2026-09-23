@@ -13,7 +13,7 @@ const mocks = vi.hoisted(() => ({
 }));
 vi.mock('electron', () => ({
     WebContentsView: class {
-        webContents = { loadFile: mocks.load, close: mocks.closed, isDestroyed: () => false };
+        webContents = { loadFile: mocks.load, close: mocks.closed, isDestroyed: () => false, setWindowOpenHandler() {}, on() {}, once() {} };
         constructor() {
             mocks.created();
         }

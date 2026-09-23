@@ -48,7 +48,17 @@ app.whenReady().then(async () => {
         'get-current-track': empty,
         'get-accounts': { accounts: [], currentAccountId: 'default' },
     };
-    for (const [channel, data] of Object.entries(responses)) ipcMain.handle(channel, () => data);
+    const { isTrustedLocalSender } = require('../tsc/trustedViews');
+    for (const [channel, data] of Object.entries(responses)) ipcMain.handle(channel, (event) => {
+        if (!isTrustedLocalSender(event)) throw new Error('Untrusted sender');
+        return data;
+    });
+    const untrusted = new BrowserWindow({ show: false, webPreferences: {
+        sandbox: true, contextIsolation: true, preload: path.resolve(__dirname, '../tsc/settings/settingsPreload.js'),
+    } });
+    await untrusted.loadURL('data:text/html,<body>Untrusted</body>');
+    assert.equal(await untrusted.webContents.executeJavaScript("settingsAPI.invoke('get-current-track').then(() => false, () => true)"), true);
+    untrusted.destroy();
     ipcMain.on('toggle-settings', () => manager.toggle());
     assert.equal(manager.getView(), null);
     const closedListeners = win.listenerCount('closed');
@@ -71,7 +81,41 @@ app.whenReady().then(async () => {
         assert.equal(win.listenerCount('closed'), closedListeners);
     }
     manager.dispose();
+    const { showHomepageConfirmDialog } = require('../tsc/settings/confirmPopup');
+    for (const accept of [false, true]) {
+        const confirmed = showHomepageConfirmDialog(win, 'https://example.com/?q=<script>alert(1)</script>');
+        const view = win.contentView.children.at(-1);
+        await new Promise(resolve => view.webContents.once('did-finish-load', resolve));
+        assert.equal(await view.webContents.executeJavaScript("document.querySelector('.url').textContent.includes('<script>')"), true);
+        await view.webContents.executeJavaScript(`document.getElementById('${accept ? 'confirmBtn' : 'cancelBtn'}').click()`);
+        assert.equal(await confirmed, accept);
+        assert.equal(win.listenerCount('closed'), closedListeners);
+    }
+    const { NotificationManager } = require('../tsc/notifications/notificationManager');
+    const notifications = new NotificationManager(win);
+    notifications.show('<img src=x onerror="globalThis.injected=true">');
+    const notification = win.contentView.children.at(-1);
+    await new Promise(resolve => notification.webContents.once('did-finish-load', resolve));
+    assert.equal(await notification.webContents.executeJavaScript('document.querySelectorAll("img").length'), 0);
+    await notification.webContents.executeJavaScript('notificationAPI.done()');
+    notifications.dispose();
+    const { pluginInjection, pluginCleanup } = require('../tsc/services/pluginScripts');
+    await win.webContents.executeJavaScript(pluginInjection("quote'plugin", 'globalThis.pluginLoaded = true;'));
+    assert.equal(await win.webContents.executeJavaScript('globalThis.pluginLoaded'), true);
+    await win.webContents.executeJavaScript(pluginCleanup("quote'plugin"));
+    const { PluginProcess } = require('../tsc/services/pluginProcess');
+    const failures = [];
+    const worker = new PluginProcess((error) => failures.push(error.message));
+    const code = await worker.request({ kind: 'load', filename: 'test-plugin.js', source: 'let count = 0; module.exports = { contentScript: () => "/* test */", onTrackChange: () => ++count };' });
+    assert.equal(code, '/* test */');
+    assert.equal(await worker.request({ kind: 'track', track: {} }), 1);
+    await worker.dispose();
+    assert.equal(failures.length, 0);
+    const stuck = new PluginProcess((error) => failures.push(error.message));
+    await stuck.request({ kind: 'load', filename: 'stuck-plugin.js', source: 'module.exports = { onTrackChange: () => { while (true) {} } };' });
+    await assert.rejects(stuck.request({ kind: 'track', track: {} }), /остановлен/);
+    assert.equal(failures.length, 1);
     win.destroy();
-    console.log('PASS: CSS injection blocked; legitimate CSS rendered; 30 settings open/close cycles passed.');
+    console.log('PASS: CSS boundary, 30 settings cycles, quoted plugin ID, isolated plugin callbacks and hung worker termination.');
     app.quit();
 });

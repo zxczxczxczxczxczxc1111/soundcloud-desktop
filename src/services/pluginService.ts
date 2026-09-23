@@ -1,10 +1,12 @@
+import { pluginInjection, pluginCleanup } from './pluginScripts';
+import { PluginProcess } from './pluginProcess';
+import { isTrustedLocalSender } from '../trustedViews';
 import { app, ipcMain, type BrowserView } from 'electron';
 import { readFileSync, existsSync, readdirSync, statSync, watch, mkdirSync } from 'fs';
 import path, { join, basename, extname } from 'path';
 import type ElectronStore from 'electron-store';
 import { EventEmitter } from 'events';
 import { parseMetadata, type FileMetadata } from '../utils/metadataParser';
-import { Script, createContext, type Context } from 'vm';
 
 export interface PluginInfo {
     id: string;
@@ -13,18 +15,7 @@ export interface PluginInfo {
     enabled: boolean;
 }
 
-interface PluginRuntime {
-    context: Context;
-    exports: PluginExports;
-}
-
-interface PluginExports {
-    onEnable?: () => void;
-    onDisable?: () => void;
-    onTrackChange?: (track: Record<string, unknown>) => void;
-    onThemeChange?: (isDark: boolean) => void;
-    contentScript?: () => string;
-}
+interface PluginRuntime { process: PluginProcess; code: string; }
 
 export class PluginService {
     private store: ElectronStore;
@@ -99,15 +90,18 @@ export class PluginService {
                 this.stopWatching = undefined;
             }
 
+            let debounce: ReturnType<typeof setTimeout> | undefined;
             const watcher = watch(this.pluginsPath, { persistent: true }, (_eventType, filename) => {
                 if (!filename || extname(filename).toLowerCase() !== '.js') return;
-                Promise.resolve().then(() => this.refreshPlugins());
+                clearTimeout(debounce);
+                debounce = setTimeout(() => this.refreshPlugins(), 200);
             });
 
             this.stopWatching = () => {
+                clearTimeout(debounce);
                 try {
                     watcher.close();
-                } catch {}
+                } catch (error) { console.error('Не удалось остановить наблюдение за плагинами:', error); }
             };
         } catch (error) {
             console.error('Failed to watch plugins folder:', error);
@@ -125,109 +119,52 @@ export class PluginService {
     private activatePlugin(id: string): boolean {
         const plugin = this.plugins.get(id);
         if (!plugin) return false;
-
+        if (this.runtimes.has(id)) return true;
         try {
-            if (this.runtimes.has(id)) return true;
-
             const source = readFileSync(plugin.filePath, 'utf-8');
-            const pluginExports: PluginExports = {};
-
-            const sandbox = {
-                module: { exports: pluginExports },
-                exports: pluginExports,
-                console: {
-                    log: (...args: unknown[]) => console.log(`[plugin:${id}]`, ...args),
-                    warn: (...args: unknown[]) => console.warn(`[plugin:${id}]`, ...args),
-                    error: (...args: unknown[]) => console.error(`[plugin:${id}]`, ...args),
-                },
-                setTimeout,
-                clearTimeout,
-                setInterval,
-                clearInterval,
-            };
-
-            const context = createContext(sandbox);
-            const script = new Script(source, { filename: plugin.filePath });
-            script.runInContext(context);
-
-            const resolved = sandbox.module.exports || sandbox.exports;
-            this.runtimes.set(id, { context, exports: resolved });
-
-            try {
-                resolved.onEnable?.();
-            } catch (e) {
-                console.error(`[plugin:${id}] onEnable error:`, e);
-            }
-
-            this.injectContentScript(id, resolved);
-
+            const child = new PluginProcess((error) => {
+                if (this.runtimes.get(id)?.process !== child) return;
+                console.error('Плагин отключён:', id, error);
+                this.deactivatePlugin(id);
+                plugin.enabled = false;
+                this.persistEnabledState();
+                this.emitter.emit('plugins-changed');
+            });
+            const runtime = { process: child, code: '' };
+            this.runtimes.set(id, runtime);
+            void child.request({ kind: 'load', source, filename: plugin.filePath }).then((code) => {
+                if (this.runtimes.get(id) !== runtime) return;
+                runtime.code = typeof code === 'string' ? code : '';
+                this.injectContentScript(id, runtime.code);
+            }).catch((error: unknown) => {
+                if (this.runtimes.get(id) !== runtime) return;
+                console.error('Не удалось загрузить плагин:', id, error);
+                this.deactivatePlugin(id);
+                plugin.enabled = false;
+                this.persistEnabledState();
+                this.emitter.emit('plugins-changed');
+            });
             return true;
-        } catch (error) {
-            console.error(`Failed to activate plugin ${id}:`, error);
-            return false;
-        }
+        } catch (error) { console.error('Не удалось запустить плагин:', error); return false; }
     }
-
     private deactivatePlugin(id: string): void {
         const runtime = this.runtimes.get(id);
         if (!runtime) return;
-
-        try {
-            runtime.exports.onDisable?.();
-        } catch (e) {
-            console.error(`[plugin:${id}] onDisable error:`, e);
-        }
-
-        this.removeContentScript(id);
         this.runtimes.delete(id);
+        this.removeContentScript(id);
+        void runtime.process.dispose();
     }
-
-    private injectContentScript(id: string, exports: PluginExports): void {
-        if (!this.contentView) return;
-
-        let code: string | undefined;
-        try {
-            code = exports.contentScript?.();
-        } catch (e) {
-            console.error(`[plugin:${id}] contentScript() error:`, e);
-            return;
-        }
-        if (!code || !code.trim()) return;
-
-        const escaped = code.replace(/\\/g, '\\\\').replace(/`/g, '\\`').replace(/\$/g, '\\$');
-        const wrapped = `
-            (function(){
-                try {
-                    var existing = document.getElementById('scrpc-plugin-${id}');
-                    if (existing) existing.remove();
-                    var s = document.createElement('script');
-                    s.id = 'scrpc-plugin-${id}';
-                    s.textContent = \`${escaped}\`;
-                    document.head.appendChild(s);
-                } catch(e) { console.error('[plugin:${id}] inject error:', e); }
-            })();
-        `;
-
-        this.contentView.webContents.executeJavaScript(wrapped).catch((e: Error) => {
-            console.error(`[plugin:${id}] content script injection failed:`, e);
-        });
+    private injectContentScript(id: string, code: string): void {
+        const contents = this.contentView?.webContents;
+        if (!contents || contents.isDestroyed() || !code.trim()) return;
+        const wrapped = pluginInjection(id, code);
+        void contents.executeJavaScript(wrapped).catch((error: unknown) => console.error('Не удалось внедрить плагин:', id, error));
     }
-
     private removeContentScript(id: string): void {
-        if (!this.contentView) return;
-
-        const cleanup = `
-            (function(){
-                var el = document.getElementById('scrpc-plugin-${id}');
-                if (el) el.remove();
-                if (window.__scrpc_cleanup_${id.replace(/[^a-zA-Z0-9_]/g, '_')}) {
-                    try { window.__scrpc_cleanup_${id.replace(/[^a-zA-Z0-9_]/g, '_')}(); } catch(e) {}
-                    delete window.__scrpc_cleanup_${id.replace(/[^a-zA-Z0-9_]/g, '_')};
-                }
-            })();
-        `;
-
-        this.contentView.webContents.executeJavaScript(cleanup).catch(() => {});
+        const contents = this.contentView?.webContents;
+        if (!contents || contents.isDestroyed()) return;
+        const cleanup = pluginCleanup(id);
+        void contents.executeJavaScript(cleanup).catch((error: unknown) => { if (!contents.isDestroyed()) console.error('Не удалось очистить плагин:', id, error); });
     }
 
     public setContentView(view: BrowserView): void {
@@ -236,7 +173,7 @@ export class PluginService {
 
     public injectAllContentScripts(): void {
         for (const [id, runtime] of this.runtimes) {
-            this.injectContentScript(id, runtime.exports);
+            this.injectContentScript(id, runtime.code);
         }
     }
 
@@ -295,7 +232,7 @@ export class PluginService {
     public notifyTrackChange(track: Record<string, unknown>): void {
         for (const [id, runtime] of this.runtimes) {
             try {
-                runtime.exports.onTrackChange?.({ ...track });
+                runtime.process.notifyTrack({ ...track });
             } catch (e) {
                 console.error(`[plugin:${id}] onTrackChange error:`, e);
             }
@@ -305,11 +242,16 @@ export class PluginService {
     public notifyThemeChange(isDark: boolean): void {
         for (const [id, runtime] of this.runtimes) {
             try {
-                runtime.exports.onThemeChange?.(isDark);
+                runtime.process.notifyTheme(isDark);
             } catch (e) {
                 console.error(`[plugin:${id}] onThemeChange error:`, e);
             }
         }
+    }
+
+    public dispose(): void {
+        this.stopWatching?.();
+        for (const id of this.runtimes.keys()) this.deactivatePlugin(id);
     }
 
     public getPluginsPath(): string {
@@ -323,7 +265,9 @@ export class PluginService {
     }
 
     private setupIpcHandlers(): void {
-        ipcMain.handle('get-plugins', () => {
+        ipcMain.handle('get-plugins', (event) => {
+            if (!isTrustedLocalSender(event)) throw new Error('Недопустимый отправитель IPC');
+
             return this.getPlugins().map((p) => ({
                 id: p.id,
                 metadata: p.metadata,
@@ -332,14 +276,21 @@ export class PluginService {
         });
 
         ipcMain.handle('set-plugin-enabled', (_, id: string, enabled: boolean) => {
+            if (!isTrustedLocalSender(_)) throw new Error('Недопустимый отправитель IPC');
+            if (typeof id !== 'string' || typeof enabled !== 'boolean') return false;
+
             return this.setPluginEnabled(id, enabled);
         });
 
-        ipcMain.handle('get-plugins-folder-path', () => {
+        ipcMain.handle('get-plugins-folder-path', (event) => {
+            if (!isTrustedLocalSender(event)) throw new Error('Недопустимый отправитель IPC');
+
             return this.pluginsPath;
         });
 
-        ipcMain.handle('refresh-plugins', () => {
+        ipcMain.handle('refresh-plugins', (event) => {
+            if (!isTrustedLocalSender(event)) throw new Error('Недопустимый отправитель IPC');
+
             this.refreshPlugins();
             return this.getPlugins().map((p) => ({
                 id: p.id,

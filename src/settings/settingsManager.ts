@@ -1,3 +1,4 @@
+import { trustLocalFile } from '../trustedViews';
 import { ViewStyles } from '../services/viewStyles';
 import { WebContentsView, BrowserWindow, ipcMain, type IpcMainInvokeEvent } from 'electron';
 import type ElectronStore from 'electron-store';
@@ -78,6 +79,7 @@ export class SettingsManager {
                 spellcheck: false,
             },
         });
+        trustLocalFile(this.view.webContents, join(__dirname, 'settings.html'));
         this.parentWindow.contentView.addChildView(this.view);
         this.updateBounds();
         void this.view.webContents

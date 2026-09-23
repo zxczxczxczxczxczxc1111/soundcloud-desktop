@@ -1,4 +1,4 @@
-import { Menu } from 'electron';
+import { Menu, shell } from 'electron';
 
 const template: Electron.MenuItemConstructorOptions[] = [
     {
@@ -25,7 +25,7 @@ const template: Electron.MenuItemConstructorOptions[] = [
             {
                 label: 'Learn More',
                 click() {
-                    require('electron').shell.openExternal('https://github.com/richardhbtz/soundcloud-rpc');
+                    shell.openExternal('https://github.com/richardhbtz/soundcloud-rpc');
                 },
             },
         ],
