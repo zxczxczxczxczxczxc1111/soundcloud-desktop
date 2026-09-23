@@ -29,6 +29,8 @@ it('загружает настройки из IPC и подключает за�
                 return 'none';
             case 'get-accounts':
                 return { accounts: [], currentAccountId: 'default' };
+            case 'get-update-state':
+                return { mode: 'portable', version: '0.1.0', enabled: true, hint: 'Подсказка.', status: 'Установлена последняя версия.', releaseUrl: '' };
             case 'get-current-track':
                 return { title: '', author: '', duration: '', elapsed: '', isPlaying: false, artwork: '' };
             default:
@@ -40,6 +42,8 @@ it('загружает настройки из IPC и подключает за�
     await vi.waitFor(() => expect(send).toHaveBeenCalledWith('settings-ready'));
     expect((document.getElementById('useArtistInStatusLineToggle') as HTMLInputElement).checked).toBe(true);
     expect((document.getElementById('proxyHost') as HTMLInputElement).value).toBe('localhost');
+    await vi.waitFor(() => expect(document.getElementById('updateStatus')?.textContent).toBe('Установлена последняя версия.'));
+    expect(document.getElementById('updateHint')?.textContent).toBe('Версия 0.1.0. Подсказка.');
     document.getElementById('close-settings')?.click();
     expect(send).toHaveBeenCalledWith('toggle-settings');
 });

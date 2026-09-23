@@ -72,7 +72,7 @@ function updateNavigationState(state = {}) {
         isRefreshing = state.refreshing;
         if (navButtons.refresh) {
             navButtons.refresh.classList.toggle('refreshing', isRefreshing);
-            navButtons.refresh.title = isRefreshing ? 'Cancel Refresh' : 'Refresh Page';
+            navButtons.refresh.title = isRefreshing ? 'Остановить загрузку' : 'Обновить страницу';
         }
     }
 
@@ -91,8 +91,8 @@ function updateWindowControls() {
         setIconGlyph(maximizeGlyphEl, isMaximized ? SEGOE_GLYPHS.restore : SEGOE_GLYPHS.maximize);
 
         // Update the button title
-        document.getElementById('maximize-btn').title = isMaximized ? 'Restore' : 'Maximize';
-        document.getElementById('maximize-btn').setAttribute('aria-label', isMaximized ? 'Restore' : 'Maximize');
+        document.getElementById('maximize-btn').title = isMaximized ? 'Восстановить' : 'Развернуть';
+        document.getElementById('maximize-btn').setAttribute('aria-label', isMaximized ? 'Восстановить' : 'Развернуть');
     }
 }
 

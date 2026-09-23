@@ -32,6 +32,8 @@ import { PresenceService } from './services/presenceService';
 import { TranslationService } from './services/translationService';
 import { ThumbarService } from './services/thumbarService';
 import { WebhookService } from './services/webhookService';
+import { UpdateService, type UpdateMode } from './services/updateService';
+import { autoUpdater } from 'electron-updater';
 import { ThemeService } from './services/themeService';
 import { ShortcutService } from './services/shortcutService';
 import { PluginService } from './services/pluginService';
@@ -84,10 +86,11 @@ const store = new Store<Record<string, unknown>>({
         navigationControlsEnabled: false,
         trackParserEnabled: true,
         richPresencePreviewEnabled: false,
+        autoUpdateEnabled: true,
         hidePromotions: true,
         hideEventsNearYou: true,
         hideArtistUpsells: true,
-        accounts: [{ id: 'default', name: 'Main Account' }],
+        accounts: [{ id: 'default', name: 'Основной аккаунт' }],
         currentAccountId: 'default',
     },
     clearInvalidConfig: true,
@@ -96,12 +99,12 @@ const store = new Store<Record<string, unknown>>({
 interface Account { id: string; name: string }
 function getAccounts(): Account[] {
     const value = store.get('accounts');
-    if (!Array.isArray(value)) return [{ id: 'default', name: 'Main Account' }];
+    if (!Array.isArray(value)) return [{ id: 'default', name: 'Основной аккаунт' }];
     const accounts = value.filter((item): item is Account =>
         item !== null && typeof item === 'object' &&
         typeof item.id === 'string' && /^(default|acc_[0-9]+)$/.test(item.id) &&
         typeof item.name === 'string');
-    if (!accounts.some((item) => item.id === 'default')) accounts.unshift({ id: 'default', name: 'Main Account' });
+    if (!accounts.some((item) => item.id === 'default')) accounts.unshift({ id: 'default', name: 'Основной аккаунт' });
     return accounts;
 }
 
@@ -116,6 +119,7 @@ let adblockService: AdblockService;
 let networkSettingsDirty = false;
 let presenceService: PresenceService;
 let webhookService: WebhookService;
+let updateService: UpdateService | null = null;
 let translationService: TranslationService;
 let thumbarService: ThumbarService;
 let playbackController: PlaybackController;
@@ -288,7 +292,7 @@ function setupTray() {
             },
         },
         {
-            label: 'Settings',
+            label: 'Настройки',
             click: () => {
                 if (settingsManager) {
                     settingsManager.toggle();
@@ -297,7 +301,7 @@ function setupTray() {
         },
         { type: 'separator' },
         {
-            label: 'Quit',
+            label: 'Выход',
             click: () => {
                 app.quit();
             },
@@ -325,21 +329,6 @@ function setupTray() {
             adjustContentViews();
         }
     });
-}
-
-// update language when retrieved from web page
-async function getLanguage() {
-    if (!contentView) return;
-    const langInfo = await contentView.webContents.executeJavaScript(`
-        const langEl = document.querySelector('html');
-        new Promise(resolve => {
-            resolve({
-                lang: langEl ? langEl.getAttribute('lang') : 'en',
-            });
-        })
-    `);
-
-    translationService.setLanguage(langInfo.lang);
 }
 
 // browser window config
@@ -701,6 +690,25 @@ async function init() {
     adblockService = new AdblockService(contentView.webContents.session, path.join(app.getPath('userData'), 'adblock-engine.bin'));
     presenceService = new PresenceService(store, translationService);
     webhookService = new WebhookService(store);
+    const updateMode: UpdateMode = !app.isPackaged ? 'dev' : process.platform === 'win32' && !portableDirectory ? 'installer' : 'portable';
+    updateService = new UpdateService({
+        mode: updateMode,
+        version: app.getVersion(),
+        store,
+        notify: queueToastNotification,
+        onState: (state) => settingsManager.getView()?.webContents.send('update-state', state),
+        loadUpdater: () => autoUpdater,
+    });
+    updateService.start();
+    ipcMain.handle('get-update-state', (event) => {
+        if (!isTrustedLocalSender(event)) throw new Error('Недопустимый отправитель IPC');
+        return updateService?.getState() ?? null;
+    });
+    ipcMain.handle('open-release-page', async (event) => {
+        if (!isTrustedLocalSender(event)) throw new Error('Недопустимый отправитель IPC');
+        const url = updateService?.getState().releaseUrl;
+        if (url) await shell.openExternal(url);
+    });
     shortcutService = new ShortcutService(mainWindow);
     shortcutService.attachToWebContents(contentView.webContents);
     shortcutService.attachToWebContents(headerView.webContents);
@@ -875,17 +883,12 @@ async function init() {
     contentView.webContents.on('did-finish-load', async () => {
 
         diagnostics.record('page.loaded');
-        // Get the current language from the page FIRST
-        await getLanguage();
 
         // Show notification only on first load
         if (isInitialLoad) {
             notificationManager.show(translationService.translate('pressF1ToOpenSettings'));
             isInitialLoad = false;
         }
-
-        // Update the language in the settings manager
-        settingsManager.updateTranslations();
 
         // Update navigation state after page load
         updateNavigationState();
@@ -944,6 +947,8 @@ async function init() {
             presenceService.updateDisplaySettings(displaySCSmallIcon);
         } else if (key === 'displayButtons') {
             presenceService.updateDisplaySettings(displaySCSmallIcon, data.value);
+        } else if (key === 'autoUpdateEnabled') {
+            updateService?.setEnabled(data.value);
         } else if (key === 'statusDisplayType') {
             presenceService.setStatusDisplayType(data.value as number);
         } else if (key === 'minimizeToTray') {
@@ -1004,7 +1009,7 @@ async function init() {
 
         const newId = `acc_${Date.now()}`;
         const accounts = getAccounts();
-        accounts.push({ id: newId, name: 'New Account' });
+        accounts.push({ id: newId, name: 'Новый аккаунт' });
         store.set('accounts', accounts);
         store.set('currentAccountId', newId);
         app.relaunch();
@@ -1222,6 +1227,7 @@ app.on('before-quit', () => {
     proxyService?.dispose();
     adblockService?.dispose();
     webhookService?.dispose();
+    updateService?.dispose();
     pluginService?.dispose();
     themeService?.dispose();
     settingsManager?.dispose();

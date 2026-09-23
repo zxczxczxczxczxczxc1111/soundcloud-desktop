@@ -145,13 +145,13 @@ export async function showHomepageConfirmDialog(mainWindow: BrowserWindow, url: 
             }
         </style>
         <body>
-            <div class="dialog" role="dialog" aria-modal="true" aria-label="Open Plugin Homepage">
-                <div class="title">Open Plugin Homepage</div>
-                <div class="subtitle">Are you sure you want to open this URL in your browser?</div>
+            <div class="dialog" role="dialog" aria-modal="true" aria-label="Страница плагина">
+                <div class="title">Страница плагина</div>
+                <div class="subtitle">Открыть этот адрес в браузере?</div>
                 <div class="url">${safeUrl}</div>
                 <div class="actions">
-                    <button id="cancelBtn" type="button">Cancel</button>
-                    <button id="confirmBtn" class="confirm" type="button">Open in Browser</button>
+                    <button id="cancelBtn" type="button">Отмена</button>
+                    <button id="confirmBtn" class="confirm" type="button">Открыть в браузере</button>
                 </div>
             </div>
             <script nonce="${nonce}">
@@ -183,7 +183,7 @@ export async function showHomepageConfirmDialog(mainWindow: BrowserWindow, url: 
     `;
 
     const view = confirmPopupView;
-    const target = 'data:text/html,' + encodeURIComponent(html);
+    const target = 'data:text/html;charset=utf-8,' + encodeURIComponent(html);
     trustLocalView(view.webContents, target);
     return new Promise((resolve) => {
         let finished = false;

@@ -71,7 +71,7 @@ async function initializeSettings() {
             list.innerHTML = '';
 
             if (!plugins || plugins.length === 0) {
-                list.innerHTML = '<div class="no-plugins" data-i18n="noPluginsFound">No plugins found</div>';
+                list.innerHTML = '<div class="no-plugins" data-i18n="noPluginsFound">Плагинов пока нет</div>';
                 return;
             }
 
@@ -90,7 +90,7 @@ async function initializeSettings() {
                 nameEl.textContent = p.metadata.name || p.id;
                 if (hasHomepage) {
                     nameEl.dataset.homepage = p.metadata.homepage;
-                    nameEl.title = 'Open homepage';
+                    nameEl.title = 'Открыть страницу плагина';
                     nameEl.addEventListener('click', (e) => {
                         e.stopPropagation();
                         ipcRenderer.send('show-plugin-homepage-dialog', nameEl.dataset.homepage);
@@ -131,7 +131,7 @@ async function initializeSettings() {
                 if (p.metadata.author && p.metadata.author !== 'Unknown') {
                     const authorEl = document.createElement('div');
                     authorEl.className = 'plugin-author';
-                    authorEl.textContent = 'by ' + p.metadata.author;
+                    authorEl.textContent = 'Автор: ' + p.metadata.author;
                     card.appendChild(authorEl);
                 }
 
@@ -174,6 +174,27 @@ async function initializeSettings() {
             status.textContent = 'Не удалось сохранить журнал. Попробуйте другую папку.';
         } finally { button.disabled = false; }
     });
+
+    function renderUpdateState(state) {
+        if (!state) return;
+        const toggle = document.getElementById('autoUpdateEnabled');
+        toggle.checked = state.enabled;
+        toggle.disabled = state.mode === 'dev';
+        document.getElementById('updateHint').textContent = 'Версия ' + state.version + '. ' + state.hint;
+        document.getElementById('updateStatus').textContent = state.status;
+    }
+
+    document.getElementById('autoUpdateEnabled').addEventListener('change', (e) => {
+        ipcRenderer.send('setting-changed', { key: 'autoUpdateEnabled', value: e.target.checked });
+    });
+    document.getElementById('openReleasePage').addEventListener('click', () => {
+        ipcRenderer.invoke('open-release-page').catch((error) => console.error('Не удалось открыть страницу релиза:', error));
+    });
+    ipcRenderer.on('update-state', (_, state) => renderUpdateState(state));
+    ipcRenderer
+        .invoke('get-update-state')
+        .then(renderUpdateState)
+        .catch((error) => console.error('Не удалось получить состояние обновлений:', error));
 
     // initilization
 
@@ -471,7 +492,7 @@ async function initializeSettings() {
         if (artworkUrl) {
             const img = document.createElement('img');
             img.src = artworkUrl;
-            img.alt = 'Track artwork';
+            img.alt = 'Обложка трека';
             img.addEventListener('error', () => {
                 img.style.display = 'none';
             });
@@ -482,9 +503,9 @@ async function initializeSettings() {
 
         const details = document.createElement('div');
         details.className = 'activity-details-preview';
-        details.appendChild(createTextElement('activity-name-preview', safeText(trackInfo.title, 'Unknown Track')));
+        details.appendChild(createTextElement('activity-name-preview', safeText(trackInfo.title, 'Без названия')));
         details.appendChild(
-            createTextElement('activity-details-text-preview', 'by ' + safeText(trackInfo.author, 'Unknown Artist')),
+            createTextElement('activity-details-text-preview', safeText(trackInfo.author, 'Неизвестный артист')),
         );
 
         const progressContainer = document.createElement('div');
@@ -516,7 +537,7 @@ async function initializeSettings() {
             buttons.className = 'activity-buttons-preview';
             const button = document.createElement('button');
             button.className = 'activity-button-preview';
-            button.textContent = 'Listen on SoundCloud';
+            button.textContent = 'Слушать в SoundCloud';
             button.addEventListener('click', () => shell.openExternal(trackUrl));
             buttons.appendChild(button);
             details.appendChild(buttons);

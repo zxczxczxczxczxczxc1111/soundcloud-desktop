@@ -1,5 +1,5 @@
 <!doctype html>
-<html>
+<html lang="ru">
     <head>
         <meta charset="utf-8" />
         <meta
@@ -10,7 +10,7 @@
         <script src="settings.js" defer></script>
     </head>
     <body>
-        <button class="close-btn" id="close-settings" title="Close settings" data-i18n-title="closeSettings">
+        <button class="close-btn" id="close-settings" title="Закрыть настройки" data-i18n-title="closeSettings">
             <svg viewBox="0 0 24 24">
                 <path
                     d="M19 6.41L17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z"
@@ -19,43 +19,43 @@
         </button>
         <div class="settings-panel">
             <div class="setting-group">
-                <h2 data-i18n="client">Client</h2>
+                <h2 data-i18n="client">Приложение</h2>
                 <div class="setting-item">
-                    <span data-i18n="darkMode">Enable Dark Mode</span>
+                    <span data-i18n="darkMode">Тёмная тема</span>
                     <label class="toggle">
                         <input type="checkbox" id="darkMode" />
                         <span class="slider"></span>
                     </label>
                 </div>
                 <div class="setting-item">
-                    <span data-i18n="minimizeToTray">Enable Minimize to Tray</span>
+                    <span data-i18n="minimizeToTray">Сворачивать в трей</span>
                     <label class="toggle">
                         <input type="checkbox" id="minimizeToTray" />
                         <span class="slider"></span>
                     </label>
                 </div>
                 <div class="setting-item">
-                    <span data-i18n="enableNavigationControls">Enable Navigation Controls</span>
+                    <span data-i18n="enableNavigationControls">Кнопки «назад», «вперёд» и «обновить»</span>
                     <label class="toggle">
                         <input type="checkbox" id="navigationControlsEnabled" />
                         <span class="slider"></span>
                     </label>
                 </div>
                 <div class="setting-item">
-                    <span data-i18n="enableTrackParser">Enable Track Parser</span>
+                    <span data-i18n="enableTrackParser">Разбирать названия треков</span>
                     <label class="toggle">
                         <input type="checkbox" id="trackParserEnabled" />
                         <span class="slider"></span>
                     </label>
                 </div>
                 <div class="description" data-i18n="trackParserDescription">
-                    Parse track titles to extract artist and track names automatically
+                    Отделяет артиста от названия, когда оба записаны в одну строку
                 </div>
             </div>
 
             <div class="setting-group">
                 <h2>
-                    UI Customization
+                    Оформление SoundCloud
                     <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24">
                         <path
                             d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm-1 17.93c-3.95-.49-7-3.85-7-7.93 0-.62.08-1.21.21-1.79L9 15v1c0 1.1.9 2 2 2v1.93zm6.9-2.54c-.26-.81-1-1.39-1.9-1.39h-1v-3c0-.55-.45-1-1-1H8v-2h2c.55 0 1-.45 1-1V7h2c1.1 0 2-.9 2-2v-.41c2.93 1.19 5 4.06 5 7.41 0 2.08-.8 3.97-2.1 5.39z"
@@ -63,21 +63,21 @@
                     </svg>
                 </h2>
                 <div class="setting-item">
-                    <span data-i18n="hidePromotions">Hide Promotions</span>
+                    <span data-i18n="hidePromotions">Скрывать рекламные блоки</span>
                     <label class="toggle">
                         <input type="checkbox" id="hidePromotions" />
                         <span class="slider"></span>
                     </label>
                 </div>
                 <div class="setting-item">
-                    <span data-i18n="hideEventsNearYou">Hide Events Near You</span>
+                    <span data-i18n="hideEventsNearYou">Скрывать концерты поблизости</span>
                     <label class="toggle">
                         <input type="checkbox" id="hideEventsNearYou" />
                         <span class="slider"></span>
                     </label>
                 </div>
                 <div class="setting-item">
-                    <span data-i18n="hideArtistUpsells">Hide Artist Pro Upsells</span>
+                    <span data-i18n="hideArtistUpsells">Скрывать предложения Artist Pro</span>
                     <label class="toggle">
                         <input type="checkbox" id="hideArtistUpsells" />
                         <span class="slider"></span>
@@ -87,7 +87,7 @@
 
             <div class="setting-group">
                 <h2>
-                    Account Manager
+                    Аккаунты
                     <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="currentColor">
                         <path
                             d="M12 12c2.21 0 4-1.79 4-4s-1.79-4-4-4-4 1.79-4 4 1.79 4 4 4zm0 2c-2.67 0-8 1.34-8 4v2h16v-2c0-2.66-5.33-4-8-4z"
@@ -95,14 +95,14 @@
                     </svg>
                 </h2>
                 <div class="setting-item">
-                    <span>Switch Account</span>
+                    <span>Текущий аккаунт</span>
                     <div style="display: flex; gap: 8px; align-items: center">
                         <select id="accountSelector" class="theme-selector" style="min-width: 120px"></select>
                         <button
                             id="addAccountBtn"
                             class="theme-button"
                             style="padding: 8px; flex: 0; min-width: 36px; display: flex; justify-content: center"
-                            title="Add Account"
+                            title="Добавить аккаунт"
                         >
                             <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor">
                                 <path d="M19 13h-6v6h-2v-6H5v-2h6V5h2v6h6v2z" />
@@ -113,28 +113,28 @@
                 <div class="setting-item" style="margin-top: 4px">
                     <span></span>
                     <button id="logoutBtn" class="theme-button" style="background: var(--bg-hover); color: #ff5500">
-                        Log Out of Current Account
+                        Выйти из текущего аккаунта
                     </button>
                 </div>
-                <div class="description">App will restart to load new session safely.</div>
+                <div class="description">При смене аккаунта приложение перезапустится.</div>
             </div>
 
             <div class="setting-group">
-                <h2 data-i18n="adBlocker">AdBlocker</h2>
+                <h2 data-i18n="adBlocker">Блокировка рекламы</h2>
                 <div class="setting-item">
-                    <span data-i18n="enableAdBlocker">Enable AdBlocker</span>
+                    <span data-i18n="enableAdBlocker">Блокировать рекламу</span>
                     <label class="toggle">
                         <input type="checkbox" id="adBlocker" />
                         <span class="slider"></span>
                     </label>
                 </div>
-                <div class="description" data-i18n="changesAppRestart">Changes require app restart</div>
+                <div class="description" data-i18n="changesAppRestart">Сработает после перезапуска приложения</div>
             </div>
 
             <div class="setting-group">
-                <h2 data-i18n="proxy">Proxy</h2>
+                <h2 data-i18n="proxy">Прокси</h2>
                 <div class="setting-item">
-                    <span data-i18n="enableProxy">Enable Proxy</span>
+                    <span data-i18n="enableProxy">Подключаться через прокси</span>
                     <label class="toggle">
                         <input type="checkbox" id="proxyEnabled" />
                         <span class="slider"></span>
@@ -145,21 +145,21 @@
                         class="textInput"
                         id="proxyUsername"
                         type="text"
-                        placeholder="Proxy username"
+                        placeholder="Логин прокси"
                         autocomplete="off"
                     />
                     <input
                         class="textInput"
                         id="proxyPassword"
                         type="password"
-                        placeholder="Proxy password"
+                        placeholder="Пароль прокси"
                         autocomplete="new-password"
                     />
                     <input
                         type="text"
                         class="textInput"
                         id="proxyHost"
-                        placeholder="Proxy Host"
+                        placeholder="Адрес прокси"
                         data-i18n-placeholder="proxyHost"
                         value=""
                     />
@@ -167,7 +167,7 @@
                         type="text"
                         class="textInput"
                         id="proxyPort"
-                        placeholder="Proxy Port"
+                        placeholder="Порт прокси"
                         data-i18n-placeholder="proxyPort"
                         value=""
                     />
@@ -176,7 +176,7 @@
 
             <div class="setting-group">
                 <h2 data-i18n="webhooks">
-                    Webhooks
+                    Вебхуки
                     <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24">
                         <path
                             d="M10.59 13.41c.41.39.41 1.03 0 1.42-.39.39-1.03.39-1.42 0a5.003 5.003 0 0 1 0-7.07l3.54-3.54a5.003 5.003 0 0 1 7.07 0 5.003 5.003 0 0 1 0 7.07l-1.49 1.49c.01-.82-.12-1.64-.4-2.42l.47-.48a2.982 2.982 0 0 0 0-4.24 2.982 2.982 0 0 0-4.24 0l-3.53 3.53a2.982 2.982 0 0 0 0 4.24zm2.82-4.24c.39-.39 1.03-.39 1.42 0a5.003 5.003 0 0 1 0 7.07l-3.54 3.54a5.003 5.003 0 0 1-7.07 0 5.003 5.003 0 0 1 0-7.07l1.49-1.49c-.01.82.12 1.64.4 2.42l-.47.48a2.982 2.982 0 0 0 0 4.24 2.982 2.982 0 0 0 4.24 0l3.53-3.53a2.982 2.982 0 0 0 0-4.24z"
@@ -184,7 +184,7 @@
                     </svg>
                 </h2>
                 <div class="setting-item">
-                    <span data-i18n="enableWebhooks">Enable Webhooks</span>
+                    <span data-i18n="enableWebhooks">Отправлять вебхук</span>
                     <label class="toggle">
                         <input type="checkbox" id="webhookEnabled" />
                         <span class="slider"></span>
@@ -195,12 +195,12 @@
                         type="url"
                         class="textInput"
                         id="webhookUrl"
-                        placeholder="Webhook URL"
+                        placeholder="Адрес вебхука"
                         data-i18n-placeholder="webhookUrl"
                         value=""
                     />
                     <div class="setting-item">
-                        <span data-i18n="webhookTrigger">Trigger at</span>
+                        <span data-i18n="webhookTrigger">Когда проиграно</span>
                         <div class="input-with-unit">
                             <input
                                 type="number"
@@ -217,11 +217,11 @@
                     </div>
                 </div>
                 <div class="description" data-i18n="webhookDescription">
-                    Send track data to a webhook URL when playback reaches the specified percentage
+                    Когда трек доиграет до указанного процента, приложение отправит его данные на адрес вебхука
                 </div>
                 <div class="webhook-example-container" id="webhookFields2" style="display: none">
                     <div class="example-toggle" id="webhookExampleToggle">
-                        <span class="example-toggle-text" data-i18n="showWebhookExample">Show Example Payload</span>
+                        <span class="example-toggle-text" data-i18n="showWebhookExample">Пример отправляемых данных</span>
                         <svg class="example-toggle-icon" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24">
                             <path d="M7.41 8.59L12 13.17l4.59-4.58L18 10l-6 6-6-6 1.41-1.41z" />
                         </svg>
@@ -251,14 +251,14 @@
                     </svg>
                 </h2>
                 <div class="setting-item">
-                    <span data-i18n="enableRichPresence">Enable Rich Presence</span>
+                    <span data-i18n="enableRichPresence">Показывать трек в статусе Discord</span>
                     <label class="toggle">
                         <input type="checkbox" id="discordRichPresence" />
                         <span class="slider"></span>
                     </label>
                 </div>
                 <div class="setting-item">
-                    <span data-i18n="displaySmallIcon">Display small icon</span>
+                    <span data-i18n="displaySmallIcon">Маленький значок SoundCloud</span>
                     <label class="toggle">
                         <input type="checkbox" id="displaySCSmallIcon" />
                         <span class="slider"></span>
@@ -272,41 +272,41 @@
                     </label>
                 </div>
                 <div class="setting-item">
-                    <span data-i18n="displayButtons">Display buttons</span>
+                    <span data-i18n="displayButtons">Кнопка «Слушать в SoundCloud»</span>
                     <label class="toggle">
                         <input type="checkbox" id="displayButtons" />
                         <span class="slider"></span>
                     </label>
                 </div>
                 <div class="setting-item">
-                    <span data-i18n="useArtistInStatusLine">Display artist name instead of application name</span>
+                    <span data-i18n="useArtistInStatusLine">Имя артиста в строке статуса вместо названия приложения</span>
                     <label class="toggle">
                         <input type="checkbox" id="useArtistInStatusLineToggle" />
                         <span class="slider"></span>
                     </label>
                 </div>
                 <div class="setting-item">
-                    <span data-i18n="enableRichPresencePreview">Enable Preview</span>
+                    <span data-i18n="enableRichPresencePreview">Предпросмотр статуса</span>
                     <label class="toggle">
                         <input type="checkbox" id="richPresencePreviewEnabled" />
                         <span class="slider"></span>
                     </label>
                 </div>
                 <div class="description" data-i18n="richPresencePreviewDescription">
-                    Show a live preview of your Discord Rich Presence in the settings panel
+                    Показывает прямо здесь, как статус выглядит в Discord
                 </div>
 
                 <div class="preview-container" id="presencePreviewContainer" style="display: none">
                     <div class="preview-panel">
                         <div class="preview-header-inline">
                             <span class="preview-title-inline" data-i18n="richPresencePreviewTitle"
-                                >Rich Presence Preview</span
+                                >Так статус видят в Discord</span
                             >
                         </div>
                         <div class="discord-preview">
                             <div class="activity-section-preview" id="activitySectionPreview">
                                 <div class="no-activity-preview" id="noActivityPreview" data-i18n="noActivityToShow">
-                                    No activity to show
+                                    Сейчас ничего не играет
                                 </div>
                             </div>
                         </div>
@@ -316,7 +316,7 @@
 
             <div class="setting-group">
                 <h2 data-i18n="customThemes">
-                    Themes
+                    Темы
                     <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 22 22">
                         <path
                             d="M12 3c-4.97 0-9 4.03-9 9s4.03 9 9 9c.83 0 1.5-.67 1.5-1.5 0-.39-.15-.74-.39-1.01-.23-.26-.38-.61-.38-.99 0-.83.67-1.5 1.5-1.5H16c2.76 0 5-2.24 5-5 0-4.42-4.03-8-9-8zm-5.5 9c-.83 0-1.5-.67-1.5-1.5S5.67 9 6.5 9 8 9.67 8 10.5 7.33 12 6.5 12zm3-4C8.67 8 8 7.33 8 6.5S8.67 5 9.5 5s1.5.67 1.5 1.5S10.33 8 9.5 8zm5 0c-.83 0-1.5-.67-1.5-1.5S13.67 5 14.5 5s1.5.67 1.5 1.5S15.33 8 14.5 8zm3 4c-.83 0-1.5-.67-1.5-1.5S16.67 9 17.5 9s1.5.67 1.5 1.5-.67 1.5-1.5 1.5z"
@@ -324,25 +324,25 @@
                     </svg>
                 </h2>
                 <div class="setting-item">
-                    <span data-i18n="selectCustomTheme">Select Theme</span>
+                    <span data-i18n="selectCustomTheme">Тема</span>
                     <select id="customThemeSelector" class="theme-selector">
-                        <option value="none" data-i18n="noTheme">No Theme</option>
+                        <option value="none" data-i18n="noTheme">Без темы</option>
                     </select>
                 </div>
                 <div class="theme-controls">
                     <button id="openThemesFolder" class="theme-button" data-i18n="openThemesFolder">
-                        Open Themes Folder
+                        Открыть папку тем
                     </button>
-                    <button id="refreshThemes" class="theme-button" data-i18n="refreshThemes">Refresh Themes</button>
+                    <button id="refreshThemes" class="theme-button" data-i18n="refreshThemes">Обновить список</button>
                 </div>
                 <div class="description" data-i18n="customThemeDescription">
-                    Place .css files in the themes folder to customize the SoundCloud UI
+                    Положите файлы .css в папку тем, чтобы изменить оформление SoundCloud
                 </div>
             </div>
 
             <div class="setting-group">
                 <h2 data-i18n="plugins">
-                    Plugins
+                    Плагины
                     <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24">
                         <path
                             d="M20.5 11H19V7c0-1.1-.9-2-2-2h-4V3.5C13 2.12 11.88 1 10.5 1S8 2.12 8 3.5V5H4c-1.1 0-1.99.9-1.99 2v3.8H3.5c1.49 0 2.7 1.21 2.7 2.7s-1.21 2.7-2.7 2.7H2V20c0 1.1.9 2 2 2h3.8v-1.5c0-1.49 1.21-2.7 2.7-2.7 1.49 0 2.7 1.21 2.7 2.7V22H17c1.1 0 2-.9 2-2v-4h1.5c1.38 0 2.5-1.12 2.5-2.5S21.88 11 20.5 11z"
@@ -350,17 +350,31 @@
                     </svg>
                 </h2>
                 <div class="plugin-list" id="pluginList">
-                    <div class="no-plugins" data-i18n="noPluginsFound">No plugins found</div>
+                    <div class="no-plugins" data-i18n="noPluginsFound">Плагинов пока нет</div>
                 </div>
                 <div class="theme-controls">
                     <button id="openPluginsFolder" class="theme-button" data-i18n="openPluginsFolder">
-                        Open Plugins Folder
+                        Открыть папку плагинов
                     </button>
-                    <button id="refreshPlugins" class="theme-button" data-i18n="refreshPlugins">Refresh Plugins</button>
+                    <button id="refreshPlugins" class="theme-button" data-i18n="refreshPlugins">Обновить список</button>
                 </div>
                 <div class="description" data-i18n="pluginsDescription">
-                    Place .js plugin files in the plugins folder to extend functionality
+                    Положите файлы плагинов .js в папку плагинов, чтобы добавить новые функции
                 </div>
+            </div>
+
+            <div class="setting-group">
+                <h2>Обновления</h2>
+                <div class="setting-item">
+                    <span>Проверять обновления</span>
+                    <label class="toggle">
+                        <input type="checkbox" id="autoUpdateEnabled" />
+                        <span class="slider"></span>
+                    </label>
+                </div>
+                <div id="updateHint" class="description"></div>
+                <div id="updateStatus" class="description" role="status"></div>
+                <button id="openReleasePage" class="theme-button">Открыть страницу релиза</button>
             </div>
 
             <div class="setting-group">
@@ -371,7 +385,7 @@
             </div>
 
             <div class="setting-group">
-                <button class="button" id="applyChanges" data-i18n="applyChanges">Apply Changes</button>
+                <button class="button" id="applyChanges" data-i18n="applyChanges">Применить</button>
             </div>
         </div>
     </body>

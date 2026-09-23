@@ -28,9 +28,11 @@ const INVOKE_CHANNELS = new Set([
     'refresh-plugins',
     'set-plugin-enabled',
     'get-accounts',
+    'get-update-state',
+    'open-release-page',
 ]);
 
-const ON_CHANNELS = new Set(['presence-preview-update', 'theme-changed', 'update-translations', 'accounts-updated', 'plugins-changed']);
+const ON_CHANNELS = new Set(['presence-preview-update', 'theme-changed', 'update-translations', 'accounts-updated', 'plugins-changed', 'update-state']);
 
 function isHttpsUrl(value: string): boolean {
     try {

@@ -27,6 +27,7 @@ const defaults: Record<string, string | number | boolean> = {
     displayButtons: false,
     statusDisplayType: 1,
     richPresencePreviewEnabled: false,
+    autoUpdateEnabled: true,
 };
 
 export class SettingsManager {

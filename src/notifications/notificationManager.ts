@@ -165,7 +165,7 @@ export class NotificationManager {
             </script>
         </body>`;
 
-        const url = 'data:text/html,' + encodeURIComponent(html);
+        const url = 'data:text/html;charset=utf-8,' + encodeURIComponent(html);
         trustLocalView(view.webContents, url);
         this.timer = setTimeout(() => this.finish(), 7000);
         void view.webContents.loadURL(url).catch((error: unknown) => { if (this.view === view) { console.error('Ошибка уведомления:', error); this.finish(); } });

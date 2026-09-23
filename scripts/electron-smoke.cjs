@@ -63,6 +63,7 @@ app.whenReady().then(async () => {
         'get-current-custom-theme': 'none',
         'get-current-track': empty,
         'get-accounts': { accounts: [], currentAccountId: 'default' },
+        'get-update-state': { mode: 'dev', version: '0.0.0', enabled: true, hint: '', status: '', releaseUrl: '' },
     };
     const { isTrustedLocalSender } = require('../tsc/trustedViews');
     for (const [channel, data] of Object.entries(responses)) ipcMain.handle(channel, (event) => {
