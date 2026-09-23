@@ -186,6 +186,19 @@ if (shouldRunGpuInProcess(process.platform, process.env, process.argv)) {
     // С DirectComposition GPU в главном процессе показывает пустое окно
     app.commandLine.appendSwitch('disable-direct-composition');
 }
+// Chromium прячет страницу, пока окно закрыто чужими окнами, и иногда не возвращает её, когда окно снова наверху:
+// окно остаётся чёрным до перемещения. Свёрнутое и спрятанное в трей окно не рисует и без этого расчёта.
+if (process.platform === 'win32') {
+    const disabledFeatures = new Set(
+        app.commandLine
+            .getSwitchValue('disable-features')
+            .split(',')
+            .map((feature) => feature.trim())
+            .filter(Boolean),
+    );
+    disabledFeatures.add('CalculateNativeWinOcclusion');
+    app.commandLine.appendSwitch('disable-features', Array.from(disabledFeatures).join(','));
+}
 // header height for header BrowserView
 const HEADER_HEIGHT = 32;
 // macOS check
