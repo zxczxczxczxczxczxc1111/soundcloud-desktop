@@ -6,6 +6,11 @@ async function initializeSettings() {
         if (element.type === 'checkbox') element.checked = value === true;
         else element.value = String(value ?? '');
     }
+    document.addEventListener('keydown', (event) => {
+        if (event.key !== 'F1' && event.key !== 'Escape') return;
+        event.preventDefault();
+        ipcRenderer.send('toggle-settings');
+    });
     document.getElementById('darkMode').checked = initial.theme !== 'light';
     document.getElementById('useArtistInStatusLineToggle').checked = initial.statusDisplayType === 1;
     document.documentElement.classList.toggle('theme-light', initial.theme === 'light');

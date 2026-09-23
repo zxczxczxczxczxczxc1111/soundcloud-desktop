@@ -638,6 +638,7 @@ async function init() {
     webhookService = new WebhookService(store);
     shortcutService = new ShortcutService(mainWindow);
     shortcutService.attachToWebContents(contentView.webContents);
+    shortcutService.attachToWebContents(headerView.webContents);
     playbackController = new PlaybackController(contentView.webContents);
     ipcMain.on('soundcloud:playback', (event, command: unknown) => {
         if (!isTrustedSoundCloudSender(event)) return;

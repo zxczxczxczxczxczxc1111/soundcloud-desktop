@@ -1,4 +1,4 @@
-const { app, BrowserWindow, ipcMain } = require('electron');
+const { app, BrowserWindow, ipcMain, session } = require('electron');
 const assert = require('node:assert/strict');
 const path = require('node:path');
 
@@ -13,6 +13,8 @@ process.on('unhandledRejection', (error) => {
 });
 
 app.whenReady().then(async () => {
+    // Локальные проверки не должны ждать сторонний сервер шрифтов.
+    session.defaultSession.webRequest.onBeforeRequest({ urls: ['https://assets.web.soundcloud.cloud/*'] }, (_details, callback) => callback({ cancel: true }));
     const { ViewStyles } = require('../tsc/services/viewStyles');
     const { SettingsManager } = require('../tsc/settings/settingsManager');
     const win = new BrowserWindow({ show: false, webPreferences: { sandbox: true } });
@@ -28,6 +30,7 @@ app.whenReady().then(async () => {
         );
         assert.deepEqual(state, { marker: false, color: 'rgb(1, 2, 3)' });
     }
+    console.log('PASS: CSS');
     const store = { get: (_key, fallback) => fallback };
     const manager = new SettingsManager(win, store);
     const empty = {
@@ -80,6 +83,7 @@ app.whenReady().then(async () => {
         assert.equal(manager.getView(), null);
         assert.equal(win.listenerCount('closed'), closedListeners);
     }
+    console.log('PASS: settings lifecycle');
     manager.dispose();
     const { showHomepageConfirmDialog } = require('../tsc/settings/confirmPopup');
     for (const accept of [false, true]) {
@@ -91,6 +95,7 @@ app.whenReady().then(async () => {
         assert.equal(await confirmed, accept);
         assert.equal(win.listenerCount('closed'), closedListeners);
     }
+    console.log('PASS: dialogs');
     const { NotificationManager } = require('../tsc/notifications/notificationManager');
     const notifications = new NotificationManager(win);
     notifications.show('<img src=x onerror="globalThis.injected=true">');
@@ -99,6 +104,7 @@ app.whenReady().then(async () => {
     assert.equal(await notification.webContents.executeJavaScript('document.querySelectorAll("img").length'), 0);
     await notification.webContents.executeJavaScript('notificationAPI.done()');
     notifications.dispose();
+    console.log('PASS: notifications');
     const { pluginInjection, pluginCleanup } = require('../tsc/services/pluginScripts');
     await win.webContents.executeJavaScript(pluginInjection("quote'plugin", 'globalThis.pluginLoaded = true;'));
     assert.equal(await win.webContents.executeJavaScript('globalThis.pluginLoaded'), true);
@@ -115,6 +121,7 @@ app.whenReady().then(async () => {
     await stuck.request({ kind: 'load', filename: 'stuck-plugin.js', source: 'module.exports = { onTrackChange: () => { while (true) {} } };' });
     await assert.rejects(stuck.request({ kind: 'track', track: {} }), /остановлен/);
     assert.equal(failures.length, 1);
+    console.log('PASS: plugin processes');
     const http = require('node:http');
     const { ProxyService } = require('../tsc/services/proxyService');
     let authenticated = false;
@@ -138,7 +145,7 @@ app.whenReady().then(async () => {
         proxyService.setPassword('password');
         assert.notEqual(values.get('proxyPasswordEncrypted'), 'password');
         await proxyService.apply();
-        await proxyWindow.loadURL('http://proxy-fixture.invalid/');
+        await Promise.race([proxyWindow.loadURL('http://proxy-fixture.invalid/'), new Promise((_, reject) => setTimeout(() => reject(new Error('Proxy page timeout')), 20000).unref())]);
         assert.equal(authenticated, true);
         assert.equal(await proxyWindow.webContents.executeJavaScript('document.body.textContent'), 'proxy fixture');
         values.set('proxyEnabled', false);
