@@ -281,6 +281,20 @@ function installDesktopFile() {
 }
 
 // tray setup
+// Запасной выход из трея: тема с @target all или settings может спрятать саму панель настроек
+function resetThemeAndPlugins(): void {
+    if (!themeService || !pluginService) return;
+    themeService.removeCustomTheme();
+    for (const plugin of pluginService.getPlugins()) if (plugin.enabled) pluginService.setPluginEnabled(plugin.id, false);
+    if (settingsManager?.getView()) settingsManager.toggle();
+    if (mainWindow && !mainWindow.isDestroyed()) {
+        if (!mainWindow.isVisible()) mainWindow.show();
+        if (mainWindow.isMinimized()) mainWindow.restore();
+        mainWindow.focus();
+    }
+    notificationManager?.show('Тема и плагины отключены');
+}
+
 function setupTray() {
     if (tray) {
         tray.destroy();
@@ -315,6 +329,10 @@ function setupTray() {
                     settingsManager.toggle();
                 }
             },
+        },
+        {
+            label: 'Сбросить тему и плагины',
+            click: () => resetThemeAndPlugins(),
         },
         { type: 'separator' },
         {
