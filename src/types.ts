@@ -25,9 +25,9 @@ export interface TrackInfo {
 }
 
 /**
- * Data required for Last.fm scrobbling
+ * Общие данные воспроизведения для интеграций
  */
-export interface LastFmTrackData {
+export interface PlaybackTrackData {
     /** Title of the track */
     title: string;
     /** Author/artist of the track */
@@ -41,7 +41,7 @@ export interface LastFmTrackData {
 /**
  * Data sent to webhooks
  */
-export interface WebhookTrackData extends LastFmTrackData {
+export interface WebhookTrackData extends PlaybackTrackData {
     /** SoundCloud URL of the track */
     url: string;
     /** URL to the track's artwork image */
@@ -81,12 +81,6 @@ export interface Translations {
     proxyHost: string;
     proxyPort: string;
     enableProxy: string;
-    enableLastFm: string;
-    lastfm: string;
-    lastFmApiKey: string;
-    lastFmApiSecret: string;
-    createApiKeyLastFm: string;
-    noCallbackUrl: string;
     webhooks: string;
     discord: string;
     enableWebhooks: string;

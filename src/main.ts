@@ -18,7 +18,6 @@ import { NotificationManager } from './notifications/notificationManager';
 import { SettingsManager } from './settings/settingsManager';
 import { ProxyService } from './services/proxyService';
 import { PresenceService } from './services/presenceService';
-import { LastFmService } from './services/lastFmService';
 import { TranslationService } from './services/translationService';
 import { ThumbarService } from './services/thumbarService';
 import { WebhookService } from './services/webhookService';
@@ -54,10 +53,6 @@ const store = new Store({
         proxyHost: '',
         proxyPort: '',
         proxyData: { user: '', password: '' },
-        lastFmEnabled: false,
-        lastFmApiKey: '',
-        lastFmSecret: '',
-        lastFmSessionKey: '',
         webhookEnabled: false,
         webhookUrl: '',
         webhookTriggerPercentage: 50,
@@ -89,7 +84,6 @@ let notificationManager: NotificationManager;
 let settingsManager: SettingsManager;
 let proxyService: ProxyService;
 let presenceService: PresenceService;
-let lastFmService: LastFmService;
 let webhookService: WebhookService;
 let translationService: TranslationService;
 let thumbarService: ThumbarService;
@@ -624,7 +618,6 @@ async function init() {
     settingsManager = new SettingsManager(mainWindow, store, translationService);
     proxyService = new ProxyService(mainWindow, store, queueToastNotification);
     presenceService = new PresenceService(store, translationService);
-    lastFmService = new LastFmService(contentView, store);
     webhookService = new WebhookService(store);
     shortcutService = new ShortcutService(mainWindow);
     shortcutService.attachToWebContents(contentView.webContents);
@@ -799,7 +792,6 @@ async function init() {
 
     // Setup event handlers
     contentView.webContents.on('did-finish-load', async () => {
-        await lastFmService.authenticate();
 
         // Get the current language from the page FIRST
         await getLanguage();
@@ -952,9 +944,6 @@ async function init() {
             await proxyService.apply();
         }
 
-        if (store.get('lastFmEnabled')) {
-            await lastFmService.authenticate();
-        }
 
         if (store.get('adBlocker')) {
             mainWindow.webContents.reload();
@@ -1429,12 +1418,6 @@ function setupTranslationHandlers() {
             proxyHost: translationService.translate('proxyHost'),
             proxyPort: translationService.translate('proxyPort'),
             enableProxy: translationService.translate('enableProxy'),
-            enableLastFm: translationService.translate('enableLastFm'),
-            lastfm: translationService.translate('lastfm'),
-            lastFmApiKey: translationService.translate('lastFmApiKey'),
-            lastFmSecret: translationService.translate('lastFmApiSecret'),
-            createApiKeyLastFm: translationService.translate('createApiKeyLastFm'),
-            noCallbackUrl: translationService.translate('noCallbackUrl'),
             webhooks: translationService.translate('webhooks'),
             discord: translationService.translate('discord'),
             enableWebhooks: translationService.translate('enableWebhooks'),
@@ -1506,15 +1489,6 @@ function setupAudioHandler() {
         // update services on track update
         if (result.title && result.author && result.duration) {
             await Promise.all([
-                lastFmService.updateTrackInfo(
-                    {
-                        title: result.title,
-                        author: result.author,
-                        duration: result.duration,
-                        elapsed: result.elapsed,
-                    },
-                    result.isPlaying,
-                ),
                 webhookService.updateTrackInfo(
                     {
                         title: result.title,

@@ -394,12 +394,6 @@ export class SettingsManager {
                 color: var(--accent);
                 text-decoration: none;
             }
-            #createLastFmApiKey {
-                color: var(--link-color);
-            }
-            #createLastFmApiKey:hover {
-                color: var(--link-hover);
-            }
             body::-webkit-scrollbar {
                 width: 8px;
             }
@@ -943,36 +937,6 @@ export class SettingsManager {
             </div>
 
             <div class="setting-group">
-                <h2 data-i18n="lastfm">
-                    ${this.translationService.translate('lastfm')}
-                    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24">
-                        <path d="M10.599 17.211l-.881-2.393s-1.433 1.596-3.579 1.596c-1.9 0-3.249-1.652-3.249-4.296 0-3.385 1.708-4.596 3.388-4.596 2.418 0 3.184 1.568 3.845 3.578l.871 2.751c.87 2.672 2.508 4.818 7.238 4.818 3.386 0 5.673-1.037 5.673-3.77 0-2.209-1.258-3.358-3.595-3.906l-1.738-.381c-1.193-.274-1.546-.763-1.546-1.59 0-.934.736-1.485 1.937-1.485 1.313 0 2.024.488 2.14 1.652l2.745-.33c-.225-2.511-1.937-3.541-4.745-3.541-2.479 0-4.897.934-4.897 3.947 0 1.877.902 3.063 3.172 3.608l1.871.439c1.402.332 1.866.916 1.866 1.713 0 1.021-.992 1.441-2.869 1.441-2.779 0-3.936-1.457-4.596-3.469l-.901-2.75c-1.156-3.574-3.004-4.896-6.669-4.896C2.147 5.297 0 7.802 0 12.244c0 4.325 2.208 6.638 6.169 6.638 3.193 0 4.43-1.671 4.43-1.671z"/>
-                    </svg>
-                </h2>
-                <div class="setting-item">
-                    <span data-i18n="enableLastFm">${this.translationService.translate('enableLastFm')}</span>
-                    <label class="toggle">
-                        <input type="checkbox" id="lastFmEnabled" ${this.store.get('lastFmEnabled') ? 'checked' : ''}>
-                        <span class="slider"></span>
-                    </label>
-                </div>
-                <div class="input-group" id="lastFmFields" style="display: ${
-                    this.store.get('lastFmEnabled') ? 'block' : 'none'
-                }">
-                    <input type="text" class="textInput" id="lastFmApiKey" placeholder="${this.translationService.translate('lastFmApiKey')}" data-i18n-placeholder="lastFmApiKey" value="${
-                        this.store.get('lastFmApiKey') || ''
-                    }">
-                    <input type="password" class="textInput" id="lastFmSecret" placeholder="${this.translationService.translate('lastFmApiSecret')}" data-i18n-placeholder="lastFmApiSecret" value="${
-                        this.store.get('lastFmSecret') || ''
-                    }">
-                </div>
-                <div class="description">
-                    <a href="#" id="createLastFmApiKey" class="link" data-i18n="createApiKeyLastFm">${this.translationService.translate('createApiKeyLastFm')}</a>
-                    - <span data-i18n="noCallbackUrl">${this.translationService.translate('noCallbackUrl')}</span>
-                </div>
-            </div>
-
-            <div class="setting-group">
                 <h2 data-i18n="webhooks">
                     ${this.translationService.translate('webhooks')}
                     <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24">
@@ -1420,24 +1384,9 @@ export class SettingsManager {
                 ipcRenderer.send('setting-changed', { key: 'proxyPort', value: e.target.value });
             });
 
-            document.getElementById('lastFmEnabled')?.addEventListener('change', (e) => {
-                const isEnabled = e.target.checked;
-                document.getElementById('lastFmFields').style.display = isEnabled ? 'block' : 'none';
-                ipcRenderer.send('setting-changed', { key: 'lastFmEnabled', value: isEnabled });
-            });
 
-            document.getElementById('lastFmApiKey')?.addEventListener('change', (e) => {
-                ipcRenderer.send('setting-changed', { key: 'lastFmApiKey', value: e.target.value });
-            });
 
-            document.getElementById('lastFmSecret')?.addEventListener('change', (e) => {
-                ipcRenderer.send('setting-changed', { key: 'lastFmSecret', value: e.target.value });
-            });
 
-            document.getElementById('createLastFmApiKey')?.addEventListener('click', (e) => {
-                e.preventDefault();
-                shell.openExternal('https://www.last.fm/api/account/create');
-            });
 
             document.getElementById('webhookEnabled')?.addEventListener('change', (e) => {
                 const isEnabled = e.target.checked;
