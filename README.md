@@ -11,6 +11,8 @@
 ![TypeScript](https://img.shields.io/badge/TypeScript-strict-3178c6?style=flat-square&logo=typescript&logoColor=white)
 ![Лицензия MIT](https://img.shields.io/badge/%D0%BB%D0%B8%D1%86%D0%B5%D0%BD%D0%B7%D0%B8%D1%8F-MIT-3fb950?style=flat-square)
 
+[![Скачать для Windows](https://img.shields.io/badge/%D0%A1%D0%BA%D0%B0%D1%87%D0%B0%D1%82%D1%8C_%D0%B4%D0%BB%D1%8F_Windows-v0.1.0-ff5500?style=for-the-badge)](https://github.com/zxczxczxczxczxczxc1111/soundcloud-desktop/releases/latest)
+
 **[Возможности](#возможности)** · **[Установка](#установка)** · **[Плагины и темы](#плагины-и-темы)** · **[Сборка](#сборка-из-исходников)** · **[Диагностика](#диагностика)**
 
 </div>
@@ -82,7 +84,7 @@
 <details>
 <summary><h2>Установка</h2></summary>
 
-Готовых релизов пока нет, установщик и portable собираются из исходников, см. [сборку](#сборка-из-исходников).
+Скачай установщик или portable со страницы [последнего релиза](https://github.com/zxczxczxczxczxczxc1111/soundcloud-desktop/releases/latest). Там же лежит `SHA256SUMS` для сверки файлов.
 
 | Вариант | Файл | Где профиль |
 |---|---|---|
@@ -91,7 +93,7 @@
 
 Клиент живёт в отдельном профиле и не трогает другие установленные клиенты SoundCloud. Обновление ручное: запустить новый установщик или заменить portable-файл.
 
-Значок GitHub в активности Discord ведёт на этот репозиторий, выключается в разделе Discord в настройках. Репозиторий приватный, без доступа ссылка не откроется.
+Значок GitHub в активности Discord ведёт на этот репозиторий, выключается в разделе Discord в настройках.
 
 > [!NOTE]
 > Windows SmartScreen может предупредить при первом запуске. У сборки есть VMP-подпись Widevine, но это не подпись издателя Windows.
