@@ -304,9 +304,15 @@ function resetThemeAndPlugins(): void {
     notificationManager?.show('Тема и плагины отключены');
 }
 
+// Два кадра анимации страницы после показа окна: к этому времени окно нарисовано и его можно проявлять
+function pagePainted(): Promise<unknown> {
+    if (!contentView || contentView.webContents.isDestroyed()) return Promise.resolve();
+    return contentView.webContents.executeJavaScript('new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve)))');
+}
+
 function showMainWindow(): void {
     if (!mainWindow || mainWindow.isDestroyed()) return;
-    revealWindow(mainWindow);
+    revealWindow(mainWindow, pagePainted);
     adjustContentViews();
 }
 
