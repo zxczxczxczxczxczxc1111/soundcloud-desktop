@@ -240,7 +240,7 @@ VMP-подпись сборка получает и проверяет сама,
 <details>
 <summary><h2>Благодарности</h2></summary>
 
-В основе лежит [soundcloud-rpc](https://github.com/richardhbtz/soundcloud-rpc) Ричарда Хабицройтера, коммит `bc3b3de6c19175c614712e09c9af68bd1c226396`, его уведомление об авторских правах на месте. Плагин скорости пришёл из [SoundCloud-Desktop](https://github.com/zxcloli666/SoundCloud-Desktop), а shuffle-fix написал [iamnotbobby](https://gist.github.com/iamnotbobby/604828ac84d9d1ec54eabb8d99d56c7b).
+В основе лежит [soundcloud-rpc](https://github.com/richardhbtz/soundcloud-rpc) Ричарда Хабицройтера, коммит `bc3b3de6c19175c614712e09c9af68bd1c226396`, его уведомление об авторских правах на месте.
 
 </details>
 
