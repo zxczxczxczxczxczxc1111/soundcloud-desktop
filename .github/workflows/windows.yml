@@ -1,0 +1,31 @@
+name: Проверка Windows
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  check:
+    runs-on: windows-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        with:
+          node-version: 24
+      - run: npx --yes pnpm@10.34.5 install --frozen-lockfile
+      - run: npx --yes pnpm@10.34.5 check:repo
+      - run: npx --yes pnpm@10.34.5 typecheck
+      - run: npx --yes pnpm@10.34.5 lint
+      - run: npx --yes pnpm@10.34.5 test
+      - run: npx --yes pnpm@10.34.5 test:electron
+      - run: npx --yes pnpm@10.34.5 build-win
+        env:
+          SKIP_VMP_SIGNING: 'true'
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: windows-test-without-vmp
+          path: build/*setup-x64.exe
+          retention-days: 7
