@@ -7,7 +7,7 @@ async function initializeSettings() {
         else element.value = String(value ?? '');
     }
     document.addEventListener('keydown', (event) => {
-        if (event.key !== 'F1' && event.key !== 'Escape') return;
+        if (event.repeat || (event.key !== 'F1' && event.key !== 'Escape')) return;
         event.preventDefault();
         ipcRenderer.send('toggle-settings');
     });

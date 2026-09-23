@@ -33,7 +33,7 @@ export class ShortcutService {
     }
 
     private handleInput(event: Electron.Event, input: Input) {
-        if (input.type !== 'keyDown') return;
+        if (input.type !== 'keyDown' || input.isAutoRepeat) return;
 
         for (const [id, shortcut] of this.shortcuts) {
             if (shortcut.enabled === false) continue;

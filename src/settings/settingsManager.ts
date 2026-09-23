@@ -38,14 +38,20 @@ export class SettingsManager {
     private resize = (): void => this.updateBounds();
     private ready = (event: IpcMainInvokeEvent): void => {
         if (!this.owns(event)) return;
-        void this.applyStyles();
-        this.view?.webContents.send('update-translations');
-        void this.view?.webContents.executeJavaScript("document.body.classList.add('visible')").catch(console.error);
+        const view = this.view!;
+        void this.applyStyles().then(() => {
+            if (this.view !== view || view.webContents.isDestroyed()) return;
+            view.webContents.send('update-translations');
+            view.setVisible(true);
+            view.webContents.focus();
+            return view.webContents.executeJavaScript("requestAnimationFrame(() => requestAnimationFrame(() => document.body.classList.add('visible')))");
+        }).catch(console.error);
     };
 
     constructor(
         private parentWindow: BrowserWindow,
         private store: ElectronStore,
+        private restoreFocus: () => void = () => parentWindow.webContents.focus(),
     ) {
         this.parentWindow.on('resize', this.resize);
         this.parentWindow.once('closed', () => this.dispose());
@@ -79,6 +85,7 @@ export class SettingsManager {
                 spellcheck: false,
             },
         });
+        this.view.setVisible(false);
         this.view.setBackgroundColor('#00000000');
         trustLocalFile(this.view.webContents, join(__dirname, 'settings.html'));
         this.parentWindow.contentView.addChildView(this.view);
@@ -92,7 +99,12 @@ export class SettingsManager {
         this.view = null;
         if (!view) return;
         if (!this.parentWindow.isDestroyed()) this.parentWindow.contentView.removeChildView(view);
-        if (!view.webContents.isDestroyed()) view.webContents.close();
+        if (!view.webContents.isDestroyed()) {
+            view.webContents.once('destroyed', () => {
+                if (!this.disposed && !this.view && !this.parentWindow.isDestroyed()) this.restoreFocus();
+            });
+            view.webContents.close();
+        }
     }
     private updateBounds(): void {
         if (!this.view || this.parentWindow.isDestroyed()) return;

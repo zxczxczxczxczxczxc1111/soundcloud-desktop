@@ -11,13 +11,16 @@ const mocks = vi.hoisted(() => ({
     removeHandler: vi.fn(),
     removeListener: vi.fn(),
 }));
-vi.mock('electron', () => ({
+vi.mock('electron', async () => {
+    const { EventEmitter } = await import('node:events');
+    return ({
     WebContentsView: class {
-        webContents = { loadFile: mocks.load, close: mocks.closed, isDestroyed: () => false, setWindowOpenHandler() {}, on() {}, once() {} };
+        webContents = Object.assign(new EventEmitter(), { loadFile: mocks.load, close: () => { mocks.closed(); this.webContents.emit('destroyed'); }, isDestroyed: () => false, setWindowOpenHandler() {} });
         constructor() {
             mocks.created();
         }
         setBounds() {}
+        setVisible() {}
         setBackgroundColor() {}
     },
     ipcMain: {
@@ -26,7 +29,7 @@ vi.mock('electron', () => ({
         removeHandler: mocks.removeHandler,
         removeListener: mocks.removeListener,
     },
-}));
+}); });
 import { SettingsManager } from './settingsManager';
 
 beforeEach(() => vi.clearAllMocks());
@@ -39,9 +42,11 @@ it('создаёт панель только при открытии и осво
         isDestroyed: () => false,
         getContentBounds: () => ({ width: 1000, height: 800 }),
     };
+    const restoreFocus = vi.fn();
     const manager = new SettingsManager(
         parent as unknown as BrowserWindow,
         { get: (_key: string, fallback: unknown) => fallback } as unknown as ElectronStore,
+        restoreFocus,
     );
     expect(mocks.created).not.toHaveBeenCalled();
     for (let i = 0; i < 30; i++) {
@@ -52,6 +57,7 @@ it('создаёт панель только при открытии и осво
     }
     expect(mocks.created).toHaveBeenCalledTimes(30);
     expect(mocks.closed).toHaveBeenCalledTimes(30);
+    expect(restoreFocus).toHaveBeenCalledTimes(30);
     expect(parent.contentView.addChildView).toHaveBeenCalledTimes(30);
     expect(parent.contentView.removeChildView).toHaveBeenCalledTimes(30);
     manager.dispose();

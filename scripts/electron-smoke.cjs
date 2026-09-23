@@ -44,7 +44,8 @@ app.whenReady().then(async () => {
     assert.equal(await win.webContents.executeJavaScript('document.body.textContent'), 'Theme test');
     console.log('PASS: CSS and renderer recovery');
     const store = { get: (_key, fallback) => fallback };
-    const manager = new SettingsManager(win, store);
+    let focusRestores = 0;
+    const manager = new SettingsManager(win, store, () => { focusRestores++; win.webContents.focus(); });
     const empty = {
         title: '',
         author: '',
@@ -93,6 +94,7 @@ app.whenReady().then(async () => {
         manager.toggle();
         await closed;
         assert.equal(manager.getView(), null);
+        assert.equal(focusRestores, i + 1);
         assert.equal(win.listenerCount('closed'), closedListeners);
     }
     console.log('PASS: settings lifecycle');

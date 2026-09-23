@@ -631,7 +631,9 @@ async function init() {
         applyThemeToContent(isDarkTheme);
     });
     notificationManager = new NotificationManager(mainWindow);
-    settingsManager = new SettingsManager(mainWindow, store);
+    settingsManager = new SettingsManager(mainWindow, store, () => {
+        if (!contentView.webContents.isDestroyed()) contentView.webContents.focus();
+    });
     pluginService.onPluginsChanged(() => settingsManager.getView()?.webContents.send('plugins-changed'));
     proxyService = new ProxyService(contentView.webContents, store, queueToastNotification);
     adblockService = new AdblockService(contentView.webContents.session, path.join(app.getPath('userData'), 'adblock-engine.bin'));
