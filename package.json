@@ -28,7 +28,7 @@
     "repository": "https://github.com/zxczxczxczxczxczxc1111/soundcloud-desktop",
     "build": {
         "appId": "io.github.zxczxczxczxczxczxc1111.soundcloud-desktop",
-        "productName": "SoundCloud Desktop",
+        "productName": "SoundCloud",
         "asar": true,
         "extraResources": [
             {

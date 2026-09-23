@@ -63,9 +63,9 @@ try {
 
 // Dev-запуск и тестовая сборка отличаются от установленного клиента названием, иконкой и кнопкой на панели задач
 const buildLabel = !app.isPackaged ? 'Dev' : buildInfo.channel === 'test' ? 'Test' : '';
-const appTitle = buildLabel ? `SoundCloud Desktop ${buildLabel}` : 'SoundCloud Desktop';
+const appTitle = buildLabel ? `SoundCloud ${buildLabel}` : 'SoundCloud';
 
-app.setName('SoundCloud Desktop');
+app.setName('SoundCloud');
 const portableDirectory = app.isPackaged && process.platform === 'win32' ? process.env.PORTABLE_EXECUTABLE_DIR : undefined;
 const profilePath = portableDirectory
     ? path.join(portableDirectory, 'soundcloud-desktop-data')
