@@ -3,3 +3,5 @@ onlyBuiltDependencies:
     - electron
     - electron-winstaller
     - register-scheme
+overrides:
+    electron-updater>js-yaml: 4.3.2
