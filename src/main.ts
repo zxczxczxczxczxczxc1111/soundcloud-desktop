@@ -751,7 +751,10 @@ async function init() {
         if (command !== 'play' && command !== 'pause' && command !== 'next' && command !== 'previous') return;
         void playbackController.execute(command).catch(console.error);
     });
-    if (platform() === 'win32') thumbarService = new ThumbarService(translationService, RESOURCES_PATH, playbackController);
+    if (platform() === 'win32') {
+        thumbarService = new ThumbarService(translationService, RESOURCES_PATH, playbackController);
+        mainWindow.on('show', () => thumbarService.restore(mainWindow));
+    }
 
 
     // Add settings toggle handler
