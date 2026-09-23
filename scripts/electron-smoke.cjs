@@ -103,7 +103,9 @@ app.whenReady().then(async () => {
         const view = win.contentView.children.at(-1);
         await new Promise(resolve => view.webContents.once('did-finish-load', resolve));
         assert.equal(await view.webContents.executeJavaScript("document.querySelector('.url').textContent.includes('<script>')"), true);
-        await view.webContents.executeJavaScript(`document.getElementById('${accept ? 'confirmBtn' : 'cancelBtn'}').click()`);
+        // Нажатие уничтожает view: ответ executeJavaScript может уже не вернуться.
+        void view.webContents.executeJavaScript(`document.getElementById('${accept ? 'confirmBtn' : 'cancelBtn'}').click()`)
+            .catch(error => { if (!view.webContents.isDestroyed()) throw error; });
         assert.equal(await confirmed, accept);
         assert.equal(win.listenerCount('closed'), closedListeners);
     }
@@ -114,7 +116,10 @@ app.whenReady().then(async () => {
     const notification = win.contentView.children.at(-1);
     await new Promise(resolve => notification.webContents.once('did-finish-load', resolve));
     assert.equal(await notification.webContents.executeJavaScript('document.querySelectorAll("img").length'), 0);
-    await notification.webContents.executeJavaScript('notificationAPI.done()');
+    const notificationClosed = new Promise(resolve => notification.webContents.once('destroyed', resolve));
+    void notification.webContents.executeJavaScript('notificationAPI.done()')
+        .catch(error => { if (!notification.webContents.isDestroyed()) throw error; });
+    await notificationClosed;
     notifications.dispose();
     console.log('PASS: notifications');
     const { pluginInjection, pluginCleanup } = require('../tsc/services/pluginScripts');
