@@ -456,13 +456,21 @@ function setupWindowControls() {
         }
     });
 
+    const sendMaximizedState = (): void => {
+        if (headerView && !headerView.webContents.isDestroyed()) headerView.webContents.send('window-maximized-changed', mainWindow.isMaximized());
+    };
+
     mainWindow.on('maximize', () => {
         adjustContentViews();
+        sendMaximizedState();
     });
 
     mainWindow.on('unmaximize', () => {
         adjustContentViews();
+        sendMaximizedState();
     });
+
+    mainWindow.on('restore', sendMaximizedState);
 
     mainWindow.on('resize', () => {
         adjustContentViews();
@@ -1129,7 +1137,8 @@ function applyThemeToContent(isDark: boolean) {
     headerView?.webContents.send('theme-colors-changed', themeColors);
     const css = [
         ':root{--background-base:' + (isDark ? '#121212' : '#ffffff') + ';--background-surface:' + (isDark ? '#212121' : '#f2f2f2') + ';--text-base:' + (isDark ? '#ffffff' : '#333333') + ';}',
-        '::-webkit-scrollbar-button{display:none!important}::-webkit-scrollbar{width:8px;height:8px;background-color:' + (isDark ? 'rgba(255,255,255,.05)' : 'rgba(0,0,0,.05)') + ';}::-webkit-scrollbar-thumb{border-radius:4px;background-color:' + (isDark ? 'rgba(255,255,255,.2)' : 'rgba(0,0,0,.2)') + ';}::-webkit-scrollbar-corner{background:transparent}',
+        // Стандартные свойства: ::-webkit-scrollbar рисуется главным потоком и отстаёт от прокрутки.
+        'html{scrollbar-width:thin;scrollbar-color:' + (isDark ? 'rgba(255,255,255,.2) rgba(255,255,255,.05)' : 'rgba(0,0,0,.2) rgba(0,0,0,.05)') + '}',
         store.get('hidePromotions', true) ? '.banner.m-promotion{display:none!important}' : '',
         store.get('hideEventsNearYou', true) ? '.velvetCakeModule{display:none!important}' : '',
         store.get('hideArtistUpsells', true) ? '.creatorSubscriptionsButton.header__creatorUpsell,.artistConnectItem.m-upsellNextPro,.dropdownMenu [href*="checkout.soundcloud.com"],.spotlight:has(.spotlight__upsellBanner),.spotlight__upsellBanner,.spotlight__upsellCTA,.sidebarContent:has(.velvetCakeIframe),.artistConnectContainer .tileGallery__sliderPeekForward,.artistConnectContainer .tileGallery__sliderPeekBackward,.MuiBox-root:has(a[href*="getstarted/fan-support"]){display:none!important}' : '',

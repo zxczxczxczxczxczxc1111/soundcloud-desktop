@@ -253,13 +253,14 @@ document.addEventListener('DOMContentLoaded', () => {
         }
     });
 
-    // Check window state periodically
-    setInterval(() => {
-        ipcRenderer.invoke('is-maximized').then((maximized) => {
-            if (isMaximized !== maximized) {
-                isMaximized = maximized;
-                updateWindowControls();
-            }
-        });
-    }, 100);
+    // Начальное состояние окна; дальше его присылает главный процесс
+    ipcRenderer.invoke('is-maximized').then(setMaximized).catch((error) => console.error('Не удалось узнать состояние окна:', error));
 });
+
+function setMaximized(maximized) {
+    if (isMaximized === maximized) return;
+    isMaximized = maximized;
+    updateWindowControls();
+}
+
+ipcRenderer.on('window-maximized-changed', (_, maximized) => setMaximized(maximized === true));
