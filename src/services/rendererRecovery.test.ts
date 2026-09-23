@@ -1,0 +1,31 @@
+import { EventEmitter } from 'node:events';
+import type { WebContents } from 'electron';
+import { afterEach, expect, it, vi } from 'vitest';
+import { installRendererRecovery } from './rendererRecovery';
+afterEach(() => vi.useRealTimers());
+it('reloads after teardown and stops a crash loop', () => {
+    vi.useFakeTimers();
+    const contents = Object.assign(new EventEmitter(), { reload: vi.fn(), isDestroyed: () => false });
+    const repeated = vi.fn();
+    const crash = vi.fn();
+    installRendererRecovery(contents as unknown as WebContents, { isQuitting: () => false, onCrash: crash, onRepeatedCrash: repeated });
+    contents.emit('render-process-gone', {}, { reason: 'killed' });
+    expect(contents.reload).not.toHaveBeenCalled();
+    vi.runOnlyPendingTimers();
+    expect(contents.reload).toHaveBeenCalledTimes(1);
+    contents.emit('render-process-gone', {}, { reason: 'crashed' });
+    vi.runOnlyPendingTimers();
+    expect(contents.reload).toHaveBeenCalledTimes(1);
+    expect(repeated).toHaveBeenCalledTimes(1);
+    expect(crash).toHaveBeenCalledTimes(2);
+});
+it('does not reload after shutdown starts', () => {
+    vi.useFakeTimers();
+    let quitting = false;
+    const contents = Object.assign(new EventEmitter(), { reload: vi.fn(), isDestroyed: () => false });
+    installRendererRecovery(contents as unknown as WebContents, { isQuitting: () => quitting, onCrash: vi.fn(), onRepeatedCrash: vi.fn() });
+    contents.emit('render-process-gone', {}, { reason: 'crashed' });
+    quitting = true;
+    vi.runOnlyPendingTimers();
+    expect(contents.reload).not.toHaveBeenCalled();
+});

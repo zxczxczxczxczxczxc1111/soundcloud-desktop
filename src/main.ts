@@ -1,3 +1,4 @@
+import { installRendererRecovery } from './services/rendererRecovery';
 import { mediaControlsScript } from './services/mediaControls';
 import { protectContent } from './contentPolicy';
 import { validateSettingChange } from './settings/validateSetting';
@@ -776,16 +777,13 @@ async function init() {
         updateNavigationState();
     });
 
-    let lastRendererRecovery = 0;
-    contentView.webContents.on('render-process-gone', (_event, details) => {
-        if (isQuitting || details.reason === 'clean-exit') return;
-        presenceService.clearActivity();
-        lastTrackInfo = { title: '', author: '', artwork: '', elapsed: '', duration: '', isPlaying: false, isLiked: false, url: '' };
-        const now = Date.now();
-        if (now - lastRendererRecovery > 60000) {
-            lastRendererRecovery = now;
-            contentView.webContents.reload();
-        } else queueToastNotification('Плеер завершился с ошибкой. Нажмите Ctrl+R для повторной загрузки.');
+    installRendererRecovery(contentView.webContents, {
+        isQuitting: () => isQuitting,
+        onCrash: () => {
+            presenceService.clearActivity();
+            lastTrackInfo = { title: '', author: '', artwork: '', elapsed: '', duration: '', isPlaying: false, isLiked: false, url: '' };
+        },
+        onRepeatedCrash: () => queueToastNotification('Плеер завершился с ошибкой. Нажмите Ctrl+R для повторной загрузки.'),
     });
 
     // Track if this is initial load

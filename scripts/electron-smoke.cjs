@@ -30,7 +30,19 @@ app.whenReady().then(async () => {
         );
         assert.deepEqual(state, { marker: false, color: 'rgb(1, 2, 3)' });
     }
-    console.log('PASS: CSS');
+    const { installRendererRecovery } = require('../tsc/services/rendererRecovery');
+    let crashes = 0, repeated = 0;
+    installRendererRecovery(win.webContents, { isQuitting: () => false, onCrash: () => crashes++, onRepeatedCrash: () => repeated++ });
+    const reloaded = new Promise((resolve, reject) => {
+        const timeout = setTimeout(() => reject(new Error('Renderer recovery timeout')), 10000);
+        win.webContents.once('did-finish-load', () => { clearTimeout(timeout); resolve(); });
+    });
+    win.webContents.forcefullyCrashRenderer();
+    await reloaded;
+    assert.equal(crashes, 1);
+    assert.equal(repeated, 0);
+    assert.equal(await win.webContents.executeJavaScript('document.body.textContent'), 'Theme test');
+    console.log('PASS: CSS and renderer recovery');
     const store = { get: (_key, fallback) => fallback };
     const manager = new SettingsManager(win, store);
     const empty = {
