@@ -1,3 +1,4 @@
+import { AdblockService } from './services/adblockService';
 import { ViewStyles, splitThemeCSS } from './services/viewStyles';
 import { pageFeaturesScript } from './services/pageFeatures';
 import {
@@ -12,9 +13,7 @@ import {
     components,
     type IpcMainEvent,
 } from 'electron';
-import { ElectronBlocker, fullLists } from '@ghostery/adblocker-electron';
 import { readFileSync, writeFileSync, existsSync, mkdirSync, copyFileSync } from 'fs';
-import fetch from 'cross-fetch';
 import { setupDarwinMenu } from './macos/menu';
 import { NotificationManager } from './notifications/notificationManager';
 import { SettingsManager } from './settings/settingsManager';
@@ -49,12 +48,14 @@ console.log(`Resources path: ${RESOURCES_PATH}`);
 
 // Store configuration
 const store = new Store({
+    name: 'preferences',
     defaults: {
         adBlocker: false,
         proxyEnabled: false,
         proxyHost: '',
         proxyPort: '',
-        proxyData: { user: '', password: '' },
+        proxyUsername: '',
+        proxyPasswordEncrypted: '',
         webhookEnabled: false,
         webhookUrl: '',
         webhookTriggerPercentage: 50,
@@ -75,7 +76,6 @@ const store = new Store({
         currentAccountId: 'default',
     },
     clearInvalidConfig: true,
-    encryptionKey: 'soundcloud-rpc-config',
 });
 
 let isDarkTheme = store.get('theme') !== 'light';
@@ -85,6 +85,8 @@ let mainWindow: BrowserWindow;
 let notificationManager: NotificationManager;
 let settingsManager: SettingsManager;
 let proxyService: ProxyService;
+let adblockService: AdblockService;
+let networkSettingsDirty = false;
 let presenceService: PresenceService;
 let webhookService: WebhookService;
 let translationService: TranslationService;
@@ -98,9 +100,8 @@ let memoryPressureHandlerRegistered = false;
 const devMode = process.argv.includes('--dev');
 const isMac = process.platform === 'darwin';
 const globalUserAgent = isMac
-    ? 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
-    : 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36';
-const globalPlatformHint = isMac ? '"macOS"' : '"Windows"';
+    ? 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/' + process.versions.chrome + ' Safari/537.36'
+    : 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/' + process.versions.chrome + ' Safari/537.36';
 
 app.userAgentFallback = globalUserAgent;
 
@@ -318,35 +319,7 @@ function createBrowserWindow(windowState: any): BrowserWindow {
 
     window.webContents.setUserAgent(globalUserAgent);
 
-    const session = window.webContents.session;
-    session.webRequest.onBeforeSendHeaders((details, callback) => {
-        // bypass header tampering for google &&& apple &&& cobalt endpoints
-        if (
-            details.url.includes('google') ||
-            details.url.includes('icloud') ||
-            details.url.includes('apple') ||
-            details.url.includes('cobalt')
-        ) {
-            callback({ requestHeaders: details.requestHeaders });
-            return;
-        }
-
-        const headers = {
-            ...details.requestHeaders,
-            'Accept-Language': 'en-US,en;q=0.9',
-            Accept: 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8',
-            'sec-ch-ua': '"Not_A Brand";v="8", "Chromium";v="120", "Google Chrome";v="120"',
-            'sec-ch-ua-mobile': '?0',
-            'sec-ch-ua-platform': globalPlatformHint, // dynamically set platform hint based on OS
-            'Upgrade-Insecure-Requests': '1',
-            'User-Agent': globalUserAgent, // ensure all requests use same user agent
-            'Sec-Fetch-Site': 'none',
-            'Sec-Fetch-Mode': 'navigate',
-            'Sec-Fetch-User': '?1',
-            'Sec-Fetch-Dest': 'document',
-        };
-        callback({ requestHeaders: headers });
-    });
+    
 
     return window;
 }
@@ -618,7 +591,8 @@ async function init() {
     });
     notificationManager = new NotificationManager(mainWindow);
     settingsManager = new SettingsManager(mainWindow, store);
-    proxyService = new ProxyService(mainWindow, store, queueToastNotification);
+    proxyService = new ProxyService(contentView.webContents, store, queueToastNotification);
+    adblockService = new AdblockService(contentView.webContents.session, path.join(app.getPath('userData'), 'adblock-engine.bin'));
     presenceService = new PresenceService(store, translationService);
     webhookService = new WebhookService(store);
     shortcutService = new ShortcutService(mainWindow);
@@ -696,38 +670,10 @@ async function init() {
     });
 
     // Configure session
-    const session = contentView.webContents.session;
-    session.webRequest.onBeforeSendHeaders((details, callback) => {
-        // bypass header tampering for google &&& apple &&& cobalt endpoints
-        if (
-            details.url.includes('google') ||
-            details.url.includes('icloud') ||
-            details.url.includes('apple') ||
-            details.url.includes('cobalt')
-        ) {
-            callback({ requestHeaders: details.requestHeaders });
-            return;
-        }
-        const headers = {
-            ...details.requestHeaders,
-            'Accept-Language': 'en-US,en;q=0.9',
-            Accept: 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8',
-            'sec-ch-ua': '"Not_A Brand";v="8", "Chromium";v="120", "Google Chrome";v="120"',
-            'sec-ch-ua-mobile': '?0',
-            'sec-ch-ua-platform': globalPlatformHint, // dynamically set platform hint based on OS
-            'Upgrade-Insecure-Requests': '1',
-            'User-Agent': globalUserAgent, // ensure all requests use the same user agent
-            'Sec-Fetch-Site': 'none',
-            'Sec-Fetch-Mode': 'navigate',
-            'Sec-Fetch-User': '?1',
-            'Sec-Fetch-Dest': 'document',
-        };
-        callback({ requestHeaders: headers });
-    });
+    
 
     // Apply initial settings
-    await proxyService.apply();
-    contentView.webContents.loadURL('https://soundcloud.com/discover');
+
 
     // Function to update navigation state in header
     function updateNavigationState() {
@@ -769,25 +715,6 @@ async function init() {
         }
         updateNavigationState();
     });
-
-    // Initialize adblocker once
-    if (store.get('adBlocker')) {
-        try {
-            const blocker = await ElectronBlocker.fromLists(
-                fetch,
-                fullLists,
-                { enableCompression: true },
-                {
-                    path: 'engine.bin',
-                    read: async (...args) => readFileSync(...args),
-                    write: async (...args) => writeFileSync(...args),
-                },
-            );
-            blocker.enableBlockingInSession(contentView.webContents.session);
-        } catch (error) {
-            console.error('Failed to initialize adblocker:', error);
-        }
-    }
 
     // Track if this is initial load
     let isInitialLoad = true;
@@ -844,8 +771,13 @@ async function init() {
 
     // Register settings related events
     ipcMain.on('setting-changed', async (_event, data) => {
-        const key = proxyService.transformKey(data.key);
+        const key = data.key;
+        if (key === 'proxyPassword') {
+            try { proxyService.setPassword(data.value); networkSettingsDirty = true; } catch (error) { queueToastNotification(String(error)); }
+            return;
+        }
         store.set(key, data.value);
+        if (key.startsWith('proxy') || key === 'adBlocker') networkSettingsDirty = true;
 
         console.log(key);
 
@@ -942,21 +874,16 @@ async function init() {
 
     // handle applying all changes
     ipcMain.on('apply-changes', async () => {
-        if (store.get('proxyEnabled')) {
-            await proxyService.apply();
-        }
-
-
-        if (store.get('adBlocker')) {
-            mainWindow.webContents.reload();
-        }
-
-        if (store.get('discordRichPresence')) {
-            // Refresh presence using the current track info instead of reconnecting
-            await presenceService.updatePresence(lastTrackInfo as any);
-        } else {
-            presenceService.clearActivity();
-        }
+        try {
+            if (networkSettingsDirty) {
+                await proxyService.apply();
+                await adblockService.setEnabled(store.get('adBlocker') === true);
+                networkSettingsDirty = false;
+                contentView.webContents.reload();
+            }
+            if (store.get('discordRichPresence')) await presenceService.updatePresence(lastTrackInfo);
+            else presenceService.clearActivity();
+        } catch (error) { queueToastNotification(String(error)); }
     });
 
     ipcMain.on('soundcloud:profile-update', (event, username: unknown) => {
@@ -970,6 +897,14 @@ async function init() {
             settingsManager.getView()?.webContents.send('accounts-updated');
         }
     });
+    try { await proxyService.apply(); } catch (error) {
+        queueToastNotification(String(error));
+        settingsManager.toggle();
+        return;
+    }
+    await adblockService.setEnabled(store.get('adBlocker') === true).catch((error: unknown) => queueToastNotification(String(error)));
+    await contentView.webContents.loadURL('https://soundcloud.com/discover').catch((error: unknown) => console.error('Не удалось загрузить SoundCloud:', error));
+
 }
 
 function setupMemoryPressureHandler() {
@@ -1141,6 +1076,8 @@ app.on('activate', function () {
 app.on('before-quit', () => {
     isQuitting = true;
     if (presenceService) void presenceService.dispose();
+    proxyService?.dispose();
+    adblockService?.dispose();
     if (shortcutService) {
         shortcutService.destroy();
     }

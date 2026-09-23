@@ -16,6 +16,7 @@ const defaults: Record<string, string | number | boolean> = {
     proxyEnabled: false,
     proxyHost: '',
     proxyPort: '',
+    proxyUsername: '',
     webhookEnabled: false,
     webhookUrl: '',
     webhookTriggerPercentage: 50,

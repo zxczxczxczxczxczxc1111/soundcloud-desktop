@@ -263,6 +263,11 @@ async function initializeSettings() {
         ipcRenderer.send('setting-changed', { key: 'proxyHost', value: e.target.value });
     });
 
+    for (const key of ['proxyUsername', 'proxyPassword'])
+        document.getElementById(key).addEventListener('change', (event) => {
+            ipcRenderer.send('setting-changed', { key, value: event.target.value });
+            if (key === 'proxyPassword') event.target.value = '';
+        });
     document.getElementById('proxyPort')?.addEventListener('change', (e) => {
         ipcRenderer.send('setting-changed', { key: 'proxyPort', value: e.target.value });
     });
