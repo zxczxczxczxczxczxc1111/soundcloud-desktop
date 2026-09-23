@@ -1,3 +1,4 @@
+import { PlaybackController } from './services/playbackController';
 import { AdblockService } from './services/adblockService';
 import { ViewStyles, splitThemeCSS } from './services/viewStyles';
 import { pageFeaturesScript } from './services/pageFeatures';
@@ -91,6 +92,7 @@ let presenceService: PresenceService;
 let webhookService: WebhookService;
 let translationService: TranslationService;
 let thumbarService: ThumbarService;
+let playbackController: PlaybackController;
 let themeService: ThemeService;
 let shortcutService: ShortcutService;
 let pluginService: PluginService;
@@ -597,7 +599,8 @@ async function init() {
     webhookService = new WebhookService(store);
     shortcutService = new ShortcutService(mainWindow);
     shortcutService.attachToWebContents(contentView.webContents);
-    if (platform() === 'win32') thumbarService = new ThumbarService(translationService);
+    playbackController = new PlaybackController(contentView.webContents);
+    if (platform() === 'win32') thumbarService = new ThumbarService(translationService, RESOURCES_PATH, playbackController);
 
     setupMemoryPressureHandler();
 
@@ -1078,6 +1081,7 @@ app.on('before-quit', () => {
     if (presenceService) void presenceService.dispose();
     proxyService?.dispose();
     adblockService?.dispose();
+    webhookService?.dispose();
     if (shortcutService) {
         shortcutService.destroy();
     }
@@ -1197,25 +1201,8 @@ function setupAudioHandler() {
             pluginService.notifyTrackChange(result as unknown as Record<string, unknown>);
         }
 
-        // update services on track update
-        if (result.title && result.author && result.duration) {
-            await Promise.all([
-                webhookService.updateTrackInfo(
-                    {
-                        title: result.title,
-                        author: result.author,
-                        duration: result.duration,
-                        url: result.url,
-                        artwork: result.artwork,
-                        elapsed: result.elapsed,
-                    },
-                    result.isPlaying,
-                ),
-                presenceService.updatePresence(result),
-            ]);
-        } else {
-            await presenceService.updatePresence(result);
-        }
+        void webhookService.updateTrackInfo(result, result.isPlaying, reason).catch(console.error);
+        void presenceService.updatePresence(result).catch(console.error);
 
         // update rich presence preview in settings
         if (settingsManager) {
@@ -1223,7 +1210,7 @@ function setupAudioHandler() {
         }
 
         if (thumbarService) {
-            thumbarService.updateThumbarButtons(mainWindow, result.isPlaying, result.isLiked, contentView);
+            thumbarService.updateThumbarButtons(mainWindow, result.isPlaying, result.isLiked);
         }
     });
 }

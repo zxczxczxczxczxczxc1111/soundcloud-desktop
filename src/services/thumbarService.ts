@@ -1,80 +1,39 @@
-import { BrowserView, BrowserWindow, nativeImage } from 'electron';
-import * as path from 'path';
-import { TranslationService } from './translationService';
-import { RESOURCES_PATH } from '../main';
+import { type BrowserWindow, nativeImage, type ThumbarButton } from 'electron';
+import { join } from 'path';
+import type { TranslationService } from './translationService';
+import type { PlaybackController, PlaybackCommand } from './playbackController';
 export class ThumbarService {
-    private translationService: TranslationService;
-
-    constructor(translationService: TranslationService) {
-        this.translationService = translationService;
+    private key = '';
+    private icons: Record<string, Electron.NativeImage>;
+    constructor(
+        private translation: TranslationService,
+        resources: string,
+        private playback: PlaybackController,
+    ) {
+        this.icons = Object.fromEntries(
+            ['backward', 'play', 'pause', 'forward', 'heart', 'heart-filled'].map((name) => [
+                name,
+                nativeImage.createFromPath(join(resources, 'icons', name + '.ico')),
+            ]),
+        );
     }
-
-    public updateThumbarButtons(
-        win: BrowserWindow | null,
-        isPlaying: boolean,
-        isLiked: boolean,
-        mainWindow: BrowserView | null,
-    ): void {
-        if (!win || !mainWindow) return;
-        const backwardIcon = nativeImage.createFromPath(path.join(RESOURCES_PATH, '/icons/backward.ico'));
-        const playIcon = nativeImage.createFromPath(path.join(RESOURCES_PATH, '/icons/play.ico'));
-        const pauseIcon = nativeImage.createFromPath(path.join(RESOURCES_PATH, '/icons/pause.ico'));
-        const forwardIcon = nativeImage.createFromPath(path.join(RESOURCES_PATH, '/icons/forward.ico'));
-        const likeIcon = nativeImage.createFromPath(path.join(RESOURCES_PATH, '/icons/heart.ico'));
-        const unlikeIcon = nativeImage.createFromPath(path.join(RESOURCES_PATH, '/icons/heart-filled.ico'));
-
+    public updateThumbarButtons(window: BrowserWindow, playing: boolean, liked: boolean): void {
+        if (window.isDestroyed()) return;
+        const key = [window.id, playing, liked, this.translation.getLanguage()].join(':');
+        if (key === this.key) return;
+        const button = (command: PlaybackCommand, icon: string, tooltip: string): ThumbarButton => ({
+            icon: this.icons[icon],
+            tooltip,
+            click: () => {
+                void this.playback.execute(command).catch(console.error);
+            },
+        });
         const buttons = [
-            {
-                tooltip: isLiked
-                    ? this.translationService.translate('unlike')
-                    : this.translationService.translate('like'),
-                icon: isLiked ? unlikeIcon : likeIcon,
-                click: () => {
-                    mainWindow.webContents
-                        .executeJavaScript(
-                            `
-                        (() => {
-                            document.querySelector('.playbackSoundBadge__like')?.click();
-                        })();
-                    `,
-                        )
-                        .catch(() => {});
-                },
-            },
-            {
-                tooltip: this.translationService.translate('previous'),
-                icon: backwardIcon,
-                click: () => {
-                    mainWindow.webContents.executeJavaScript(`
-                        document.querySelector('.skipControl__previous')?.click();
-                    `);
-                },
-            },
-            {
-                tooltip: isPlaying
-                    ? this.translationService.translate('pause')
-                    : this.translationService.translate('play'),
-                icon: isPlaying ? pauseIcon : playIcon,
-                click: () => {
-                    isPlaying = !isPlaying;
-                    mainWindow.webContents.executeJavaScript(`
-                        document.querySelector('.playControl')?.click();
-                    `);
-                    buttons[1].tooltip = isPlaying
-                        ? this.translationService.translate('pause')
-                        : this.translationService.translate('play');
-                },
-            },
-            {
-                tooltip: this.translationService.translate('next'),
-                icon: forwardIcon,
-                click: () => {
-                    mainWindow.webContents.executeJavaScript(`
-                        document.querySelector('.skipControl__next')?.click();
-                    `);
-                },
-            },
+            button('like', liked ? 'heart-filled' : 'heart', this.translation.translate(liked ? 'unlike' : 'like')),
+            button('previous', 'backward', this.translation.translate('previous')),
+            button('toggle', playing ? 'pause' : 'play', this.translation.translate(playing ? 'pause' : 'play')),
+            button('next', 'forward', this.translation.translate('next')),
         ];
-        win.setThumbarButtons(buttons);
+        if (window.setThumbarButtons(buttons)) this.key = key;
     }
 }

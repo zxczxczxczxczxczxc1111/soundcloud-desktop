@@ -1,247 +1,169 @@
-import type ElectronStore = require('electron-store');
 import fetch from 'cross-fetch';
 import { normalizeTrackInfo } from '../utils/trackParser';
-import type { WebhookTrackData as WebhookInputData } from '../types';
-
-export interface WebhookTrackData {
+import type { WebhookTrackData, TrackUpdateReason } from '../types';
+interface Settings {
+    get(key: string, fallback?: unknown): unknown;
+    set(key: string, value: unknown): void;
+    delete(key: string): void;
+}
+interface ListeningState {
+    id: string;
+    data: WebhookTrackData;
     artist: string;
     track: string;
-    album?: string;
-    albumArtist?: string;
     duration: number;
-    trackArt?: string;
-    originUrl: string;
+    playedMs: number;
+    playingSince: number | null;
+    attempted: boolean;
 }
-
-export interface WebhookState {
-    artist: string;
-    track: string;
-    startTime: number;
-    duration: number;
-    webhookSent: boolean;
-    originUrl: string;
-    trackArt: string;
-    isPaused: boolean;
-    pausedTime: number;
+function seconds(value: string): number {
+    const parts = value.trim().replace(/^-/, '').split(':').map(Number);
+    if (parts.some((part) => !Number.isFinite(part) || part < 0)) return 0;
+    return parts.reduce((total, part) => total * 60 + part, 0) * (value.trim().startsWith('-') ? -1 : 1);
 }
-
-function timeStringToSeconds(timeStr: string | undefined): number {
-    if (!timeStr || typeof timeStr !== 'string') return 0;
-    try {
-        const isNegative = timeStr.trim().startsWith('-');
-        const raw = isNegative ? timeStr.trim().slice(1) : timeStr.trim();
-        const parts = raw.split(':').map((p) => Number(p));
-        let seconds = 0;
-        for (const part of parts) {
-            seconds = seconds * 60 + (isNaN(part) ? 0 : part);
-        }
-        return Math.max(1, Math.abs(seconds));
-    } catch (error) {
-        console.error('Error parsing time string:', error);
-        return 0;
-    }
-}
-
-function shouldSendWebhook(state: WebhookState, triggerPercentage: number): boolean {
-    const totalElapsed = (Date.now() - state.startTime) / 1000;
-    const playedTime = totalElapsed - state.pausedTime;
-    const targetTime = (state.duration * triggerPercentage) / 100;
-
-    return !state.webhookSent && playedTime >= targetTime;
-}
-
 export class WebhookService {
-    private store: ElectronStore;
-    private currentWebhookState: WebhookState | null = null;
-    private webhookTimeout: NodeJS.Timeout | null = null;
-    private pauseStartTime: number = 0;
-
-    constructor(store: ElectronStore) {
-        this.store = store;
-    }
-
-    private scheduleWebhook(): void {
-        if (this.webhookTimeout) {
-            clearTimeout(this.webhookTimeout);
-            this.webhookTimeout = null;
-        }
-
-        if (!this.currentWebhookState || this.currentWebhookState.webhookSent) {
-            return;
-        }
-
-        const webhookEnabled = this.store.get('webhookEnabled') as boolean;
-        if (!webhookEnabled) return;
-
-        const triggerPercentage = (this.store.get('webhookTriggerPercentage') as number) || 50;
-        const targetTime = (this.currentWebhookState.duration * triggerPercentage) / 100;
-        const totalElapsed = (Date.now() - this.currentWebhookState.startTime) / 1000;
-        const playedTime = totalElapsed - this.currentWebhookState.pausedTime;
-        const remainingTime = Math.max(0, targetTime - playedTime);
-
-        if (remainingTime <= 0) {
-            this.sendScheduledWebhook();
-        } else {
-            this.webhookTimeout = setTimeout(() => {
-                this.sendScheduledWebhook();
-            }, remainingTime * 1000);
+    private state: ListeningState | null = null;
+    private latest: { data: WebhookTrackData; playing: boolean } | null = null;
+    private timer: ReturnType<typeof setTimeout> | null = null;
+    private requests = new Set<AbortController>();
+    constructor(private store: Settings) {}
+    private settle(state: ListeningState): void {
+        if (state.playingSince !== null) {
+            state.playedMs += Math.max(0, Date.now() - state.playingSince);
+            state.playingSince = Date.now();
         }
     }
-
-    private async sendScheduledWebhook(): Promise<void> {
-        if (!this.currentWebhookState || this.currentWebhookState.webhookSent) {
-            return;
-        }
-
-        await this.sendWebhook({
-            artist: this.currentWebhookState.artist,
-            track: this.currentWebhookState.track,
-            duration: this.currentWebhookState.duration,
-            originUrl: this.currentWebhookState.originUrl,
-            trackArt: this.currentWebhookState.trackArt,
-        });
-
-        this.currentWebhookState.webhookSent = true;
+    private threshold(state: ListeningState): number {
+        const percent = Number(this.store.get('webhookTriggerPercentage', 50));
+        return (state.duration * 1000 * Math.max(0, Math.min(100, Number.isFinite(percent) ? percent : 50))) / 100;
     }
-
-    private async sendWebhook(trackData: WebhookTrackData): Promise<void> {
-        const webhookUrl = this.store.get('webhookUrl') as string;
-        const webhookEnabled = this.store.get('webhookEnabled') as boolean;
-
-        if (!webhookEnabled || !webhookUrl) {
+    private cancelTimer(): void {
+        if (this.timer) clearTimeout(this.timer);
+        this.timer = null;
+    }
+    private schedule(): void {
+        this.cancelTimer();
+        const state = this.state;
+        if (
+            !state ||
+            state.playingSince === null ||
+            state.attempted ||
+            state.duration <= 0 ||
+            this.store.get('webhookEnabled') !== true
+        )
             return;
-        }
-
+        this.settle(state);
+        const remaining = Math.max(0, this.threshold(state) - state.playedMs);
+        this.timer = setTimeout(() => {
+            this.timer = null;
+            void this.send(state);
+        }, remaining);
+        this.timer.unref?.();
+    }
+    private async send(state: ListeningState): Promise<void> {
+        if (state.attempted || this.store.get('webhookEnabled') !== true) return;
+        const url = this.store.get('webhookUrl');
+        if (typeof url !== 'string' || !/^https?:\/\//i.test(url)) return;
+        // Один запрос на прослушивание. Повтор POST после таймаута может дублировать уже принятые данные.
+        state.attempted = true;
+        const controller = new AbortController();
+        this.requests.add(controller);
+        const timeout = setTimeout(() => controller.abort(), 10000);
         try {
-            const response = await fetch(webhookUrl, {
+            const response = await fetch(url, {
                 method: 'POST',
-                headers: {
-                    'Content-Type': 'application/json',
-                },
+                signal: controller.signal,
+                headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({
                     timestamp: new Date().toISOString(),
-                    ...trackData,
+                    artist: state.artist,
+                    track: state.track,
+                    duration: state.duration,
+                    originUrl: state.data.url,
+                    trackArt: state.data.artwork,
                 }),
             });
-
-            if (!response.ok) {
-                console.error('Webhook failed:', response.status, response.statusText);
-            } else {
-                console.log(`Webhook sent for ${trackData.artist} - ${trackData.track}`);
-            }
+            if (!response.ok) console.error('Webhook: сервер отклонил запрос, HTTP', response.status);
         } catch (error) {
-            console.error('Failed to send webhook:', error);
+            if (this.store.get('webhookEnabled') === true)
+                console.error('Webhook: не удалось отправить событие:', error);
+        } finally {
+            clearTimeout(timeout);
+            this.requests.delete(controller);
         }
     }
-
-    public async updateTrackInfo(trackInfo: WebhookInputData, isPlaying: boolean = true): Promise<void> {
-        const webhookEnabled = this.store.get('webhookEnabled') as boolean;
-        if (!webhookEnabled) return;
-
-        if (!trackInfo.title || !trackInfo.author) {
+    public async updateTrackInfo(
+        data: WebhookTrackData,
+        playing = true,
+        reason: TrackUpdateReason = 'progress',
+    ): Promise<void> {
+        this.latest = { data: { ...data }, playing };
+        if (this.store.get('webhookEnabled') !== true) return;
+        const previous = this.state;
+        if (previous) this.settle(previous);
+        if (!data.title || !data.author) {
+            this.cancelTimer();
+            this.state = null;
             return;
         }
-
-        const normalizedTrack = normalizeTrackInfo(
-            trackInfo.title,
-            trackInfo.author,
-            this.store.get('trackParserEnabled', true) as boolean,
+        const normalized = normalizeTrackInfo(
+            data.title,
+            data.author,
+            this.store.get('trackParserEnabled', true) === true,
         );
-        const currentTrack = {
-            artist: normalizedTrack.artist,
-            track: normalizedTrack.track,
-        };
-
-        const triggerPercentage = (this.store.get('webhookTriggerPercentage') as number) || 50;
-
-        if (this.currentWebhookState) {
-            if (!isPlaying && !this.currentWebhookState.isPaused) {
-                this.currentWebhookState.isPaused = true;
-                this.pauseStartTime = Date.now();
-                if (this.webhookTimeout) {
-                    clearTimeout(this.webhookTimeout);
-                    this.webhookTimeout = null;
-                }
-            } else if (isPlaying && this.currentWebhookState.isPaused) {
-                this.currentWebhookState.isPaused = false;
-                this.currentWebhookState.pausedTime += (Date.now() - this.pauseStartTime) / 1000;
-                this.pauseStartTime = 0;
-                this.scheduleWebhook();
-            }
-        }
-
-        // Check for loop (elapsed time <= 3 seconds on same track)
-        const elapsedSeconds = timeStringToSeconds(trackInfo.elapsed);
-        const isLoop =
-            this.currentWebhookState &&
-            this.currentWebhookState.artist === currentTrack.artist &&
-            this.currentWebhookState.track === currentTrack.track &&
-            elapsedSeconds <= 3;
-
-        if (
-            !this.currentWebhookState ||
-            this.currentWebhookState.artist !== currentTrack.artist ||
-            this.currentWebhookState.track !== currentTrack.track ||
-            isLoop
-        ) {
+        const id = data.url || normalized.artist + '\0' + normalized.track;
+        const rawDuration = seconds(data.duration);
+        const duration = rawDuration < 0 ? Math.max(0, seconds(data.elapsed)) - rawDuration : rawDuration;
+        if (!previous || previous.id !== id || reason === 'loop') {
             if (
-                this.currentWebhookState &&
-                !this.currentWebhookState.isPaused &&
-                !this.currentWebhookState.webhookSent &&
-                shouldSendWebhook(this.currentWebhookState, triggerPercentage)
-            ) {
-                await this.sendWebhook({
-                    artist: this.currentWebhookState.artist,
-                    track: this.currentWebhookState.track,
-                    duration: this.currentWebhookState.duration,
-                    originUrl: this.currentWebhookState.originUrl,
-                    trackArt: this.currentWebhookState.trackArt,
-                });
-            }
-
-            this.currentWebhookState = {
-                artist: currentTrack.artist,
-                track: currentTrack.track,
-                startTime: Date.now(),
-                duration: timeStringToSeconds(trackInfo.duration),
-                webhookSent: false,
-                originUrl: trackInfo.url,
-                trackArt: trackInfo.artwork,
-                isPaused: !isPlaying,
-                pausedTime: 0,
+                previous &&
+                !previous.attempted &&
+                previous.duration > 0 &&
+                previous.playedMs >= this.threshold(previous)
+            )
+                void this.send(previous);
+            this.state = {
+                id,
+                data: { ...data },
+                artist: normalized.artist,
+                track: normalized.track,
+                duration,
+                playedMs: 0,
+                playingSince: playing ? Date.now() : null,
+                attempted: false,
             };
-
-            if (!isPlaying) {
-                this.pauseStartTime = Date.now();
-            } else {
-                this.scheduleWebhook();
-            }
+        } else {
+            previous.data = { ...data };
+            previous.artist = normalized.artist;
+            previous.track = normalized.track;
+            previous.duration = duration;
+            previous.playingSince = playing ? Date.now() : null;
         }
+        this.schedule();
     }
-
-    public setTriggerPercentage(percentage: number): void {
-        let validPercentage = Math.max(0, Math.min(100, percentage));
-        if (isNaN(validPercentage)) {
-            validPercentage = 50;
-        }
-        this.store.set('webhookTriggerPercentage', validPercentage);
+    public setTriggerPercentage(value: number): void {
+        this.store.set('webhookTriggerPercentage', Number.isFinite(value) ? Math.max(0, Math.min(100, value)) : 50);
+        this.schedule();
     }
-
-    public setWebhookUrl(url: string): void {
-        this.store.set('webhookUrl', url);
+    public setWebhookUrl(value: string): void {
+        this.store.set('webhookUrl', value);
     }
-
     public setEnabled(enabled: boolean): void {
         this.store.set('webhookEnabled', enabled);
-    }
-
-    public disconnect(): void {
-        if (this.webhookTimeout) {
-            clearTimeout(this.webhookTimeout);
-            this.webhookTimeout = null;
+        if (!enabled) {
+            this.dispose();
+            return;
         }
-        this.store.set('webhookEnabled', false);
+        if (this.latest) void this.updateTrackInfo(this.latest.data, this.latest.playing);
+    }
+    public dispose(): void {
+        this.cancelTimer();
+        for (const request of this.requests) request.abort();
+        this.requests.clear();
+        this.state = null;
+    }
+    public disconnect(): void {
+        this.setEnabled(false);
         this.store.delete('webhookUrl');
-        this.store.delete('webhookTriggerPercentage');
     }
 }
