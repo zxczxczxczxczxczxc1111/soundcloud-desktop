@@ -5,11 +5,8 @@
         "moduleResolution": "NodeNext",
         "noImplicitAny": true,
         "sourceMap": true,
+        "rootDir": "src",
         "outDir": "tsc",
-        "baseUrl": ".",
-        "paths": {
-            "*": ["node_modules/*"]
-        },
         "skipLibCheck": true,
         "resolveJsonModule": true,
         "esModuleInterop": true,
