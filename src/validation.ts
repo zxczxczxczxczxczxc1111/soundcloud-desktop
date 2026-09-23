@@ -7,6 +7,8 @@ export const TRACK_UPDATE_REASONS = new Set([
     'initial-state',
     'waveform-seek',
     'timeline-seek',
+    'progress',
+    'loop',
 ]);
 
 export function cleanTrackString(value: unknown, maxLength: number): string {
