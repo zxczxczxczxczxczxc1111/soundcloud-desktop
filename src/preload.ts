@@ -207,4 +207,10 @@ contextBridge.exposeInMainWorld('soundcloudAPI', {
             ipcRenderer.send('soundcloud:wave-journal:add', userId, ids);
         },
     },
+    // Отметки «Не нравится» и скрытых артистов, ввод проверяет main
+    waveExclusions: {
+        load: (userId: number): Promise<unknown> => ipcRenderer.invoke('soundcloud:wave-exclusions:load', userId),
+        set: (userId: number, kind: string, entry: object, excluded: boolean): Promise<unknown> =>
+            ipcRenderer.invoke('soundcloud:wave-exclusions:set', userId, kind, entry, excluded),
+    },
 });

@@ -453,11 +453,68 @@ async function initializeSettings() {
         showNetworkNotice();
     });
 
-    // Блоки главной прячутся сразу, без перезагрузки
-    for (const input of document.querySelectorAll('#home input[type="checkbox"]'))
+    // Блоки главной и волна на главной прячутся сразу, без перезагрузки
+    for (const input of document.querySelectorAll('#home input[type="checkbox"], #wave input[type="checkbox"]'))
         input.addEventListener('change', (e) => {
             ipcRenderer.send('setting-changed', { key: e.target.id, value: e.target.checked });
         });
+
+    // Исключённое из волны: отметки ставятся в меню по ПКМ на сайте, здесь только возврат
+    function renderExcluded(containerId, kind, entries) {
+        const box = document.getElementById(containerId);
+        if (!box) return;
+        const count = document.getElementById(containerId + 'Count');
+        if (count) count.textContent = String(entries.length);
+        box.textContent = '';
+        if (!entries.length) {
+            const empty = document.createElement('div');
+            empty.className = 'hint pad';
+            empty.textContent = 'Пусто';
+            box.appendChild(empty);
+            return;
+        }
+        for (const entry of entries) {
+            const row = document.createElement('div');
+            row.className = 'row';
+            const text = document.createElement('span');
+            text.className = 'text';
+            const title = document.createElement('span');
+            title.className = 'excluded-title';
+            title.textContent = entry.title || (kind === 'track' ? 'Трек ' : 'Артист ') + entry.id;
+            title.title = title.textContent;
+            text.appendChild(title);
+            if (entry.artist) {
+                const artist = document.createElement('span');
+                artist.className = 'hint excluded-title';
+                artist.textContent = entry.artist;
+                text.appendChild(artist);
+            }
+            const restore = document.createElement('button');
+            restore.type = 'button';
+            restore.className = 'text-btn';
+            restore.textContent = 'Вернуть';
+            restore.addEventListener('click', () => {
+                restore.disabled = true;
+                ipcRenderer.invoke('remove-wave-exclusion', kind, entry.id).then(loadWaveExclusions, (error) => {
+                    console.error('Не удалось вернуть в волну:', error);
+                    restore.disabled = false;
+                });
+            });
+            row.append(text, restore);
+            box.appendChild(row);
+        }
+    }
+    async function loadWaveExclusions() {
+        try {
+            const data = await ipcRenderer.invoke('get-wave-exclusions');
+            renderExcluded('waveExcludedTracks', 'track', Array.isArray(data?.tracks) ? data.tracks : []);
+            renderExcluded('waveExcludedArtists', 'artist', Array.isArray(data?.artists) ? data.artists : []);
+        } catch (error) {
+            console.error('Не удалось загрузить исключения волны:', error);
+        }
+    }
+    ipcRenderer.on('wave-exclusions-changed', () => loadWaveExclusions());
+    loadWaveExclusions();
 
     document.getElementById('proxyEnabled')?.addEventListener('change', (e) => {
         const isEnabled = e.target.checked;

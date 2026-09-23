@@ -14,6 +14,7 @@ import { fullShuffleScript } from './services/fullShuffle';
 import { homeBlockDefaults, homeBlocksCss, homePageScript, isHomeBlockKey } from './services/homeBlocks';
 import { waveScript } from './services/wave';
 import { WaveJournal } from './services/waveJournal';
+import { WaveExclusions } from './services/waveExclusions';
 import { getSiteDictionary } from './services/siteDictionary';
 import { shouldRunGpuInProcess } from './services/gpuProcessMode';
 import { tintIcon } from './services/devIcon';
@@ -153,6 +154,7 @@ let networkSettingsDirty = false;
 // Язык сайта встаёт только при загрузке страницы
 let pageReloadNeeded = false;
 let waveJournal: WaveJournal | null = null;
+let waveExclusions: WaveExclusions | null = null;
 let presenceService: PresenceService;
 let webhookService: WebhookService;
 let updateService: UpdateService | null = null;
@@ -780,6 +782,33 @@ async function init() {
     ipcMain.handle('soundcloud:wave-journal:load', (event, userId: unknown) => (isTrustedSoundCloudSender(event) ? waveJournal?.load(userId) ?? [] : []));
     ipcMain.on('soundcloud:wave-journal:add', (event, userId: unknown, ids: unknown) => {
         if (isTrustedSoundCloudSender(event)) waveJournal?.add(userId, ids);
+    });
+    // «Не нравится» и скрытые артисты волны: отметки ставит страница, снимает и F1
+    waveExclusions = new WaveExclusions(path.join(app.getPath('userData'), 'wave'));
+    for (const channel of ['soundcloud:wave-exclusions:load', 'soundcloud:wave-exclusions:set', 'get-wave-exclusions', 'remove-wave-exclusion']) ipcMain.removeHandler(channel);
+    ipcMain.handle('soundcloud:wave-exclusions:load', (event, userId: unknown) =>
+        isTrustedSoundCloudSender(event) ? waveExclusions?.load(userId) ?? null : null,
+    );
+    ipcMain.handle('soundcloud:wave-exclusions:set', (event, userId: unknown, kind: unknown, entry: unknown, excluded: unknown) => {
+        if (!isTrustedSoundCloudSender(event)) return false;
+        const saved = waveExclusions?.set(userId, kind, entry, excluded) ?? false;
+        if (saved) settingsManager.getView()?.webContents.send('wave-exclusions-changed');
+        return saved;
+    });
+    ipcMain.handle('get-wave-exclusions', (event) => {
+        if (!isTrustedLocalSender(event)) throw new Error('Недопустимый отправитель IPC');
+        const userId = waveExclusions?.currentUser() ?? 0;
+        return userId ? waveExclusions?.load(userId) ?? null : { tracks: [], artists: [] };
+    });
+    ipcMain.handle('remove-wave-exclusion', (event, kind: unknown, id: unknown) => {
+        if (!isTrustedLocalSender(event)) throw new Error('Недопустимый отправитель IPC');
+        const userId = waveExclusions?.currentUser() ?? 0;
+        if (!waveExclusions?.set(userId, kind, { id }, false)) throw new Error('Отметка не снята');
+        // Страница держит отметки у себя, поэтому перечитывает их по сигналу
+        if (!contentView.webContents.isDestroyed())
+            contentView.webContents.executeJavaScript('window.__scWaveExclusionsChanged && window.__scWaveExclusionsChanged()').catch((error: unknown) => {
+                console.warn('Волна не перечитала исключения:', error);
+            });
     });
     if (platform() === 'win32') {
         thumbarService = new ThumbarService(translationService, RESOURCES_PATH, playbackController);

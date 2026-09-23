@@ -30,6 +30,7 @@
                     <button data-target="general" aria-current="true">Основное</button>
                     <button data-target="soundcloud">SoundCloud</button>
                     <button data-target="home">Главная</button>
+                    <button data-target="wave">Моя волна</button>
                     <button data-target="discord">Discord</button>
                     <button data-target="extensions">Темы и плагины</button>
                     <button data-target="account">Аккаунт</button>
@@ -65,7 +66,6 @@
 
                     <section class="section" id="home" hidden>
                         <h2>Главная</h2>
-                        <label class="row"><span class="text">Моя волна</span><span class="toggle"><input type="checkbox" id="homeWave" /><span class="slider"></span></span></label>
                         <div class="group">Полки</div>
                         <label class="row"><span class="text">Больше того, что тебе нравится</span><span class="toggle"><input type="checkbox" id="homeMore" /><span class="slider"></span></span></label>
                         <label class="row"><span class="text">Недавно играло</span><span class="toggle"><input type="checkbox" id="homeRecent" /><span class="slider"></span></span></label>
@@ -83,6 +83,25 @@
                         <label class="row"><span class="text">Лайки</span><span class="toggle"><input type="checkbox" id="homeLikes" /><span class="slider"></span></span></label>
                         <label class="row"><span class="text">История прослушивания</span><span class="toggle"><input type="checkbox" id="homeHistory" /><span class="slider"></span></span></label>
                         <label class="row"><span class="text">SoundCloud на телефоне и подвал</span><span class="toggle"><input type="checkbox" id="homeMobile" /><span class="slider"></span></span></label>
+                    </section>
+
+                    <section class="section" id="wave" hidden>
+                        <h2>Моя волна</h2>
+                        <label class="row"><span class="text">Показывать на главной</span><span class="toggle"><input type="checkbox" id="homeWave" /><span class="slider"></span></span></label>
+                        <details class="fold">
+                            <summary class="row">
+                                <span class="text">Не нравится</span>
+                                <span class="fold-side"><span id="waveExcludedTracksCount">0</span><svg class="chev" viewBox="0 0 24 24" aria-hidden="true"><path d="M7.4 8.6 12 13.2l4.6-4.6L18 10l-6 6-6-6z" /></svg></span>
+                            </summary>
+                            <div class="excluded sub" id="waveExcludedTracks"></div>
+                        </details>
+                        <details class="fold">
+                            <summary class="row">
+                                <span class="text">Скрытые артисты</span>
+                                <span class="fold-side"><span id="waveExcludedArtistsCount">0</span><svg class="chev" viewBox="0 0 24 24" aria-hidden="true"><path d="M7.4 8.6 12 13.2l4.6-4.6L18 10l-6 6-6-6z" /></svg></span>
+                            </summary>
+                            <div class="excluded sub" id="waveExcludedArtists"></div>
+                        </details>
                     </section>
 
                     <section class="section" id="discord" hidden>

@@ -253,6 +253,49 @@ label.row:hover {
     flex: none;
     width: 140px;
 }
+.excluded-title {
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+/* Сворачиваемый список: строка-заголовок с числом записей и стрелкой */
+.fold > summary {
+    list-style: none;
+    cursor: pointer;
+}
+.fold > summary::-webkit-details-marker {
+    display: none;
+}
+.fold > summary:hover {
+    background: var(--film);
+}
+.fold > summary:focus-visible {
+    outline: 2px solid var(--focus);
+    outline-offset: -2px;
+}
+.fold-side {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    flex-shrink: 0;
+    font-size: 12px;
+    color: var(--text-secondary);
+    font-variant-numeric: tabular-nums;
+}
+.fold .chev {
+    width: 16px;
+    height: 16px;
+    fill: currentColor;
+    transition: transform 0.15s;
+}
+.fold[open] .chev {
+    transform: rotate(180deg);
+}
+@media (prefers-reduced-motion: reduce) {
+    .fold .chev {
+        transition: none;
+    }
+}
 
 .toggle {
     position: relative;

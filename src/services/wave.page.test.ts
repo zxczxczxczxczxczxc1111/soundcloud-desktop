@@ -1,10 +1,14 @@
-// @vitest-environment jsdom
+/**
+ * @vitest-environment jsdom
+ * @vitest-environment-options { "url": "https://soundcloud.com/discover" }
+ */
 import { afterEach, beforeEach, expect, it, vi } from 'vitest';
 import { waveScript, type WaveTrack } from './wave';
 
 // Поддельный сайт: плеер, API и модель трека через тот же webpackJsonp, что у SoundCloud
 interface FakeItem { sound: { id: number }; explicit?: boolean }
-function fakeSite(related: (seed: number) => WaveTrack[]) {
+type Extra = (name: string, path: Record<string, unknown>, query: Record<string, unknown>) => unknown;
+function fakeSite(related: (seed: number) => WaveTrack[], extra: Extra = () => undefined) {
     let items: FakeItem[] = [];
     let index = -1;
     let playing = false;
@@ -50,7 +54,9 @@ function fakeSite(related: (seed: number) => WaveTrack[]) {
     const seeds: WaveTrack[] = [1, 2, 3].map((id) => ({ id, kind: 'track', user_id: 100 + id, duration: 180000, title: 'Seed ' + id }));
     const api = {
         callEndpointByUrl: vi.fn(),
-        callEndpoint: vi.fn(async (name: string, path: { track_id?: number }) => {
+        callEndpoint: vi.fn(async (name: string, path: { track_id?: number }, query: Record<string, unknown>) => {
+            const body = extra(name, path, query);
+            if (body !== undefined) return { body };
             switch (name) {
                 case 'me': return { body: { id: 77 } };
                 case 'playHistoryTracks': return { body: { collection: seeds.map((track) => ({ track })) } };
@@ -84,6 +90,7 @@ beforeEach(() => {
 afterEach(() => {
     window.dispatchEvent(new Event('pagehide'));
     delete (window as unknown as Record<string, unknown>).webpackJsonp;
+    delete (window as unknown as Record<string, unknown>).soundcloudAPI;
     Reflect.deleteProperty(HTMLElement.prototype, 'offsetParent');
     vi.unstubAllGlobals();
     vi.useRealTimers();
@@ -149,6 +156,159 @@ it('без модулей сайта говорит, что волна не ра
     await vi.advanceTimersByTimeAsync(21000);
     expect(document.querySelector('#sc-wave .scw-track')?.textContent).toBe('My Wave doesn’t work with this SoundCloud version');
     expect(document.querySelector<HTMLButtonElement>('#sc-wave .scw-play')?.disabled).toBe(true);
+});
+
+// Мост в main: отметки «Не нравится» и скрытых артистов
+function fakeExclusions(tracks: object[] = [], artists: object[] = []) {
+    const bridge = { load: vi.fn(async () => ({ tracks, artists })), set: vi.fn(async () => true) };
+    Object.assign(window, { soundcloudAPI: { waveExclusions: bridge } });
+    return bridge;
+}
+const song: WaveTrack = {
+    id: 555, kind: 'track', title: 'Song', duration: 200000, user_id: 900,
+    user: { id: 900, username: 'Art', permalink_url: 'https://soundcloud.com/art' }, permalink_url: 'https://soundcloud.com/art/song',
+};
+const artistTracks = Array.from({ length: 6 }, (_, i): WaveTrack => ({ id: 9001 + i, kind: 'track', title: 'Own ' + i, duration: 200000, user_id: 900 }));
+const siteExtra: Extra = (name, path, query) => {
+    if (name === 'resolve') return query.url === 'https://soundcloud.com/art/song' ? song : query.url === 'https://soundcloud.com/art' ? { kind: 'user', id: 900, username: 'Art', permalink_url: 'https://soundcloud.com/art' } : null;
+    if (name === 'userToptracks' && path.id === 900) return { collection: artistTracks };
+    return undefined;
+};
+function listRow(): HTMLElement {
+    const row = document.createElement('li');
+    row.className = 'soundList__item';
+    row.innerHTML = '<div class="sound"><div class="soundTitle"><a class="soundTitle__username" href="/art">Art</a><a class="soundTitle__title" href="/art/song">Song</a></div></div>';
+    document.body.append(row);
+    return row;
+}
+function rightClick(node: Element): MouseEvent {
+    const event = new MouseEvent('contextmenu', { bubbles: true, cancelable: true, clientX: 20, clientY: 20 });
+    node.dispatchEvent(event);
+    return event;
+}
+const menuActs = (): string[] => [...document.querySelectorAll<HTMLElement>('.scw-menu [data-menu]')].map((item) => item.dataset.menu ?? '');
+const choose = (act: string): void => document.querySelector<HTMLElement>('.scw-menu [data-menu="' + act + '"]')!.click();
+
+it('ПКМ по треку в списке: меню и волна от этого трека, крестик возвращает обычную', async () => {
+    const site = fakeSite(relatedTracks, siteExtra);
+    fakeExclusions();
+    const row = listRow();
+    window.eval(waveScript());
+    await vi.advanceTimersByTimeAsync(100);
+    const input = document.createElement('input');
+    document.body.append(input);
+    expect(rightClick(input).defaultPrevented).toBe(false);
+
+    const event = rightClick(row.querySelector('.soundTitle__title')!);
+    expect(event.defaultPrevented).toBe(true);
+    expect(menuActs()).toEqual(['wave-track', 'wave-artist', 'dislike', 'hide-artist']);
+    choose('wave-track');
+    expect(document.querySelector('.scw-menu')).toBeNull();
+    await vi.advanceTimersByTimeAsync(100);
+    const queued = site.player.replaceQueue.mock.calls[site.player.replaceQueue.mock.calls.length - 1][0] as FakeItem[];
+    expect(queued[0].sound.id).toBe(555);
+    // Похожие на трек, дальше похожие на них: волна едет от выбранного трека
+    expect(queued.slice(1).every((item) => String(item.sound.id).startsWith('555'))).toBe(true);
+    expect(queued.slice(1).some((item) => Math.floor(item.sound.id / 1000) === 555)).toBe(true);
+    const section = document.getElementById('sc-wave')!;
+    expect(section.querySelector('.scw-hint')?.textContent).toBe('Wave from Song');
+    expect(section.querySelector('.scw-why')?.textContent).toBe('Your wave starts here');
+
+    section.querySelector<HTMLElement>('[data-act="clear-seed"]')!.click();
+    await vi.advanceTimersByTimeAsync(100);
+    expect(section.querySelector('.scw-hint')?.textContent).toBe('Similar to what you play and like');
+});
+
+it('волна по треку, который уже играет: он доигрывает, волна встаёт за ним', async () => {
+    const site = fakeSite(relatedTracks, siteExtra);
+    fakeExclusions();
+    const row = listRow();
+    window.eval(waveScript());
+    await vi.advanceTimersByTimeAsync(100);
+    site.setItems([{ sound: { id: 555 } }], 0);
+    rightClick(row.querySelector('.soundTitle__title')!);
+    choose('wave-track');
+    await vi.advanceTimersByTimeAsync(100);
+    expect(site.player.replaceQueue).not.toHaveBeenCalled();
+    const ids = site.player.getQueue().slice().map((item) => item.sound.id);
+    expect(ids[0]).toBe(555);
+    expect(ids.length).toBeGreaterThan(1);
+    expect(site.player.getCurrentSound()?.id).toBe(555);
+    await vi.advanceTimersByTimeAsync(5000);
+    expect(site.states.fallbackEnabled).toBe(false);
+});
+
+it('ПКМ по артисту: волна от его треков, его треки в подборке', async () => {
+    const site = fakeSite(relatedTracks, siteExtra);
+    fakeExclusions();
+    const row = listRow();
+    window.eval(waveScript());
+    await vi.advanceTimersByTimeAsync(100);
+    rightClick(row.querySelector('.soundTitle__username')!);
+    expect(menuActs()).toEqual(['wave-artist', 'hide-artist']);
+    choose('wave-artist');
+    await vi.advanceTimersByTimeAsync(100);
+    expect(site.api.callEndpoint).toHaveBeenCalledWith('userToptracks', { id: 900 }, { limit: 20 });
+    const queued = site.player.replaceQueue.mock.calls[site.player.replaceQueue.mock.calls.length - 1][0] as FakeItem[];
+    expect(queued.some((item) => item.sound.id > 9000 && item.sound.id < 9010)).toBe(true);
+    expect(queued.some((item) => item.sound.id > 9000000)).toBe(true);
+    expect(document.querySelector('#sc-wave .scw-hint')?.textContent).toBe('Wave from artist Art');
+});
+
+it('«Не нравится» уводит трек из очереди, играющий сменяется следующим, отметка уходит в main', async () => {
+    const site = fakeSite(relatedTracks);
+    const bridge = fakeExclusions();
+    window.eval(waveScript());
+    await vi.advanceTimersByTimeAsync(100);
+    const section = document.getElementById('sc-wave')!;
+    section.querySelector<HTMLButtonElement>('.scw-play')!.click();
+    await vi.advanceTimersByTimeAsync(100);
+    const tile = section.querySelector<HTMLElement>('.scw-tile[data-track]')!;
+    const disliked = Number(tile.dataset.track);
+    rightClick(tile);
+    choose('dislike');
+    await vi.advanceTimersByTimeAsync(100);
+    expect(bridge.set).toHaveBeenCalledWith(77, 'track', expect.objectContaining({ id: disliked }), true);
+    expect(site.player.getQueue().slice().some((item) => item.sound.id === disliked)).toBe(false);
+    expect(document.querySelector('.scw-toast')?.textContent).toBe('This track won’t play in My Wave');
+
+    const playing = site.player.getCurrentSound()!.id;
+    rightClick(section.querySelector('.scw-track')!);
+    choose('dislike');
+    await vi.advanceTimersByTimeAsync(100);
+    expect(site.player.getCurrentSound()!.id).not.toBe(playing);
+    const index = site.player.getQueueState().currentIndex;
+    expect(site.player.getQueue().slice(index).some((item) => item.sound.id === playing)).toBe(false);
+});
+
+it('отмеченное раньше не попадает в подборку, F1 заставляет перечитать отметки', async () => {
+    const few = (seed: number): WaveTrack[] => [0, 1].map((i) => ({ id: seed * 1000 + i, kind: 'track', user_id: seed * 10 + i, duration: 200000, title: 'Few ' + seed + '-' + i }));
+    fakeSite(few);
+    const bridge = fakeExclusions([{ id: 1000 }, { id: 2000 }, { id: 3000 }], [{ id: 11 }]);
+    window.eval(waveScript());
+    await vi.advanceTimersByTimeAsync(100);
+    const ids = [...document.querySelectorAll<HTMLElement>('#sc-wave .scw-tile[data-track]')].map((tile) => Number(tile.dataset.track));
+    expect(ids.sort()).toEqual([2001, 3001]);
+    (window as unknown as { __scWaveExclusionsChanged: () => void }).__scWaveExclusionsChanged();
+    await vi.advanceTimersByTimeAsync(10);
+    expect(bridge.load).toHaveBeenCalledTimes(2);
+});
+
+it('несколько жанров через запятую: подбор по каждому', async () => {
+    const site = fakeSite(relatedTracks);
+    window.eval(waveScript());
+    await vi.advanceTimersByTimeAsync(100);
+    const section = document.getElementById('sc-wave')!;
+    section.querySelector<HTMLElement>('[data-act="genre"]')!.click();
+    const input = section.querySelector<HTMLInputElement>('[data-role="genre-input"]')!;
+    input.value = 'Techno, dark techno';
+    input.dispatchEvent(new Event('input', { bubbles: true }));
+    section.querySelector<HTMLInputElement>('[data-role="genre-input"]')!.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }));
+    await vi.advanceTimersByTimeAsync(100);
+    const tags = site.api.callEndpoint.mock.calls.filter(([name]) => name === 'recentTracks').map(([, path]) => (path as { tag?: string }).tag);
+    expect(tags).toEqual(expect.arrayContaining(['techno', 'dark techno']));
+    expect(section.querySelector('.scw-genre .scw-label')?.textContent).toBe('techno / dark techno');
+    expect(section.querySelector('.scw-hint')?.textContent).toBe('Similar to what you play and like, in techno / dark techno');
 });
 
 it('на русском сайте пишет по-русски и помнит режим', async () => {
