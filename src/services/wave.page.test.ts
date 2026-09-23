@@ -165,6 +165,30 @@ it('пауза кнопкой сайта или медиаклавишей пе�
     expect(document.querySelector('#sc-wave .scw-play')?.getAttribute('aria-label')).toBe('Pause');
 });
 
+it('смена темы на паузе перерисовывает форму волны цветом новой темы', async () => {
+    const styles: string[] = [];
+    const context = { scale: vi.fn(), fillRect: vi.fn(), set fillStyle(value: string) { styles.push(value); } };
+    const getContext = vi.spyOn(HTMLCanvasElement.prototype, 'getContext').mockReturnValue(context as unknown as CanvasRenderingContext2D);
+    for (const name of ['clientWidth', 'clientHeight']) Object.defineProperty(HTMLCanvasElement.prototype, name, { configurable: true, get: () => 300 });
+    try {
+        const site = fakeSite(relatedTracks);
+        window.eval(waveScript());
+        await vi.advanceTimersByTimeAsync(100);
+        document.querySelector<HTMLButtonElement>('#sc-wave .scw-play')!.click();
+        await vi.advanceTimersByTimeAsync(1100);
+        site.player.pauseCurrent();
+        await vi.advanceTimersByTimeAsync(1100);
+        styles.length = 0;
+        document.documentElement.classList.add('theme-light');
+        await vi.advanceTimersByTimeAsync(300);
+        expect(styles.some((style) => style.startsWith('rgba(0,0,0,'))).toBe(true);
+    } finally {
+        document.documentElement.classList.remove('theme-light');
+        getContext.mockRestore();
+        for (const name of ['clientWidth', 'clientHeight']) Reflect.deleteProperty(HTMLCanvasElement.prototype, name);
+    }
+});
+
 it('без модулей сайта говорит, что волна не работает, и не падает', async () => {
     Object.assign(window, { webpackJsonp: [] });
     window.eval(waveScript());

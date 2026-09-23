@@ -1934,6 +1934,8 @@ export function installWave(config: WaveConfig): void {
             }
         });
     });
+    // Смена темы на паузе: форма волны иначе остаётся нарисованной цветом прошлой темы
+    const themeObserver = new MutationObserver(() => paint());
     let tickTimer: ReturnType<typeof setInterval> | undefined;
     let paintTimer: ReturnType<typeof setInterval> | undefined;
     let attempts = 0;
@@ -1975,6 +1977,7 @@ export function installWave(config: WaveConfig): void {
         generation++;
         seedRequest++;
         observer.disconnect();
+        themeObserver.disconnect();
         document.removeEventListener('contextmenu', onContextMenu);
         document.removeEventListener('mousedown', onOutside, true);
         document.removeEventListener('keydown', onDocumentKey);
@@ -2012,6 +2015,7 @@ export function installWave(config: WaveConfig): void {
     window.addEventListener('blur', closeMenu);
     window.addEventListener('resize', closeMenu);
     observer.observe(document.documentElement, { childList: true, subtree: true });
+    themeObserver.observe(document.documentElement, { attributes: true, attributeFilter: ['class'] });
     state = 'loading';
     mount();
     attach();
