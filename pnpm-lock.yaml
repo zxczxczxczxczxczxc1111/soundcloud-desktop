@@ -20,9 +20,6 @@ importers:
       discord-api-types:
         specifier: ^0.38.18
         version: 0.38.18
-      electron-prompt:
-        specifier: ^1.7.0
-        version: 1.7.0
       electron-store:
         specifier: ^8.1.0
         version: 8.2.0
@@ -42,9 +39,6 @@ importers:
       '@types/node':
         specifier: ^24.2.1
         version: 24.2.1
-      '@types/semver':
-        specifier: ^7.5.8
-        version: 7.7.0
       '@typescript-eslint/eslint-plugin':
         specifier: ^8.54.0
         version: 8.54.0(@typescript-eslint/parser@8.54.0(eslint@9.33.0(jiti@2.6.1))(typescript@5.9.2))(eslint@9.33.0(jiti@2.6.1))(typescript@5.9.2)
@@ -675,9 +669,6 @@ packages:
   '@types/responselike@1.0.3':
     resolution: {integrity: sha512-H/+L+UkTV33uf49PH5pCAUBVPNj2nDBXTN+qS1dOwyyg24l3CcicicCA7ca+HMvJBZcFgl5r8e+RR6elsb4Lyw==}
 
-  '@types/semver@7.7.0':
-    resolution: {integrity: sha512-k107IF4+Xr7UHjwDc7Cfd6PRQfbdkiRabXGRjo07b4WyPahFBZCZ1sE+BNxYIJPPg73UkfOsVOLwqVc/6ETrIA==}
-
   '@types/tough-cookie@4.0.5':
     resolution: {integrity: sha512-/Ad8+nIOV7Rl++6f1BdKxFSMgmoqEoYbHRpPcx3JEfv8VRsQe9Z4mCXeJBzxs7mbHY/XOZZuXlRNfhpVPbs6ZA==}
 
@@ -1302,9 +1293,6 @@ packages:
     resolution: {integrity: sha512-uWhx1r74NGpCagG0ULs/P9Nqv2nsoo+7eo4fLUOB8L8MdWltq9odW/uuLXMFCDGnPafknYLZgjNX0ZIFRzOQAw==}
     engines: {node: '>=14.0.0'}
     hasBin: true
-
-  electron-prompt@1.7.0:
-    resolution: {integrity: sha512-IfqJYEgcRO6NuyPROo8AtdkAiZ6N9I1lQEf4dJAkPuhV5YgOHdmLqZJf6OXumZJfzrjpzCM5jHeYOrhGdgbnEA==}
 
   electron-publish@26.8.1:
     resolution: {integrity: sha512-q+jrSTIh/Cv4eGZa7oVR+grEJo/FoLMYBAnSL5GCtqwUpr1T+VgKB/dn1pnzxIxqD8S/jP1yilT9VrwCqINR4w==}
@@ -3489,8 +3477,6 @@ snapshots:
     dependencies:
       '@types/node': 24.2.1
 
-  '@types/semver@7.7.0': {}
-
   '@types/tough-cookie@4.0.5': {}
 
   '@types/verror@1.10.11':
@@ -4298,8 +4284,6 @@ snapshots:
     transitivePeerDependencies:
       - electron-builder-squirrel-windows
       - supports-color
-
-  electron-prompt@1.7.0: {}
 
   electron-publish@26.8.1:
     dependencies:
