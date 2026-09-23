@@ -440,6 +440,8 @@ export function installWave(config: WaveConfig): void {
     let currentDuration = 0;
     let currentLiked = false;
     let jumped = false;
+    // Что сейчас нарисовано на кнопке блока: играет или пауза
+    let shownPlaying = false;
     const recorded = new Set<number>();
     const pendingJournal: number[] = [];
     let userId = 0;
@@ -1002,6 +1004,8 @@ export function installWave(config: WaveConfig): void {
                 updateLike();
             }
         }
+        // Пауза кнопкой сайта или медиаклавишей: иначе кнопка блока остаётся в старом состоянии
+        if (section && (active && p.isPlaying()) !== shownPlaying) render();
         if (!active) return;
         // Сразу после запуска текущего элемента может ещё не быть, поэтому три секунды форы
         if (!ownsQueue()) {
@@ -1446,6 +1450,7 @@ export function installWave(config: WaveConfig): void {
         const info = el('div', 'scw-info');
         const top = el('div', 'scw-top');
         const playing = active && !!player?.isPlaying();
+        shownPlaying = playing;
         const play = button('scw-play', 'play', playing ? T.pause : T.play, playing ? 'pause' : 'play');
         play.disabled = state === 'unavailable' || (state === 'loading' && !active);
         const lines = el('div', '');

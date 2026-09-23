@@ -150,6 +150,21 @@ it('догружает хвост своей очереди, когда впер
     expect(site.states.fallbackEnabled).toBe(false);
 });
 
+it('пауза кнопкой сайта или медиаклавишей переключает кнопку блока', async () => {
+    const site = fakeSite(relatedTracks);
+    window.eval(waveScript());
+    await vi.advanceTimersByTimeAsync(100);
+    document.querySelector<HTMLButtonElement>('#sc-wave .scw-play')!.click();
+    await vi.advanceTimersByTimeAsync(1100);
+    expect(document.querySelector('#sc-wave .scw-play')?.getAttribute('aria-label')).toBe('Pause');
+    site.player.pauseCurrent();
+    await vi.advanceTimersByTimeAsync(1100);
+    expect(document.querySelector('#sc-wave .scw-play')?.getAttribute('aria-label')).toBe('Play wave');
+    site.player.playCurrent();
+    await vi.advanceTimersByTimeAsync(1100);
+    expect(document.querySelector('#sc-wave .scw-play')?.getAttribute('aria-label')).toBe('Pause');
+});
+
 it('без модулей сайта говорит, что волна не работает, и не падает', async () => {
     Object.assign(window, { webpackJsonp: [] });
     window.eval(waveScript());
