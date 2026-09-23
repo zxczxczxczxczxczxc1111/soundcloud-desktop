@@ -255,8 +255,8 @@ export class PluginService {
     }
 
     public getPluginsPath(): string {
-        // route dev mode to workspace folder &&& production mode to user profile
-        return app.isPackaged ? path.join(app.getPath('userData'), 'plugins') : path.join(process.cwd(), 'plugins');
+        // Как и темы, плагины лежат в профиле: у dev-запуска свой профиль soundcloud-desktop-dev
+        return path.join(app.getPath('userData'), 'plugins');
     }
 
     public onPluginsChanged(listener: () => void): () => void {

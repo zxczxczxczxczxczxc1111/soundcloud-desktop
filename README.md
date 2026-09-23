@@ -42,7 +42,7 @@
     <td width="33%" valign="top">
       <img src="assets/readme/icons/plugins.svg" width="32" height="32" alt=""><br>
       <b>Плагины</b><br>
-      <sub>Добавляют то, чего в SoundCloud нет, например скорость воспроизведения. Живут в отдельном процессе.</sub>
+      <sub>Свои JS-файлы в папке плагинов добавляют то, чего в SoundCloud нет, и живут в отдельном процессе.</sub>
     </td>
   </tr>
   <tr>
@@ -119,17 +119,10 @@
 <details>
 <summary><h2>Плагины и темы</h2></summary>
 
-В сборку плагины и темы не входят. Открой настройки по <kbd>F1</kbd>, нажми «Открыть папку плагинов» или «Открыть папку тем», кинь туда файл и нажми «Обновить».
+Готовых плагинов и тем в клиенте нет. Открой настройки по <kbd>F1</kbd>, в разделе «Темы и плагины» открой нужную папку, кинь туда файл и нажми «Перечитать».
 
 > [!WARNING]
 > Плагин запускает свой код на странице SoundCloud, где ты залогинен. Ставь только те, чей код прочитал сам или чьему автору доверяешь.
-
-| Файл | Что делает | Состояние |
-|---|---|---|
-| [`plugins/playback-speed.js`](plugins/playback-speed.js) | Скорость от 0.50x до 2.00x, по желанию с сохранением высоты тона | покрыт тестами |
-| [`plugins/cobalt-downloader.js`](plugins/cobalt-downloader.js) | Кнопка скачивания MP3 через cobalt | не работает |
-| [`plugins/example-plugin.js`](plugins/example-plugin.js) | Шаблон для своего плагина | пример |
-| [`themes/gruvbox.css`](themes/gruvbox.css) | Тема Gruvbox | тема |
 
 ### Свой плагин
 
@@ -167,11 +160,20 @@ module.exports = {
 };
 ```
 
-Хуки `onEnable`, `onDisable`, `onTrackChange` и `onThemeChange` крутятся в отдельном процессе, до окна им не дотянуться. На страницу попадает только строка из `contentScript`. Пример целиком лежит в [`plugins/example-plugin.js`](plugins/example-plugin.js).
+Хуки `onEnable`, `onDisable`, `onTrackChange` и `onThemeChange` крутятся в отдельном процессе, до окна им не дотянуться. На страницу попадает только строка из `contentScript`.
 
 ### Своя тема
 
-Тема это CSS поверх страницы SoundCloud. Проще всего переопределить переменные в `.theme-dark`, так устроен [`gruvbox.css`](themes/gruvbox.css).
+Тема это `.css`-файл в папке тем. Проще всего переопределить переменные SoundCloud в `.theme-dark`:
+
+```css
+.theme-dark {
+    --surface-color: #282828 !important;
+    --primary-color: #ebdbb2 !important;
+    --secondary-color: #a89984 !important;
+    --link-color: #83a598 !important;
+}
+```
 
 </details>
 
