@@ -115,7 +115,41 @@ app.whenReady().then(async () => {
     await stuck.request({ kind: 'load', filename: 'stuck-plugin.js', source: 'module.exports = { onTrackChange: () => { while (true) {} } };' });
     await assert.rejects(stuck.request({ kind: 'track', track: {} }), /остановлен/);
     assert.equal(failures.length, 1);
+    const http = require('node:http');
+    const { ProxyService } = require('../tsc/services/proxyService');
+    let authenticated = false;
+    const proxy = http.createServer((request, response) => {
+        if (request.headers['proxy-authorization'] !== 'Basic ' + Buffer.from('fixture:password').toString('base64')) {
+            response.writeHead(407, { 'Proxy-Authenticate': 'Basic realm="fixture"' });
+            response.end();
+            return;
+        }
+        authenticated = true;
+        response.end('<body>proxy fixture</body>');
+    });
+    await new Promise(resolve => proxy.listen(0, '127.0.0.1', resolve));
+    const proxyWindow = new BrowserWindow({ show: false, webPreferences: { sandbox: true, partition: 'proxy-test-' + Date.now() } });
+    const values = new Map(Object.entries({ proxyEnabled: true, proxyHost: '127.0.0.1', proxyPort: String(proxy.address().port), proxyUsername: 'fixture' }));
+    const proxyService = new ProxyService(proxyWindow.webContents, {
+        get: (key, fallback) => values.has(key) ? values.get(key) : fallback,
+        set: (key, value) => values.set(key, value), delete: key => values.delete(key),
+    }, message => { throw new Error(message); });
+    try {
+        proxyService.setPassword('password');
+        assert.notEqual(values.get('proxyPasswordEncrypted'), 'password');
+        await proxyService.apply();
+        await proxyWindow.loadURL('http://proxy-fixture.invalid/');
+        assert.equal(authenticated, true);
+        assert.equal(await proxyWindow.webContents.executeJavaScript('document.body.textContent'), 'proxy fixture');
+        values.set('proxyEnabled', false);
+        await proxyService.apply();
+        assert.equal(await proxyWindow.webContents.session.resolveProxy('https://example.com'), 'DIRECT');
+    } finally {
+        proxyService.dispose();
+        proxyWindow.destroy();
+        await new Promise(resolve => proxy.close(resolve));
+    }
     win.destroy();
-    console.log('PASS: CSS boundary, 30 settings cycles, quoted plugin ID, isolated plugin callbacks and hung worker termination.');
+    console.log('PASS: CSS boundary, 30 settings cycles, quoted plugin ID, isolated plugin callbacks and hung worker termination, IPC rejection, dialogs, proxy authentication and disable.');
     app.quit();
 });
