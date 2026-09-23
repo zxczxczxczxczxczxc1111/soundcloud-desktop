@@ -35,9 +35,10 @@ export class ViewStyles {
             .catch(() => undefined)
             .then(async () => {
                 if (view.isDestroyed() || revision !== current.revision) return;
-                if (current.key) await view.removeInsertedCSS(current.key);
-                current.key = null;
-                if (!view.isDestroyed() && css) current.key = await view.insertCSS(css);
+                // Сначала новый CSS, потом снятие старого: иначе между вызовами успевает отрисоваться кадр без стилей.
+                const previous = current.key;
+                current.key = css ? await view.insertCSS(css) : null;
+                if (previous && !view.isDestroyed()) await view.removeInsertedCSS(previous);
             });
         return current.pending;
     }

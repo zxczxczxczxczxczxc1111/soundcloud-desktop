@@ -35,4 +35,36 @@ describe('CSS остаётся данными', () => {
         await styles.apply(view, '');
         expect(view.removeInsertedCSS).toHaveBeenCalledTimes(2);
     });
+    it('вставляет новый стиль до снятия старого, чтобы страница не осталась без стилей', async () => {
+        const calls: string[] = [];
+        let next = 0;
+        const view = {
+            isDestroyed: () => false,
+            insertCSS: vi.fn(async (css: string) => {
+                calls.push('insert ' + css);
+                return 'key' + ++next;
+            }),
+            removeInsertedCSS: vi.fn(async (key: string) => {
+                calls.push('remove ' + key);
+            }),
+        };
+        const styles = new ViewStyles();
+        await styles.apply(view, 'first');
+        await styles.apply(view, 'second');
+        await styles.apply(view, 'third');
+        expect(calls).toEqual(['insert first', 'insert second', 'remove key1', 'insert third', 'remove key2']);
+    });
+    it('оставляет прежний стиль, если новый вставить не удалось', async () => {
+        const view = {
+            isDestroyed: () => false,
+            insertCSS: vi.fn().mockResolvedValueOnce('old').mockRejectedValueOnce(new Error('сбой')),
+            removeInsertedCSS: vi.fn().mockResolvedValue(undefined),
+        };
+        const styles = new ViewStyles();
+        await styles.apply(view, 'first');
+        await expect(styles.apply(view, 'second')).rejects.toThrow('сбой');
+        expect(view.removeInsertedCSS).not.toHaveBeenCalled();
+        await styles.apply(view, '');
+        expect(view.removeInsertedCSS).toHaveBeenCalledExactlyOnceWith('old');
+    });
 });
