@@ -12,6 +12,7 @@ const SEND_CHANNELS = new Set([
 ]);
 
 const INVOKE_CHANNELS = new Set([
+    'export-diagnostics',
     'get-settings-state',
     'get-current-track',
     'apply-custom-theme',

@@ -158,6 +158,20 @@ async function initializeSettings() {
         }
     }
 
+    document.getElementById('exportDiagnostics').addEventListener('click', async (event) => {
+        const button = event.currentTarget;
+        const status = document.getElementById('diagnosticsStatus');
+        button.disabled = true;
+        status.textContent = '';
+        try {
+            const saved = await ipcRenderer.invoke('export-diagnostics');
+            status.textContent = saved ? 'Журнал сохранён. Его можно отправить для разбора проблемы.' : '';
+        } catch (error) {
+            console.error('Не удалось сохранить журнал:', error);
+            status.textContent = 'Не удалось сохранить журнал. Попробуйте другую папку.';
+        } finally { button.disabled = false; }
+    });
+
     // initilization
 
     loadCustomThemes();

@@ -1,3 +1,5 @@
+import { DiagnosticJournal } from './services/diagnosticJournal';
+import { monitorEventLoopDelay } from 'perf_hooks';
 import { installRendererRecovery } from './services/rendererRecovery';
 import { mediaControlsScript } from './services/mediaControls';
 import { protectContent } from './contentPolicy';
@@ -17,6 +19,8 @@ import {
     nativeImage,
     shell,
     components,
+    dialog,
+    powerMonitor,
     type IpcMainEvent,
 } from 'electron';
 import { readFileSync, writeFileSync, existsSync, mkdirSync, copyFileSync } from 'fs';
@@ -36,7 +40,7 @@ import { showHomepageConfirmDialog, updateDialogBounds } from './settings/confir
 import type { TrackInfo } from './types';
 import { validateTrackUpdatePayload } from './validation';
 import path from 'path';
-import { platform } from 'os';
+import { platform, release } from 'os';
 
 import Store from 'electron-store';
 import windowStateManager from 'electron-window-state';
@@ -162,6 +166,41 @@ if (!isMas) {
         process.exit(0);
     }
 }
+
+let buildInfo: Record<string, unknown> = { build: 'development', dirty: true };
+const buildInfoPath = path.join(__dirname, 'build-info.json');
+try {
+    if (existsSync(buildInfoPath)) {
+        const parsed: unknown = JSON.parse(readFileSync(buildInfoPath, 'utf8'));
+        if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) buildInfo = parsed as Record<string, unknown>;
+    }
+} catch (error) { console.warn('Не удалось прочитать версию сборки:', error); }
+const diagnostics = new DiagnosticJournal(path.join(profilePath, 'diagnostics'), {
+    build: buildInfo.build, dirty: buildInfo.dirty, version: app.getVersion(), electron: process.versions.electron, chrome: process.versions.chrome,
+    node: process.versions.node, os: release(), arch: process.arch,
+});
+diagnostics.captureConsole();
+app.on('gpu-info-update', () => {
+    if (!app.isReady()) return;
+    const status = app.getGPUFeatureStatus();
+    diagnostics.record('gpu.status', { gpuCompositing: status.gpu_compositing, gpuRasterization: status.rasterization });
+});
+app.on('child-process-gone', (_event, details) => {
+    diagnostics.record('process.gone', {
+        component: details.type === 'GPU' ? 'gpu' : details.type === 'Utility' ? 'utility' : 'process',
+        reason: details.reason, exitCode: details.exitCode,
+    });
+});
+process.on('uncaughtExceptionMonitor', (error) => {
+    diagnostics.record('runtime.error', { errorType: error.name });
+    diagnostics.flush();
+});
+let diagnosticTimer: ReturnType<typeof setInterval> | undefined;
+const loopDelay = monitorEventLoopDelay({ resolution: 20 });
+let trackUpdates = 0;
+let trackChanges = 0;
+let lastUpdateAt = Date.now();
+let lastProgressAt = Date.now();
 
 // extend app w custom property
 Object.defineProperty(app, 'isQuitting', {
@@ -532,6 +571,28 @@ let contentView: BrowserView;
 
 // Main initialization
 async function init() {
+    loopDelay.enable();
+    diagnosticTimer = setInterval(() => {
+        const metrics = app.getAppMetrics();
+        diagnostics.record('performance', {
+            uptimeSeconds: process.uptime(), processes: metrics.length,
+            cpuPercent: metrics.reduce((sum, item) => sum + item.cpu.percentCPUUsage, 0),
+            workingSetMiB: metrics.reduce((sum, item) => sum + item.memory.workingSetSize, 0) / 1024,
+            privateMiB: metrics.reduce((sum, item) => sum + (item.memory.privateBytes ?? 0), 0) / 1024,
+            loopP95Ms: loopDelay.percentile(95) / 1e6, loopMaxMs: loopDelay.max / 1e6,
+            updates: trackUpdates, trackChanges, sinceUpdateMs: Date.now() - lastUpdateAt,
+            sinceProgressMs: Date.now() - lastProgressAt, playing: lastTrackInfo.isPlaying,
+            hasTrack: !!lastTrackInfo.title, windowVisible: !!mainWindow && !mainWindow.isDestroyed() && mainWindow.isVisible(),
+            windowMinimized: !!mainWindow && !mainWindow.isDestroyed() && mainWindow.isMinimized(), settingsOpen: !!settingsManager?.getView(),
+            adblock: store.get('adBlocker') === true, proxy: store.get('proxyEnabled') === true,
+            droppedEvents: diagnostics.droppedEvents,
+        });
+        loopDelay.reset();
+    }, 30000);
+    diagnosticTimer.unref();
+    powerMonitor.on('suspend', () => { diagnostics.record('system.suspend'); diagnostics.flush(); });
+    powerMonitor.on('resume', () => diagnostics.record('system.resume'));
+
     // Wait for Widevine CDM to be ready
     try {
         await components.whenReady();
@@ -721,6 +782,17 @@ async function init() {
     initializeShortcuts();
 
     setupThemeHandlers();
+    ipcMain.handle('export-diagnostics', async (event) => {
+        if (!isTrustedLocalSender(event)) throw new Error('Недопустимый отправитель IPC');
+        const result = await dialog.showSaveDialog(mainWindow, {
+            title: 'Сохранить диагностический журнал',
+            defaultPath: path.join(app.getPath('downloads'), 'soundcloud-diagnostics-' + new Date().toISOString().slice(0, 10) + '.log'),
+            filters: [{ name: 'Журнал', extensions: ['log'] }],
+        });
+        if (result.canceled || !result.filePath) return false;
+        try { diagnostics.exportTo(result.filePath); return true; }
+        catch (error) { console.error('Не удалось сохранить журнал:', error); throw new Error('Не удалось сохранить журнал'); }
+    });
     setupTranslationHandlers();
     setupAudioHandler();
 
@@ -772,6 +844,7 @@ async function init() {
     });
 
     contentView.webContents.on('did-fail-load', (_event, code, _description, _url, isMainFrame) => {
+        if (isMainFrame && code !== -3) diagnostics.record('page.load-failed', { errorCode: code });
         if (isMainFrame && code !== -3) queueToastNotification('Не удалось загрузить SoundCloud. Проверьте подключение и нажмите Ctrl+R.');
         if (headerView && headerView.webContents) {
             headerView.webContents.send('refresh-state-changed', false);
@@ -789,11 +862,18 @@ async function init() {
     });
 
     // Track if this is initial load
+    contentView.webContents.on('render-process-gone', (_event, details) => {
+        diagnostics.record('renderer.gone', { reason: details.reason, exitCode: details.exitCode });
+        diagnostics.flush();
+    });
+    contentView.webContents.on('unresponsive', () => diagnostics.record('renderer.unresponsive'));
+    contentView.webContents.on('responsive', () => diagnostics.record('renderer.responsive'));
     let isInitialLoad = true;
 
     // Setup event handlers
     contentView.webContents.on('did-finish-load', async () => {
 
+        diagnostics.record('page.loaded');
         // Get the current language from the page FIRST
         await getLanguage();
 
@@ -1136,6 +1216,7 @@ app.on('activate', function () {
 });
 
 app.on('before-quit', () => {
+    clearInterval(diagnosticTimer);
     isQuitting = true;
     if (presenceService) void presenceService.dispose();
     proxyService?.dispose();
@@ -1155,6 +1236,9 @@ app.on('before-quit', () => {
 });
 
 app.on('will-quit', () => {
+    clearInterval(diagnosticTimer);
+    loopDelay.disable();
+    diagnostics.close();
     if (tray) {
         tray.destroy();
         tray = null;
@@ -1255,6 +1339,10 @@ function setupAudioHandler() {
         }
 
         const { data: result, reason } = update;
+        trackUpdates++;
+        lastUpdateAt = Date.now();
+        if (reason === 'track-change') trackChanges++;
+        if (result.elapsed !== lastTrackInfo.elapsed || reason === 'track-change') lastProgressAt = Date.now();
 
         if (devMode) {
             console.debug(`Track update received: ${reason}`);
