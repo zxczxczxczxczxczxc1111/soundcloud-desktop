@@ -18,7 +18,7 @@ export default defineConfig([
     {
         files: ['src/**/*.js'],
         languageOptions: {
-            globals: Object.fromEntries(['window', 'document', 'navigator', 'console', 'URL', 'HTMLInputElement', 'setTimeout', 'clearTimeout', 'setInterval', 'clearInterval', 'requestAnimationFrame', 'cancelAnimationFrame'].map((name) => [name, 'readonly'])),
+            globals: Object.fromEntries(['window', 'document', 'navigator', 'console', 'URL', 'HTMLInputElement', 'setTimeout', 'clearTimeout', 'setInterval', 'clearInterval', 'requestAnimationFrame', 'cancelAnimationFrame', 'Event', 'MutationObserver'].map((name) => [name, 'readonly'])),
         },
     },
     {

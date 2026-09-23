@@ -30,6 +30,8 @@ const INVOKE_CHANNELS = new Set([
     'get-accounts',
     'get-update-state',
     'open-release-page',
+    'check-updates',
+    'open-data-folder',
 ]);
 
 const ON_CHANNELS = new Set(['presence-preview-update', 'theme-changed', 'update-translations', 'accounts-updated', 'plugins-changed', 'update-state']);

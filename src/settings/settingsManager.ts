@@ -109,11 +109,11 @@ export class SettingsManager {
             view.webContents.close();
         }
     }
+    // Панель накрывает всю страницу под шапкой: затемнение и окно по центру рисует сама settings.html
     private updateBounds(): void {
         if (!this.view || this.parentWindow.isDestroyed()) return;
         const bounds = this.parentWindow.getContentBounds();
-        const width = Math.min(500, Math.floor(bounds.width * 0.4));
-        this.view.setBounds({ x: bounds.width - width, y: 32, width, height: Math.max(0, bounds.height - 32) });
+        this.view.setBounds({ x: 0, y: 32, width: bounds.width, height: Math.max(0, bounds.height - 32) });
     }
     private async applyStyles(): Promise<void> {
         const contents = this.view?.webContents;

@@ -723,6 +723,15 @@ async function init() {
         const url = updateService?.getState().releaseUrl;
         if (url) await shell.openExternal(url);
     });
+    ipcMain.handle('check-updates', async (event) => {
+        if (!isTrustedLocalSender(event)) throw new Error('Недопустимый отправитель IPC');
+        await updateService?.check();
+    });
+    ipcMain.handle('open-data-folder', async (event) => {
+        if (!isTrustedLocalSender(event)) throw new Error('Недопустимый отправитель IPC');
+        const error = await shell.openPath(app.getPath('userData'));
+        if (error) throw new Error(error);
+    });
     shortcutService = new ShortcutService(mainWindow);
     shortcutService.attachToWebContents(contentView.webContents);
     shortcutService.attachToWebContents(headerView.webContents);
@@ -961,6 +970,10 @@ async function init() {
             presenceService.updateDisplaySettings(displaySCSmallIcon);
         } else if (key === 'displayButtons') {
             presenceService.updateDisplaySettings(displaySCSmallIcon, data.value);
+        } else if (key === 'discordRichPresence') {
+            // Статус включается и гаснет сразу, без кнопки применения
+            if (data.value === true) void presenceService.updatePresence(lastTrackInfo).catch(console.error);
+            else presenceService.clearActivity();
         } else if (key === 'autoUpdateEnabled') {
             updateService?.setEnabled(data.value);
         } else if (key === 'statusDisplayType') {

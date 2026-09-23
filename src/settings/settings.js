@@ -21,11 +21,42 @@ async function initializeSettings() {
         ['proxyFields', 'proxyEnabled'],
         ['webhookFields', 'webhookEnabled'],
         ['webhookFields2', 'webhookEnabled'],
-        ['presencePreviewContainer', 'richPresencePreviewEnabled'],
+        ['discordDetails', 'discordRichPresence'],
     ]) {
         const element = document.getElementById(id);
         if (element) element.style.display = initial[setting] ? 'block' : 'none';
     }
+
+    // Разделы: слева список, справа виден один раздел
+    const navButtons = [...document.querySelectorAll('.nav-list button')];
+    for (const button of navButtons) {
+        button.addEventListener('click', () => {
+            for (const other of navButtons) {
+                const active = other === button;
+                other.setAttribute('aria-current', String(active));
+                const section = document.getElementById(other.dataset.target);
+                if (section) section.hidden = !active;
+            }
+        });
+    }
+    // Включённые прокси или вебхук легко забыть, поэтому у раздела точка
+    function updateAdvancedMarker() {
+        const active = document.getElementById('proxyEnabled').checked || document.getElementById('webhookEnabled').checked;
+        document.getElementById('advancedNav').classList.toggle('has-active', active);
+    }
+    updateAdvancedMarker();
+
+    document.getElementById('backdrop').addEventListener('click', () => window.settingsAPI.send('toggle-settings'));
+
+    // Прокси и блокировке рекламы нужна перезагрузка страницы, остальное применяется сразу
+    const networkNotice = document.getElementById('networkNotice');
+    const showNetworkNotice = () => {
+        networkNotice.hidden = false;
+    };
+    document.getElementById('applyNetwork').addEventListener('click', () => {
+        networkNotice.hidden = true;
+        window.settingsAPI.send('apply-changes');
+    });
 
     const ipcRenderer = {
         send: (channel, ...args) => window.settingsAPI.send(channel, ...args),
@@ -71,7 +102,7 @@ async function initializeSettings() {
             list.innerHTML = '';
 
             if (!plugins || plugins.length === 0) {
-                list.innerHTML = '<div class="no-plugins" data-i18n="noPluginsFound">Плагинов пока нет</div>';
+                list.innerHTML = '<div class="no-plugins">Папка плагинов пуста</div>';
                 return;
             }
 
@@ -168,11 +199,15 @@ async function initializeSettings() {
         status.textContent = '';
         try {
             const saved = await ipcRenderer.invoke('export-diagnostics');
-            status.textContent = saved ? 'Журнал сохранён. Его можно отправить для разбора проблемы.' : '';
+            status.textContent = saved ? 'Журнал сохранён, его можно отправить для разбора проблемы' : '';
         } catch (error) {
             console.error('Не удалось сохранить журнал:', error);
-            status.textContent = 'Не удалось сохранить журнал. Попробуйте другую папку.';
+            status.textContent = 'Не удалось сохранить журнал, попробуй другую папку';
         } finally { button.disabled = false; }
+    });
+
+    document.getElementById('openDataFolder').addEventListener('click', () => {
+        ipcRenderer.invoke('open-data-folder').catch((error) => console.error('Не удалось открыть папку данных:', error));
     });
 
     function renderUpdateState(state) {
@@ -180,9 +215,16 @@ async function initializeSettings() {
         const toggle = document.getElementById('autoUpdateEnabled');
         toggle.checked = state.enabled;
         toggle.disabled = state.mode === 'dev';
-        document.getElementById('updateHint').textContent = 'Версия ' + state.version + '. ' + state.hint;
+        document.getElementById('checkUpdates').disabled = state.mode === 'dev' || !state.enabled;
+        // В режиме разработки подсказка совпадает со статусом, второй раз её не выводим
+        const hint = state.hint !== state.status ? state.hint : '';
+        document.getElementById('updateHint').textContent = ['Версия ' + state.version + '.', hint].filter(Boolean).join(' ');
         document.getElementById('updateStatus').textContent = state.status;
     }
+
+    document.getElementById('checkUpdates').addEventListener('click', () => {
+        ipcRenderer.invoke('check-updates').catch((error) => console.error('Не удалось проверить обновления:', error));
+    });
 
     document.getElementById('autoUpdateEnabled').addEventListener('change', (e) => {
         ipcRenderer.send('setting-changed', { key: 'autoUpdateEnabled', value: e.target.checked });
@@ -195,6 +237,117 @@ async function initializeSettings() {
         .invoke('get-update-state')
         .then(renderUpdateState)
         .catch((error) => console.error('Не удалось получить состояние обновлений:', error));
+
+    // Свой выпадающий список поверх скрытого select: значение и событие change остаются у select
+    function enhanceSelect(select) {
+        const wrap = document.createElement('div');
+        wrap.className = 'dropdown';
+        select.parentNode.insertBefore(wrap, select);
+        wrap.appendChild(select);
+        select.classList.add('native-select');
+        select.tabIndex = -1;
+        select.setAttribute('aria-hidden', 'true');
+
+        const button = document.createElement('button');
+        button.type = 'button';
+        button.className = 'input dropdown-button';
+        button.setAttribute('aria-haspopup', 'listbox');
+        button.setAttribute('aria-expanded', 'false');
+        button.setAttribute('aria-label', select.getAttribute('aria-label') || '');
+        const label = document.createElement('span');
+        label.className = 'dropdown-label';
+        button.appendChild(label);
+        const chevron = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
+        chevron.setAttribute('class', 'chev');
+        chevron.setAttribute('viewBox', '0 0 24 24');
+        const chevronPath = document.createElementNS('http://www.w3.org/2000/svg', 'path');
+        chevronPath.setAttribute('d', 'M7.41 8.59 12 13.17l4.59-4.58L18 10l-6 6-6-6z');
+        chevron.appendChild(chevronPath);
+        button.appendChild(chevron);
+
+        const list = document.createElement('div');
+        list.className = 'dropdown-list';
+        list.id = select.id + 'List';
+        list.setAttribute('role', 'listbox');
+        list.hidden = true;
+        button.setAttribute('aria-controls', list.id);
+        wrap.appendChild(button);
+        wrap.appendChild(list);
+
+        let activeIndex = -1;
+        const sync = () => {
+            const selected = select.options[select.selectedIndex];
+            label.textContent = selected ? selected.textContent : '';
+            button.disabled = select.options.length === 0;
+        };
+        const highlight = (index) => {
+            activeIndex = index;
+            [...list.children].forEach((item, itemIndex) => item.classList.toggle('active', itemIndex === index));
+            const item = list.children[index];
+            if (!item) return;
+            button.setAttribute('aria-activedescendant', item.id);
+            item.scrollIntoView?.({ block: 'nearest' });
+        };
+        const close = () => {
+            list.hidden = true;
+            button.setAttribute('aria-expanded', 'false');
+            button.removeAttribute('aria-activedescendant');
+        };
+        const choose = (index) => {
+            close();
+            if (index < 0 || index === select.selectedIndex) return;
+            select.selectedIndex = index;
+            sync();
+            select.dispatchEvent(new Event('change', { bubbles: true }));
+        };
+        const open = () => {
+            if (button.disabled) return;
+            list.textContent = '';
+            [...select.options].forEach((option, index) => {
+                const item = document.createElement('div');
+                item.className = 'dropdown-option';
+                item.id = list.id + '-' + index;
+                item.setAttribute('role', 'option');
+                item.setAttribute('aria-selected', String(index === select.selectedIndex));
+                item.textContent = option.textContent;
+                // Фокус остаётся на кнопке, иначе список закроется раньше клика
+                item.addEventListener('mousedown', (event) => event.preventDefault());
+                item.addEventListener('click', () => choose(index));
+                item.addEventListener('mousemove', () => highlight(index));
+                list.appendChild(item);
+            });
+            list.hidden = false;
+            button.setAttribute('aria-expanded', 'true');
+            highlight(select.selectedIndex);
+        };
+
+        button.addEventListener('click', () => (list.hidden ? open() : close()));
+        button.addEventListener('blur', close);
+        button.addEventListener('keydown', (event) => {
+            const count = select.options.length;
+            if (event.key === 'ArrowDown' || event.key === 'ArrowUp') {
+                event.preventDefault();
+                if (list.hidden) open();
+                else highlight((activeIndex + (event.key === 'ArrowDown' ? 1 : -1) + count) % count);
+            } else if (event.key === 'Enter' || event.key === ' ') {
+                event.preventDefault();
+                if (list.hidden) open();
+                else choose(activeIndex);
+            } else if (event.key === 'Escape' && !list.hidden) {
+                // Esc закрывает список, а не всю панель
+                event.preventDefault();
+                event.stopPropagation();
+                close();
+            }
+        });
+        // Списки заполняются асинхронно: подпись обновляется при смене вариантов
+        new MutationObserver(sync).observe(select, { childList: true, subtree: true, characterData: true });
+        sync();
+    }
+    for (const id of ['customThemeSelector', 'accountSelector']) {
+        const select = document.getElementById(id);
+        if (select) enhanceSelect(select);
+    }
 
     // initilization
 
@@ -293,19 +446,24 @@ async function initializeSettings() {
         const isEnabled = e.target.checked;
         document.getElementById('proxyFields').style.display = isEnabled ? 'block' : 'none';
         ipcRenderer.send('setting-changed', { key: 'proxyEnabled', value: isEnabled });
+        updateAdvancedMarker();
+        showNetworkNotice();
     });
 
     document.getElementById('proxyHost')?.addEventListener('change', (e) => {
         ipcRenderer.send('setting-changed', { key: 'proxyHost', value: e.target.value });
+        showNetworkNotice();
     });
 
     for (const key of ['proxyUsername', 'proxyPassword'])
         document.getElementById(key).addEventListener('change', (event) => {
             ipcRenderer.send('setting-changed', { key, value: event.target.value });
             if (key === 'proxyPassword') event.target.value = '';
+            showNetworkNotice();
         });
     document.getElementById('proxyPort')?.addEventListener('change', (e) => {
         ipcRenderer.send('setting-changed', { key: 'proxyPort', value: e.target.value });
+        showNetworkNotice();
     });
 
     document.getElementById('webhookEnabled')?.addEventListener('change', (e) => {
@@ -313,6 +471,7 @@ async function initializeSettings() {
         document.getElementById('webhookFields').style.display = isEnabled ? 'block' : 'none';
         document.getElementById('webhookFields2').style.display = isEnabled ? 'block' : 'none';
         ipcRenderer.send('setting-changed', { key: 'webhookEnabled', value: isEnabled });
+        updateAdvancedMarker();
     });
 
     document.getElementById('webhookUrl')?.addEventListener('change', (e) => {
@@ -332,15 +491,9 @@ async function initializeSettings() {
     document.getElementById('webhookExampleToggle')?.addEventListener('click', (e) => {
         const toggle = e.currentTarget;
         const content = document.getElementById('webhookExampleContent');
-        const isExpanded = content.style.display === 'block';
-
-        if (isExpanded) {
-            content.style.display = 'none';
-            toggle.classList.remove('expanded');
-        } else {
-            content.style.display = 'block';
-            toggle.classList.add('expanded');
-        }
+        const expand = content.style.display !== 'block';
+        content.style.display = expand ? 'block' : 'none';
+        toggle.setAttribute('aria-expanded', String(expand));
     });
 
     document.getElementById('darkMode')?.addEventListener('change', (e) => {
@@ -362,48 +515,42 @@ async function initializeSettings() {
         ipcRenderer.send('setting-changed', { key: 'trackParserEnabled', value: e.target.checked });
     });
 
-    document.getElementById('richPresencePreviewEnabled')?.addEventListener('change', (e) => {
-        const isEnabled = e.target.checked;
-        const container = document.getElementById('presencePreviewContainer');
-        if (container) {
-            container.style.display = isEnabled ? 'block' : 'none';
-        }
-        ipcRenderer.send('setting-changed', { key: 'richPresencePreviewEnabled', value: isEnabled });
-    });
-
     document.getElementById('displayGithubLink')?.addEventListener('change', (e) => {
         ipcRenderer.send('setting-changed', { key: 'displayGithubLink', value: e.target.checked });
-        ipcRenderer.invoke('get-current-track').then(updatePreview).catch(console.error);
+        updatePreview(lastTrackInfo);
     });
 
     document.getElementById('displaySCSmallIcon')?.addEventListener('change', (e) => {
         ipcRenderer.send('setting-changed', { key: 'displaySCSmallIcon', value: e.target.checked });
+        updatePreview(lastTrackInfo);
     });
 
     document.getElementById('adBlocker')?.addEventListener('change', (e) => {
         ipcRenderer.send('setting-changed', { key: 'adBlocker', value: e.target.checked });
+        showNetworkNotice();
     });
 
     document.getElementById('discordRichPresence')?.addEventListener('change', (e) => {
+        document.getElementById('discordDetails').style.display = e.target.checked ? 'block' : 'none';
         ipcRenderer.send('setting-changed', { key: 'discordRichPresence', value: e.target.checked });
     });
 
     document.getElementById('displayButtons')?.addEventListener('change', (e) => {
         ipcRenderer.send('setting-changed', { key: 'displayButtons', value: e.target.checked });
+        updatePreview(lastTrackInfo);
     });
 
     document.getElementById('useArtistInStatusLineToggle')?.addEventListener('change', (e) => {
         const useState = e.target.checked;
         ipcRenderer.send('setting-changed', { key: 'statusDisplayType', value: useState ? 1 : 0 });
-    });
-
-    document.getElementById('applyChanges')?.addEventListener('click', () => {
-        ipcRenderer.send('apply-changes');
+        updatePreview(lastTrackInfo);
     });
 
     // rich presence preview logic
 
     let progressInterval = null;
+    // Последний трек нужен, чтобы перерисовать предпросмотр при смене опций
+    let lastTrackInfo = null;
 
     function parseTimeToMs(time) {
         if (!time) return 0;
@@ -546,17 +693,26 @@ async function initializeSettings() {
         row.appendChild(imageWrap);
         row.appendChild(details);
         fragment.appendChild(row);
+
+        const member = document.createElement('div');
+        member.className = 'member-line-preview';
+        member.textContent = 'Под ником: ';
+        const memberText = document.createElement('b');
+        memberText.textContent = 'Listening to ' + (options.artistInStatus ? safeText(trackInfo.author, 'SoundCloud') : 'SoundCloud');
+        member.appendChild(memberText);
+        fragment.appendChild(member);
         return fragment;
     }
 
     function updatePreview(trackInfo) {
-
+        lastTrackInfo = trackInfo;
         const activitySection = document.getElementById('activitySectionPreview');
         const noActivity = document.getElementById('noActivityPreview');
 
         const displaySCSmallIcon = document.getElementById('displaySCSmallIcon')?.checked || false;
         const displayButtons = document.getElementById('displayButtons')?.checked || false;
         const displayGithubLink = document.getElementById('displayGithubLink')?.checked || false;
+        const artistInStatus = document.getElementById('useArtistInStatusLineToggle')?.checked || false;
 
         if (!trackInfo || !trackInfo.isPlaying) {
             if (noActivity) noActivity.style.display = 'block';
@@ -579,6 +735,7 @@ async function initializeSettings() {
                 displaySCSmallIcon,
                 displayGithubLink,
                 displayButtons,
+                artistInStatus,
                 inlineRow: true,
             }),
         );

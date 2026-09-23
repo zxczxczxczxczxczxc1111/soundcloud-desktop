@@ -10,383 +10,186 @@
         <script src="settings.js" defer></script>
     </head>
     <body>
-        <button class="close-btn" id="close-settings" title="Закрыть настройки" data-i18n-title="closeSettings">
-            <svg viewBox="0 0 24 24">
-                <path
-                    d="M19 6.41L17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z"
-                />
-            </svg>
-        </button>
-        <div class="settings-panel">
-            <div class="setting-group">
-                <h2 data-i18n="client">Приложение</h2>
-                <div class="setting-item">
-                    <span data-i18n="darkMode">Тёмная тема</span>
-                    <label class="toggle">
-                        <input type="checkbox" id="darkMode" />
-                        <span class="slider"></span>
-                    </label>
-                </div>
-                <div class="setting-item">
-                    <span data-i18n="minimizeToTray">Сворачивать в трей</span>
-                    <label class="toggle">
-                        <input type="checkbox" id="minimizeToTray" />
-                        <span class="slider"></span>
-                    </label>
-                </div>
-                <div class="setting-item">
-                    <span data-i18n="enableNavigationControls">Кнопки «назад», «вперёд» и «обновить»</span>
-                    <label class="toggle">
-                        <input type="checkbox" id="navigationControlsEnabled" />
-                        <span class="slider"></span>
-                    </label>
-                </div>
-                <div class="setting-item">
-                    <span data-i18n="enableTrackParser">Разбирать названия треков</span>
-                    <label class="toggle">
-                        <input type="checkbox" id="trackParserEnabled" />
-                        <span class="slider"></span>
-                    </label>
-                </div>
-                <div class="description" data-i18n="trackParserDescription">
-                    Отделяет артиста от названия, когда оба записаны в одну строку
-                </div>
-            </div>
-
-            <div class="setting-group">
-                <h2>
-                    Оформление SoundCloud
-                    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24">
-                        <path
-                            d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm-1 17.93c-3.95-.49-7-3.85-7-7.93 0-.62.08-1.21.21-1.79L9 15v1c0 1.1.9 2 2 2v1.93zm6.9-2.54c-.26-.81-1-1.39-1.9-1.39h-1v-3c0-.55-.45-1-1-1H8v-2h2c.55 0 1-.45 1-1V7h2c1.1 0 2-.9 2-2v-.41c2.93 1.19 5 4.06 5 7.41 0 2.08-.8 3.97-2.1 5.39z"
-                        />
-                    </svg>
-                </h2>
-                <div class="setting-item">
-                    <span data-i18n="hidePromotions">Скрывать рекламные блоки</span>
-                    <label class="toggle">
-                        <input type="checkbox" id="hidePromotions" />
-                        <span class="slider"></span>
-                    </label>
-                </div>
-                <div class="setting-item">
-                    <span data-i18n="hideEventsNearYou">Скрывать концерты поблизости</span>
-                    <label class="toggle">
-                        <input type="checkbox" id="hideEventsNearYou" />
-                        <span class="slider"></span>
-                    </label>
-                </div>
-                <div class="setting-item">
-                    <span data-i18n="hideArtistUpsells">Скрывать предложения Artist Pro</span>
-                    <label class="toggle">
-                        <input type="checkbox" id="hideArtistUpsells" />
-                        <span class="slider"></span>
-                    </label>
-                </div>
-            </div>
-
-            <div class="setting-group">
-                <h2>
-                    Аккаунты
-                    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="currentColor">
-                        <path
-                            d="M12 12c2.21 0 4-1.79 4-4s-1.79-4-4-4-4 1.79-4 4 1.79 4 4 4zm0 2c-2.67 0-8 1.34-8 4v2h16v-2c0-2.66-5.33-4-8-4z"
-                        />
-                    </svg>
-                </h2>
-                <div class="setting-item">
-                    <span>Текущий аккаунт</span>
-                    <div style="display: flex; gap: 8px; align-items: center">
-                        <select id="accountSelector" class="theme-selector" style="min-width: 120px"></select>
-                        <button
-                            id="addAccountBtn"
-                            class="theme-button"
-                            style="padding: 8px; flex: 0; min-width: 36px; display: flex; justify-content: center"
-                            title="Добавить аккаунт"
-                        >
-                            <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor">
-                                <path d="M19 13h-6v6h-2v-6H5v-2h6V5h2v6h6v2z" />
-                            </svg>
-                        </button>
-                    </div>
-                </div>
-                <div class="setting-item" style="margin-top: 4px">
-                    <span></span>
-                    <button id="logoutBtn" class="theme-button" style="background: var(--bg-hover); color: #ff5500">
-                        Выйти из текущего аккаунта
+        <div class="backdrop" id="backdrop"></div>
+        <div class="dialog" role="dialog" aria-modal="true" aria-labelledby="settingsTitle">
+            <header class="dialog-head">
+                <div class="head-row">
+                    <h1 id="settingsTitle">Настройки</h1>
+                    <button class="icon-btn" id="close-settings" title="Закрыть, F1 или Esc" aria-label="Закрыть настройки">
+                        <svg viewBox="0 0 24 24"><path d="M19 6.41 17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z" /></svg>
                     </button>
                 </div>
-                <div class="description">При смене аккаунта приложение перезапустится.</div>
-            </div>
+                <div class="notice" id="networkNotice" role="status" hidden>
+                    <span>Нужна перезагрузка страницы</span>
+                    <button class="btn solid" id="applyNetwork">Перезагрузить</button>
+                </div>
+            </header>
 
-            <div class="setting-group">
-                <h2 data-i18n="adBlocker">Блокировка рекламы</h2>
-                <div class="setting-item">
-                    <span data-i18n="enableAdBlocker">Блокировать рекламу</span>
-                    <label class="toggle">
-                        <input type="checkbox" id="adBlocker" />
-                        <span class="slider"></span>
-                    </label>
-                </div>
-                <div class="description" data-i18n="changesAppRestart">Сработает после перезапуска приложения</div>
-            </div>
+            <div class="dialog-main">
+                <nav class="nav-list" aria-label="Разделы настроек">
+                    <button data-target="general" aria-current="true">Основное</button>
+                    <button data-target="soundcloud">SoundCloud</button>
+                    <button data-target="discord">Discord</button>
+                    <button data-target="extensions">Темы и плагины</button>
+                    <button data-target="account">Аккаунт</button>
+                    <button data-target="advanced" id="advancedNav">Дополнительно<span class="nav-dot" aria-hidden="true"></span></button>
+                </nav>
 
-            <div class="setting-group">
-                <h2 data-i18n="proxy">Прокси</h2>
-                <div class="setting-item">
-                    <span data-i18n="enableProxy">Подключаться через прокси</span>
-                    <label class="toggle">
-                        <input type="checkbox" id="proxyEnabled" />
-                        <span class="slider"></span>
-                    </label>
-                </div>
-                <div class="input-group" id="proxyFields" style="display: none">
-                    <input
-                        class="textInput"
-                        id="proxyUsername"
-                        type="text"
-                        placeholder="Логин прокси"
-                        autocomplete="off"
-                    />
-                    <input
-                        class="textInput"
-                        id="proxyPassword"
-                        type="password"
-                        placeholder="Пароль прокси"
-                        autocomplete="new-password"
-                    />
-                    <input
-                        type="text"
-                        class="textInput"
-                        id="proxyHost"
-                        placeholder="Адрес прокси"
-                        data-i18n-placeholder="proxyHost"
-                        value=""
-                    />
-                    <input
-                        type="text"
-                        class="textInput"
-                        id="proxyPort"
-                        placeholder="Порт прокси"
-                        data-i18n-placeholder="proxyPort"
-                        value=""
-                    />
-                </div>
-            </div>
+                <div class="dialog-body">
+                    <section class="section active" id="general">
+                        <h2>Основное</h2>
+                        <label class="row"><span class="text">Тёмная тема</span><span class="toggle"><input type="checkbox" id="darkMode" /><span class="slider"></span></span></label>
+                        <label class="row"><span class="text">Сворачивать в трей</span><span class="toggle"><input type="checkbox" id="minimizeToTray" /><span class="slider"></span></span></label>
+                        <label class="row"><span class="text">Кнопки навигации в шапке</span><span class="toggle"><input type="checkbox" id="navigationControlsEnabled" /><span class="slider"></span></span></label>
+                    </section>
 
-            <div class="setting-group">
-                <h2 data-i18n="webhooks">
-                    Вебхуки
-                    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24">
-                        <path
-                            d="M10.59 13.41c.41.39.41 1.03 0 1.42-.39.39-1.03.39-1.42 0a5.003 5.003 0 0 1 0-7.07l3.54-3.54a5.003 5.003 0 0 1 7.07 0 5.003 5.003 0 0 1 0 7.07l-1.49 1.49c.01-.82-.12-1.64-.4-2.42l.47-.48a2.982 2.982 0 0 0 0-4.24 2.982 2.982 0 0 0-4.24 0l-3.53 3.53a2.982 2.982 0 0 0 0 4.24zm2.82-4.24c.39-.39 1.03-.39 1.42 0a5.003 5.003 0 0 1 0 7.07l-3.54 3.54a5.003 5.003 0 0 1-7.07 0 5.003 5.003 0 0 1 0-7.07l1.49-1.49c-.01.82.12 1.64.4 2.42l-.47.48a2.982 2.982 0 0 0 0 4.24 2.982 2.982 0 0 0 4.24 0l3.53-3.53a2.982 2.982 0 0 0 0-4.24z"
-                        />
-                    </svg>
-                </h2>
-                <div class="setting-item">
-                    <span data-i18n="enableWebhooks">Отправлять вебхук</span>
-                    <label class="toggle">
-                        <input type="checkbox" id="webhookEnabled" />
-                        <span class="slider"></span>
-                    </label>
-                </div>
-                <div class="input-group" id="webhookFields" style="display: none">
-                    <input
-                        type="url"
-                        class="textInput"
-                        id="webhookUrl"
-                        placeholder="Адрес вебхука"
-                        data-i18n-placeholder="webhookUrl"
-                        value=""
-                    />
-                    <div class="setting-item">
-                        <span data-i18n="webhookTrigger">Когда проиграно</span>
-                        <div class="input-with-unit">
-                            <input
-                                type="number"
-                                id="webhookTriggerPercentage"
-                                class="textInput"
-                                style="width: 80px"
-                                min="0"
-                                max="100"
-                                step="1"
-                                value="50"
-                            />
-                            <span class="unit-symbol">%</span>
-                        </div>
-                    </div>
-                </div>
-                <div class="description" data-i18n="webhookDescription">
-                    Когда трек доиграет до указанного процента, приложение отправит его данные на адрес вебхука
-                </div>
-                <div class="webhook-example-container" id="webhookFields2" style="display: none">
-                    <div class="example-toggle" id="webhookExampleToggle">
-                        <span class="example-toggle-text" data-i18n="showWebhookExample">Пример отправляемых данных</span>
-                        <svg class="example-toggle-icon" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24">
-                            <path d="M7.41 8.59L12 13.17l4.59-4.58L18 10l-6 6-6-6 1.41-1.41z" />
-                        </svg>
-                    </div>
-                    <div class="example-content" id="webhookExampleContent" style="display: none">
-                        <pre class="example-json">
-{
-  "timestamp": "2025-08-12T14:30:45.123Z",
-  "artist": "Artist Name",
-  "track": "Track Title", 
-  "duration": 240,
-  "trackArt": "https://example.com/artwork.jpg",
-  "originUrl": "https://soundcloud.com/track-url"
-}</pre
-                        >
-                    </div>
-                </div>
-            </div>
+                    <section class="section" id="soundcloud" hidden>
+                        <h2>SoundCloud</h2>
+                        <label class="row"><span class="text">Блокировать рекламу</span><span class="toggle"><input type="checkbox" id="adBlocker" /><span class="slider"></span></span></label>
+                        <label class="row"><span class="text">Скрывать рекламные блоки</span><span class="toggle"><input type="checkbox" id="hidePromotions" /><span class="slider"></span></span></label>
+                        <label class="row"><span class="text">Скрывать концерты поблизости</span><span class="toggle"><input type="checkbox" id="hideEventsNearYou" /><span class="slider"></span></span></label>
+                        <label class="row"><span class="text">Скрывать предложения Artist Pro</span><span class="toggle"><input type="checkbox" id="hideArtistUpsells" /><span class="slider"></span></span></label>
+                    </section>
 
-            <div class="setting-group">
-                <h2 data-i18n="discord">
-                    Discord
-                    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24">
-                        <path
-                            d="M20.317 4.369a19.791 19.791 0 0 0-4.885-1.515.074.074 0 0 0-.079.037c-.211.375-.444.864-.608 1.249a18.707 18.707 0 0 0-5.487 0 12.505 12.505 0 0 0-.617-1.249.077.077 0 0 0-.079-.037A19.736 19.736 0 0 0 3.677 4.369a.07.07 0 0 0-.032.027C.533 9.045-.32 13.579.099 18.057a.082.082 0 0 0 .031.056 19.911 19.911 0 0 0 5.993 3.03.077.077 0 0 0 .084-.028c.464-.63.874-1.295 1.226-1.994a.076.076 0 0 0-.041-.105 13.184 13.184 0 0 1-1.872-.9.077.077 0 0 1-.008-.128c.126-.094.252-.192.373-.291a.075.075 0 0 1 .077-.01c3.927 1.793 8.18 1.793 12.062 0a.074.074 0 0 1 .078.009c.122.099.247.197.374.291a.077.077 0 0 1-.006.128 12.509 12.509 0 0 1-1.873.899.076.076 0 0 0-.04.106c.36.698.772 1.363 1.225 1.993a.076.076 0 0 0 .084.028 19.876 19.876 0 0 0 6.002-3.03.077.077 0 0 0 .031-.056c.5-5.177-.838-9.665-3.546-13.661a.067.067 0 0 0-.033-.027zM8.02 15.331c-1.182 0-2.156-1.085-2.156-2.419 0-1.333.955-2.418 2.156-2.418 1.213 0 2.187 1.096 2.156 2.419 0 1.333-.955 2.418-2.156 2.418zm7.974 0c-1.182 0-2.156-1.085-2.156-2.419 0-1.333.955-2.418 2.156-2.418 1.213 0 2.187 1.096 2.156 2.419 0 1.333-.943 2.418-2.156 2.418z"
-                        />
-                    </svg>
-                </h2>
-                <div class="setting-item">
-                    <span data-i18n="enableRichPresence">Показывать трек в статусе Discord</span>
-                    <label class="toggle">
-                        <input type="checkbox" id="discordRichPresence" />
-                        <span class="slider"></span>
-                    </label>
-                </div>
-                <div class="setting-item">
-                    <span data-i18n="displaySmallIcon">Маленький значок SoundCloud</span>
-                    <label class="toggle">
-                        <input type="checkbox" id="displaySCSmallIcon" />
-                        <span class="slider"></span>
-                    </label>
-                </div>
-                <div class="setting-item">
-                    <span>Значок GitHub со ссылкой на приложение</span>
-                    <label class="toggle">
-                        <input type="checkbox" id="displayGithubLink" />
-                        <span class="slider"></span>
-                    </label>
-                </div>
-                <div class="setting-item">
-                    <span data-i18n="displayButtons">Кнопка «Слушать в SoundCloud»</span>
-                    <label class="toggle">
-                        <input type="checkbox" id="displayButtons" />
-                        <span class="slider"></span>
-                    </label>
-                </div>
-                <div class="setting-item">
-                    <span data-i18n="useArtistInStatusLine">Имя артиста в строке статуса вместо названия приложения</span>
-                    <label class="toggle">
-                        <input type="checkbox" id="useArtistInStatusLineToggle" />
-                        <span class="slider"></span>
-                    </label>
-                </div>
-                <div class="setting-item">
-                    <span data-i18n="enableRichPresencePreview">Предпросмотр статуса</span>
-                    <label class="toggle">
-                        <input type="checkbox" id="richPresencePreviewEnabled" />
-                        <span class="slider"></span>
-                    </label>
-                </div>
-                <div class="description" data-i18n="richPresencePreviewDescription">
-                    Показывает прямо здесь, как статус выглядит в Discord
-                </div>
-
-                <div class="preview-container" id="presencePreviewContainer" style="display: none">
-                    <div class="preview-panel">
-                        <div class="preview-header-inline">
-                            <span class="preview-title-inline" data-i18n="richPresencePreviewTitle"
-                                >Так статус видят в Discord</span
-                            >
-                        </div>
-                        <div class="discord-preview">
-                            <div class="activity-section-preview" id="activitySectionPreview">
-                                <div class="no-activity-preview" id="noActivityPreview" data-i18n="noActivityToShow">
-                                    Сейчас ничего не играет
+                    <section class="section" id="discord" hidden>
+                        <h2>Discord</h2>
+                        <label class="row"><span class="text">Показывать трек в статусе</span><span class="toggle"><input type="checkbox" id="discordRichPresence" /><span class="slider"></span></span></label>
+                        <div class="sub" id="discordDetails">
+                            <label class="row"><span class="text">Значок SoundCloud на обложке</span><span class="toggle"><input type="checkbox" id="displaySCSmallIcon" /><span class="slider"></span></span></label>
+                            <label class="row"><span class="text">Значок GitHub со ссылкой на клиент</span><span class="toggle"><input type="checkbox" id="displayGithubLink" /><span class="slider"></span></span></label>
+                            <label class="row"><span class="text">Кнопка перехода к треку</span><span class="toggle"><input type="checkbox" id="displayButtons" /><span class="slider"></span></span></label>
+                            <label class="row">
+                                <span class="text"><span>Артист под ником</span><span class="hint">Listening to Drake вместо Listening to SoundCloud</span></span>
+                                <span class="toggle"><input type="checkbox" id="useArtistInStatusLineToggle" /><span class="slider"></span></span>
+                            </label>
+                            <div class="preview" id="presencePreviewContainer">
+                                <div class="preview-title">Так статус видят в Discord</div>
+                                <div class="discord-preview">
+                                    <div class="activity-section-preview" id="activitySectionPreview">
+                                        <div class="no-activity-preview" id="noActivityPreview">Сейчас ничего не играет</div>
+                                    </div>
                                 </div>
                             </div>
                         </div>
-                    </div>
+                    </section>
+
+                    <section class="section" id="extensions" hidden>
+                        <h2>Темы и плагины</h2>
+                        <div class="row"><span class="text">Своя тема</span></div>
+                        <div class="controls">
+                            <select id="customThemeSelector" class="input" aria-label="Своя тема">
+                                <option value="none">Без темы</option>
+                            </select>
+                            <button id="openThemesFolder" class="icon-btn" title="Открыть папку тем" aria-label="Открыть папку тем">
+                                <svg viewBox="0 0 24 24"><path d="M10 4H4a2 2 0 0 0-2 2v12a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-8z" /></svg>
+                            </button>
+                            <button id="refreshThemes" class="icon-btn" title="Перечитать папку тем" aria-label="Перечитать папку тем">
+                                <svg viewBox="0 0 24 24"><path d="M17.65 6.35A7.96 7.96 0 0 0 12 4a8 8 0 1 0 7.73 10h-2.08A6 6 0 1 1 12 6c1.66 0 3.14.69 4.22 1.78L13 11h7V4z" /></svg>
+                            </button>
+                        </div>
+                        <div class="row divided">
+                            <span class="text">Плагины</span>
+                            <span class="icons">
+                                <button id="openPluginsFolder" class="icon-btn" title="Открыть папку плагинов" aria-label="Открыть папку плагинов">
+                                    <svg viewBox="0 0 24 24"><path d="M10 4H4a2 2 0 0 0-2 2v12a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-8z" /></svg>
+                                </button>
+                                <button id="refreshPlugins" class="icon-btn" title="Перечитать папку плагинов" aria-label="Перечитать папку плагинов">
+                                    <svg viewBox="0 0 24 24"><path d="M17.65 6.35A7.96 7.96 0 0 0 12 4a8 8 0 1 0 7.73 10h-2.08A6 6 0 1 1 12 6c1.66 0 3.14.69 4.22 1.78L13 11h7V4z" /></svg>
+                                </button>
+                            </span>
+                        </div>
+                        <div class="plugin-list" id="pluginList">
+                            <div class="no-plugins">Папка плагинов пуста</div>
+                        </div>
+                    </section>
+
+                    <section class="section" id="account" hidden>
+                        <h2>Аккаунт</h2>
+                        <div class="controls">
+                            <select id="accountSelector" class="input" aria-label="Текущий аккаунт"></select>
+                            <button id="addAccountBtn" class="icon-btn" title="Добавить аккаунт" aria-label="Добавить аккаунт">
+                                <svg viewBox="0 0 24 24"><path d="M19 13h-6v6h-2v-6H5v-2h6V5h2v6h6v2z" /></svg>
+                            </button>
+                            <button id="logoutBtn" class="btn">Выйти</button>
+                        </div>
+                        <div class="hint pad">Смена аккаунта перезапускает клиент</div>
+                    </section>
+
+                    <section class="section" id="advanced" hidden>
+                        <h2>Дополнительно</h2>
+                        <label class="row">
+                            <span class="text"><span>Разбирать названия треков</span><span class="hint">Отделяет артиста от названия, когда оба в одной строке</span></span>
+                            <span class="toggle"><input type="checkbox" id="trackParserEnabled" /><span class="slider"></span></span>
+                        </label>
+
+                        <div class="item">
+                            <label class="row"><span class="text">Подключаться через прокси</span><span class="toggle"><input type="checkbox" id="proxyEnabled" /><span class="slider"></span></span></label>
+                            <div id="proxyFields" style="display: none">
+                                <div class="field-grid">
+                                    <input type="text" class="input" id="proxyHost" placeholder="Адрес" aria-label="Адрес прокси" />
+                                    <input type="text" class="input" id="proxyPort" placeholder="Порт" aria-label="Порт прокси" inputmode="numeric" />
+                                </div>
+                                <div class="field-grid two">
+                                    <input type="text" class="input" id="proxyUsername" placeholder="Логин" aria-label="Логин прокси" autocomplete="off" />
+                                    <input type="password" class="input" id="proxyPassword" placeholder="Пароль" aria-label="Пароль прокси" autocomplete="new-password" />
+                                </div>
+                            </div>
+                        </div>
+
+                        <div class="item">
+                            <label class="row"><span class="text">Отправлять вебхук</span><span class="toggle"><input type="checkbox" id="webhookEnabled" /><span class="slider"></span></span></label>
+                            <div id="webhookFields" style="display: none">
+                                <div class="field-stack"><input type="url" class="input" id="webhookUrl" placeholder="https://адрес-вебхука" aria-label="Адрес вебхука" /></div>
+                                <div class="row">
+                                    <span class="text">Когда трек проигран на</span>
+                                    <span class="inline"><input type="number" id="webhookTriggerPercentage" class="input num" min="0" max="100" step="1" value="50" aria-label="Процент проигрывания" />%</span>
+                                </div>
+                            </div>
+                            <div id="webhookFields2" style="display: none">
+                                <button class="disclosure" id="webhookExampleToggle" aria-expanded="false" aria-controls="webhookExampleContent">
+                                    <span class="hint">Пример данных</span>
+                                    <svg class="chev" viewBox="0 0 24 24"><path d="M7.41 8.59 12 13.17l4.59-4.58L18 10l-6 6-6-6z" /></svg>
+                                </button>
+                                <pre class="example-json" id="webhookExampleContent" style="display: none">
+{
+  "timestamp": "2026-09-23T14:30:45.123Z",
+  "artist": "Drake",
+  "track": "IDGAF (feat. Yeat)",
+  "duration": 260,
+  "trackArt": "https://i1.sndcdn.com/artworks-...-t500x500.jpg",
+  "originUrl": "https://soundcloud.com/octobersveryown/idgaf"
+}</pre>
+                            </div>
+                        </div>
+
+                        <div class="item">
+                            <div class="row">
+                                <span class="text"><span>Журнал диагностики</span><span class="hint">Ошибки и нагрузка, без паролей и названий треков</span></span>
+                                <button id="exportDiagnostics" class="btn">Сохранить</button>
+                            </div>
+                            <div id="diagnosticsStatus" class="hint pad" role="status"></div>
+                            <div class="row">
+                                <span class="text"><span>Папка данных клиента</span><span class="hint">Настройки, темы и плагины</span></span>
+                                <button id="openDataFolder" class="btn">Открыть</button>
+                            </div>
+                        </div>
+                    </section>
                 </div>
             </div>
 
-            <div class="setting-group">
-                <h2 data-i18n="customThemes">
-                    Темы
-                    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 22 22">
-                        <path
-                            d="M12 3c-4.97 0-9 4.03-9 9s4.03 9 9 9c.83 0 1.5-.67 1.5-1.5 0-.39-.15-.74-.39-1.01-.23-.26-.38-.61-.38-.99 0-.83.67-1.5 1.5-1.5H16c2.76 0 5-2.24 5-5 0-4.42-4.03-8-9-8zm-5.5 9c-.83 0-1.5-.67-1.5-1.5S5.67 9 6.5 9 8 9.67 8 10.5 7.33 12 6.5 12zm3-4C8.67 8 8 7.33 8 6.5S8.67 5 9.5 5s1.5.67 1.5 1.5S10.33 8 9.5 8zm5 0c-.83 0-1.5-.67-1.5-1.5S13.67 5 14.5 5s1.5.67 1.5 1.5S15.33 8 14.5 8zm3 4c-.83 0-1.5-.67-1.5-1.5S16.67 9 17.5 9s1.5.67 1.5 1.5-.67 1.5-1.5 1.5z"
-                        />
-                    </svg>
-                </h2>
-                <div class="setting-item">
-                    <span data-i18n="selectCustomTheme">Тема</span>
-                    <select id="customThemeSelector" class="theme-selector">
-                        <option value="none" data-i18n="noTheme">Без темы</option>
-                    </select>
+            <footer class="dialog-foot">
+                <div class="foot-row">
+                    <label class="row compact"><span class="text">Проверять обновления</span><span class="toggle"><input type="checkbox" id="autoUpdateEnabled" /><span class="slider"></span></span></label>
+                    <span id="updateStatus" class="foot-status" role="status"></span>
                 </div>
-                <div class="theme-controls">
-                    <button id="openThemesFolder" class="theme-button" data-i18n="openThemesFolder">
-                        Открыть папку тем
-                    </button>
-                    <button id="refreshThemes" class="theme-button" data-i18n="refreshThemes">Обновить список</button>
+                <div class="foot-row info">
+                    <span id="updateHint" class="hint"></span>
+                    <span class="foot-actions">
+                        <button id="checkUpdates" class="text-btn">Проверить сейчас</button>
+                        <button id="openReleasePage" class="text-btn">Страница релиза</button>
+                    </span>
                 </div>
-                <div class="description" data-i18n="customThemeDescription">
-                    Положите файлы .css в папку тем, чтобы изменить оформление SoundCloud
-                </div>
-            </div>
-
-            <div class="setting-group">
-                <h2 data-i18n="plugins">
-                    Плагины
-                    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24">
-                        <path
-                            d="M20.5 11H19V7c0-1.1-.9-2-2-2h-4V3.5C13 2.12 11.88 1 10.5 1S8 2.12 8 3.5V5H4c-1.1 0-1.99.9-1.99 2v3.8H3.5c1.49 0 2.7 1.21 2.7 2.7s-1.21 2.7-2.7 2.7H2V20c0 1.1.9 2 2 2h3.8v-1.5c0-1.49 1.21-2.7 2.7-2.7 1.49 0 2.7 1.21 2.7 2.7V22H17c1.1 0 2-.9 2-2v-4h1.5c1.38 0 2.5-1.12 2.5-2.5S21.88 11 20.5 11z"
-                        />
-                    </svg>
-                </h2>
-                <div class="plugin-list" id="pluginList">
-                    <div class="no-plugins" data-i18n="noPluginsFound">Плагинов пока нет</div>
-                </div>
-                <div class="theme-controls">
-                    <button id="openPluginsFolder" class="theme-button" data-i18n="openPluginsFolder">
-                        Открыть папку плагинов
-                    </button>
-                    <button id="refreshPlugins" class="theme-button" data-i18n="refreshPlugins">Обновить список</button>
-                </div>
-                <div class="description" data-i18n="pluginsDescription">
-                    Положите файлы плагинов .js в папку плагинов, чтобы добавить новые функции
-                </div>
-            </div>
-
-            <div class="setting-group">
-                <h2>Обновления</h2>
-                <div class="setting-item">
-                    <span>Проверять обновления</span>
-                    <label class="toggle">
-                        <input type="checkbox" id="autoUpdateEnabled" />
-                        <span class="slider"></span>
-                    </label>
-                </div>
-                <div id="updateHint" class="description"></div>
-                <div id="updateStatus" class="description" role="status"></div>
-                <button id="openReleasePage" class="theme-button">Открыть страницу релиза</button>
-            </div>
-
-            <div class="setting-group">
-                <h2>Диагностика</h2>
-                <div class="description">Локальный журнал ошибок и нагрузки. Без паролей, токенов, адресов и названий треков. Старые записи удаляются автоматически, объём ограничен примерно 6 МБ.</div>
-                <button id="exportDiagnostics" class="theme-button">Сохранить журнал</button>
-                <div id="diagnosticsStatus" class="description" role="status"></div>
-            </div>
-
-            <div class="setting-group">
-                <button class="button" id="applyChanges" data-i18n="applyChanges">Применить</button>
-            </div>
+            </footer>
         </div>
     </body>
 </html>
