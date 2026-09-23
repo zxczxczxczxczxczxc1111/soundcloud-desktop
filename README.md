@@ -42,7 +42,7 @@
     <td width="33%" valign="top">
       <img src="assets/readme/icons/plugins.svg" width="32" height="32" alt=""><br>
       <b>Плагины</b><br>
-      <sub>Добавляют то, чего в SoundCloud нет: скорость воспроизведения, шаффл по всему плейлисту. Живут в отдельном процессе.</sub>
+      <sub>Добавляют то, чего в SoundCloud нет, например скорость воспроизведения. Живут в отдельном процессе.</sub>
     </td>
   </tr>
   <tr>
@@ -127,7 +127,6 @@
 | Файл | Что делает | Состояние |
 |---|---|---|
 | [`plugins/playback-speed.js`](plugins/playback-speed.js) | Скорость от 0.50x до 2.00x, по желанию с сохранением высоты тона | покрыт тестами |
-| [`plugins/shuffle-fix.js`](plugins/shuffle-fix.js) | Перемешивает весь плейлист, а не только загруженные треки | экспериментальный |
 | [`plugins/cobalt-downloader.js`](plugins/cobalt-downloader.js) | Кнопка скачивания MP3 через cobalt | не работает |
 | [`plugins/example-plugin.js`](plugins/example-plugin.js) | Шаблон для своего плагина | пример |
 | [`themes/gruvbox.css`](themes/gruvbox.css) | Тема Gruvbox | тема |

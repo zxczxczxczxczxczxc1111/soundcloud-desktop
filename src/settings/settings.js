@@ -442,6 +442,10 @@ async function initializeSettings() {
         ipcRenderer.send('setting-changed', { key: 'hideArtistUpsells', value: e.target.checked });
     });
 
+    document.getElementById('fullShuffle')?.addEventListener('change', (e) => {
+        ipcRenderer.send('setting-changed', { key: 'fullShuffle', value: e.target.checked });
+    });
+
     document.getElementById('proxyEnabled')?.addEventListener('change', (e) => {
         const isEnabled = e.target.checked;
         document.getElementById('proxyFields').style.display = isEnabled ? 'block' : 'none';

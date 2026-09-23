@@ -10,6 +10,7 @@ import { PlaybackController } from './services/playbackController';
 import { AdblockService } from './services/adblockService';
 import { ViewStyles, splitThemeCSS } from './services/viewStyles';
 import { pageFeaturesScript } from './services/pageFeatures';
+import { fullShuffleScript } from './services/fullShuffle';
 import { shouldRunGpuInProcess } from './services/gpuProcessMode';
 import { tintIcon } from './services/devIcon';
 import {
@@ -112,6 +113,7 @@ const store = new Store<Record<string, unknown>>({
         hidePromotions: true,
         hideEventsNearYou: true,
         hideArtistUpsells: true,
+        fullShuffle: true,
         accounts: [{ id: 'default', name: 'Основной аккаунт' }],
         currentAccountId: 'default',
     },
@@ -943,6 +945,7 @@ async function init() {
 
             // Inject audio monitoring script
             await contentView.webContents.executeJavaScript(audioMonitorScript);
+            await contentView.webContents.executeJavaScript(fullShuffleScript(store.get('fullShuffle', true) === true));
 
             // Re-inject all enabled plugin content scripts
             if (pluginService) {
@@ -1017,6 +1020,8 @@ async function init() {
             applyThemeToContent(isDarkTheme);
         } else if (key === 'hidePromotions' || key === 'hideEventsNearYou' || key === 'hideArtistUpsells') {
             applyThemeToContent(isDarkTheme);
+        } else if (key === 'fullShuffle') {
+            void contentView.webContents.executeJavaScript(fullShuffleScript(data.value === true)).catch(console.error);
         }
     });
 

@@ -13,6 +13,7 @@ const defaults: Record<string, string | number | boolean> = {
     hidePromotions: true,
     hideEventsNearYou: true,
     hideArtistUpsells: true,
+    fullShuffle: true,
     adBlocker: true,
     proxyEnabled: false,
     proxyHost: '',
