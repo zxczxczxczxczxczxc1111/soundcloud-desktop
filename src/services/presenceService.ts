@@ -52,7 +52,7 @@ export class PresenceService {
     ) {
         this.displaySCSmallIcon = store.get('displaySCSmallIcon', false) === true;
         this.displayButtons = store.get('displayButtons', false) === true;
-        this.statusDisplayType = Number(store.get('statusDisplayType', 0));
+        this.statusDisplayType = Number(store.get('statusDisplayType', 1));
     }
     public async updatePresence(track: TrackInfo): Promise<void> {
         if (this.disposed) return;
@@ -92,7 +92,8 @@ export class PresenceService {
         const trackUrl = soundcloudLink(track.url);
         return {
             type: ActivityType.Listening,
-            name: this.statusDisplayType === 1 ? normalized.artist : 'SoundCloud',
+            // Заголовок карточки всегда «Listening to SoundCloud», артиста показывает statusDisplayType.
+            name: 'SoundCloud',
             details: label(normalized.track),
             detailsUrl: trackUrl,
             state: label(normalized.artist),

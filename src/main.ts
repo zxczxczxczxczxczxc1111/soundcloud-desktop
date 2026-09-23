@@ -78,7 +78,7 @@ const store = new Store<Record<string, unknown>>({
         displayGithubLink: true,
         discordRichPresence: true,
         displayButtons: false,
-        statusDisplayType: 0,
+        statusDisplayType: 1,
         theme: 'dark',
         minimizeToTray: false,
         navigationControlsEnabled: false,

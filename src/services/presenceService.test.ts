@@ -160,7 +160,7 @@ it('по умолчанию показывает SoundCloud и делает тр
     expect(mocks.setActivity).toHaveBeenLastCalledWith(
         expect.objectContaining({
             name: 'SoundCloud',
-            statusDisplayType: 0,
+            statusDisplayType: 1,
             detailsUrl: 'https://soundcloud.com/artist/first',
             stateUrl: 'https://soundcloud.com/artist',
             largeImageUrl: 'https://soundcloud.com/artist/first',
@@ -182,4 +182,11 @@ it('на паузе убирает статус', async () => {
     await service.updatePresence({ ...track, isPlaying: false });
     expect(mocks.clearActivity).toHaveBeenCalledTimes(1);
     expect(mocks.setActivity).toHaveBeenCalledTimes(1);
+});
+
+it('заголовок остаётся SoundCloud, когда в строке статуса выбрано название приложения', async () => {
+    service.setStatusDisplayType(0);
+    await service.updatePresence(track);
+    await vi.advanceTimersByTimeAsync(0);
+    expect(mocks.setActivity).toHaveBeenLastCalledWith(expect.objectContaining({ name: 'SoundCloud', statusDisplayType: 0 }));
 });

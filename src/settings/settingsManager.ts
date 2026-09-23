@@ -25,7 +25,7 @@ const defaults: Record<string, string | number | boolean> = {
     displaySCSmallIcon: false,
     displayGithubLink: true,
     displayButtons: false,
-    statusDisplayType: 0,
+    statusDisplayType: 1,
     richPresencePreviewEnabled: false,
 };
 
