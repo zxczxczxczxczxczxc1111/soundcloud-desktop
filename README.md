@@ -5,13 +5,13 @@
 <br>
 
 [![Проверка Windows](https://github.com/zxczxczxczxczxczxc1111/soundcloud-desktop/actions/workflows/windows.yml/badge.svg)](https://github.com/zxczxczxczxczxczxc1111/soundcloud-desktop/actions/workflows/windows.yml)
-![Версия](https://img.shields.io/badge/%D0%B2%D0%B5%D1%80%D1%81%D0%B8%D1%8F-0.4.0-ff5500?style=flat-square)
+![Версия](https://img.shields.io/badge/%D0%B2%D0%B5%D1%80%D1%81%D0%B8%D1%8F-0.5.0-ff5500?style=flat-square)
 ![Windows x64](https://img.shields.io/badge/Windows-x64-0078d4?style=flat-square)
 ![Electron](https://img.shields.io/badge/Castlabs_Electron-41.10.7-47848f?style=flat-square&logo=electron&logoColor=white)
 ![TypeScript](https://img.shields.io/badge/TypeScript-strict-3178c6?style=flat-square&logo=typescript&logoColor=white)
 ![Лицензия MIT](https://img.shields.io/badge/%D0%BB%D0%B8%D1%86%D0%B5%D0%BD%D0%B7%D0%B8%D1%8F-MIT-3fb950?style=flat-square)
 
-[![Скачать для Windows](https://img.shields.io/badge/%D0%A1%D0%BA%D0%B0%D1%87%D0%B0%D1%82%D1%8C_%D0%B4%D0%BB%D1%8F_Windows-v0.4.0-ff5500?style=for-the-badge)](https://github.com/zxczxczxczxczxczxc1111/soundcloud-desktop/releases/latest)
+[![Скачать для Windows](https://img.shields.io/badge/%D0%A1%D0%BA%D0%B0%D1%87%D0%B0%D1%82%D1%8C_%D0%B4%D0%BB%D1%8F_Windows-v0.5.0-ff5500?style=for-the-badge)](https://github.com/zxczxczxczxczxczxc1111/soundcloud-desktop/releases/latest)
 
 **[Моя волна](#моя-волна)** · **[Возможности](#возможности)** · **[Установка](#установка)** · **[Плагины и темы](#плагины-и-темы)** · **[Сборка](#сборка-из-исходников)** · **[Диагностика](#диагностика)**
 
@@ -29,6 +29,7 @@
 - **Жанры.** Выбираешь из своих частых жанров или пишешь свои через запятую: `techno, dark techno`.
 - **Волна от трека, артиста или плейлиста.** Нажми правой кнопкой на любой трек, артиста или плейлист на сайте, и волна начнётся от него. Когда похожие кончаются, волна идёт по станции трека, а если подборка иссякнет совсем, дальше заиграет автоплей SoundCloud.
 - **Подстраивается по ходу.** Пропустил трек в первые 30 секунд, и его артист уходит из этой волны. Лайкнул трек, и волна подбирает похожее на него.
+- **«Встряхнуть»** меняет треки впереди, играющий не прерывается.
 - **«Не нравится» и «Не показывать артиста»** в том же меню. Отмеченное лежит в настройках во вкладке «Моя волна», оттуда его можно вернуть.
 - У играющего трека подписано, почему он в волне: новый для тебя артист, похоже на такой-то трек, свежее в выбранном жанре.
 
@@ -41,7 +42,7 @@
     <td width="33%" valign="top">
       <img src="assets/readme/icons/presence.svg" width="32" height="32" alt=""><br>
       <b>Discord Rich Presence</b><br>
-      <sub>Друзья в Discord видят, что ты слушаешь: обложку, артиста, трек и сколько до конца. Как это выглядит, видно прямо в настройках.</sub>
+      <sub>Друзья в Discord видят, что ты слушаешь: обложку, артиста, трек и сколько до конца. Строки карточки собираешь сам, артистов и жанры можно скрыть, а инкогнито прячет всё. Как это выглядит, видно прямо в настройках.</sub>
     </td>
     <td width="33%" valign="top">
       <img src="assets/readme/icons/themes.svg" width="32" height="32" alt=""><br>
@@ -97,8 +98,8 @@
 
 | Вариант | Файл | Где профиль |
 |---|---|---|
-| Установщик | `soundcloud-desktop-0.4.0-setup-x64.exe` | `%APPDATA%\soundcloud-desktop` |
-| Portable | `soundcloud-desktop-0.4.0-portable-x64.exe` | папка `soundcloud-desktop-data` рядом с EXE |
+| Установщик | `soundcloud-desktop-0.5.0-setup-x64.exe` | `%APPDATA%\soundcloud-desktop` |
+| Portable | `soundcloud-desktop-0.5.0-portable-x64.exe` | папка `soundcloud-desktop-data` рядом с EXE |
 
 У клиента свой профиль, другие клиенты SoundCloud на компьютере он не трогает.
 
@@ -121,6 +122,7 @@
 | <kbd>Ctrl</kbd> + <kbd>B</kbd> или <kbd>Ctrl</kbd> + <kbd>P</kbd> | Назад |
 | <kbd>Ctrl</kbd> + <kbd>F</kbd> или <kbd>Ctrl</kbd> + <kbd>N</kbd> | Вперёд |
 | <kbd>Ctrl</kbd> + <kbd>R</kbd> | Обновить страницу |
+| <kbd>Ctrl</kbd> + <kbd>Shift</kbd> + <kbd>N</kbd> | Инкогнито в Discord |
 | <kbd>Ctrl</kbd> + <kbd>=</kbd> / <kbd>Ctrl</kbd> + <kbd>-</kbd> / <kbd>Ctrl</kbd> + <kbd>0</kbd> | Масштаб больше, меньше, сбросить |
 
 </details>
