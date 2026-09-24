@@ -1,6 +1,7 @@
 // «Моя волна»: подбор треков через API сайта и блок первым на главной.
 // Функции ниже уходят на страницу текстом, поэтому они не ссылаются на импорты и константы модуля,
 // только друг на друга по имени: waveScript кладёт их объявления в одну обёртку со скриптом.
+import type { PlaySignal, TrackMeta } from '../types';
 
 export interface WaveTrack {
     id: number;
@@ -55,7 +56,7 @@ export type WaveTexts = Record<
     | 'dropGenre' | 'toSimilar' | 'play' | 'pause' | 'clearGenre' | 'upFirst' | 'next' | 'like' | 'error' | 'retry' | 'unavailable'
     | 'whySeedTrack' | 'whyArtistTrack' | 'seedTrack' | 'seedArtist' | 'seedPlaylist' | 'clearSeed' | 'emptySeed'
     | 'menuWaveTrack' | 'menuWaveArtist' | 'menuWavePlaylist' | 'menuDislike' | 'menuUndislike' | 'menuHideArtist' | 'menuShowArtist'
-    | 'toastDisliked' | 'toastUndisliked' | 'toastHidden' | 'toastShown' | 'toastFailed' | 'toastNotSaved' | 'toastEmpty',
+    | 'toastDisliked' | 'toastUndisliked' | 'toastHidden' | 'toastShown' | 'toastFailed' | 'toastNotSaved' | 'toastEmpty' | 'shake',
     string
 >;
 
@@ -81,6 +82,7 @@ export const WAVE_TEXTS: Record<'ru' | 'en', WaveTexts> = {
         toastDisliked: 'Трек больше не попадёт в волну', toastUndisliked: 'Трек снова может попасть в волну',
         toastHidden: 'Артист больше не попадёт в волну', toastShown: 'Артист снова может попасть в волну',
         toastFailed: 'Не получилось: SoundCloud не ответил', toastNotSaved: 'Отметка не сохранилась', toastEmpty: 'Не нашлось похожих треков',
+        shake: 'Встряхнуть',
     },
     en: {
         wave: 'My Wave', similar: 'Similar', fresh: 'New', anyGenre: 'Any genre', genreInput: 'Genres, comma separated', fromLikes: 'From your likes',
@@ -103,6 +105,7 @@ export const WAVE_TEXTS: Record<'ru' | 'en', WaveTexts> = {
         toastDisliked: 'This track won’t play in My Wave', toastUndisliked: 'This track can play in My Wave again',
         toastHidden: 'This artist won’t play in My Wave', toastShown: 'This artist can play in My Wave again',
         toastFailed: 'Didn’t work: SoundCloud didn’t respond', toastNotSaved: 'Couldn’t save this', toastEmpty: 'No similar tracks found',
+        shake: 'Shake up',
     },
 };
 
@@ -290,6 +293,15 @@ export function formatTime(ms: number): string {
     return Math.floor(seconds / 60) + ':' + String(seconds % 60).padStart(2, '0');
 }
 
+// Дослушал, если ушёл не раньше чем за 15 секунд до конца
+export function playEnd(duration: number, position: number): 'done' | 'skip' {
+    return duration > 0 && position >= duration - 15000 ? 'done' : 'skip';
+}
+// Источник трека не из волны: тип очереди сайта (single, playlist, stream, history...)
+export function siteSource(type: unknown): string {
+    return 'site' + (typeof type === 'string' && /^[a-z][a-z_-]{0,23}$/i.test(type) ? ':' + type.toLowerCase() : '');
+}
+
 interface SiteSound {
     id: number;
     attributes?: Record<string, unknown>;
@@ -303,6 +315,8 @@ interface SiteSound {
 interface SiteQueueItem {
     sound?: SiteSound;
     explicit?: boolean;
+    /** Откуда сайт поставил трек в очередь: single, playlist, stream, history и другие */
+    sourceInfo?: { type?: unknown };
     release?(): void;
 }
 type QueueItemCtor = new (attributes: object, options: object) => SiteQueueItem;
@@ -345,7 +359,12 @@ interface WaveWindow extends Window {
     __disposeWave?: () => void;
     __scWaveExclusionsChanged?: () => void;
     __scSiteTranslation?: { language?: string };
-    soundcloudAPI?: { waveJournal?: WaveJournalApi; waveExclusions?: WaveExclusionsApi };
+    soundcloudAPI?: {
+        waveJournal?: WaveJournalApi;
+        waveExclusions?: WaveExclusionsApi;
+        waveSignals?: { add(userId: number, signals: PlaySignal[]): void };
+        sendTrackMeta?(meta: TrackMeta): void;
+    };
 }
 interface WaveConfig {
     texts: Record<'ru' | 'en', WaveTexts>;
@@ -446,6 +465,15 @@ export function installWave(config: WaveConfig): void {
     const pendingJournal: number[] = [];
     let userId = 0;
     let journalTimer: ReturnType<typeof setTimeout> | undefined;
+    // Журнал сигналов: одно событие на прослушивание любого трека, не только из волны
+    interface Play { signal: PlaySignal; lastPosition: number; likedAtStart: boolean }
+    let play: Play | null = null;
+    const pendingSignals: PlaySignal[] = [];
+    let signalsTimer: ReturnType<typeof setTimeout> | undefined;
+    // Сведения о текущем треке для карточки Discord: уходят в main, только когда поменялись
+    let sentMeta = '';
+    // «Встряхнуть»: зёрна прошлой подборки не берутся, пока хватает других
+    const staleSeeds = new Set<number>();
 
     const wait = (ms: number): Promise<void> => new Promise((resolve) => setTimeout(resolve, ms));
     // Модель трека сайта может оказаться без методов (чужой элемент очереди): тогда длительность и позиция нулевые
@@ -610,11 +638,16 @@ export function installWave(config: WaveConfig): void {
             }
         }
         const seen = new Set<number>();
-        return mixed.filter((track) => {
+        const list = mixed.filter((track) => {
             if (seen.has(track.id) || usedSeeds.has(track.id) || skippedArtists.has(trackArtist(track)) || isExcluded(track)) return false;
             seen.add(track.id);
             return !!seed || trackMatchesGenre(track, keys);
         });
+        const fresh = list.filter((track) => !staleSeeds.has(track.id));
+        // Встряхивали столько раз, что свежих зёрен не осталось: круг начинается заново
+        if (fresh.length || !staleSeeds.size) return fresh;
+        staleSeeds.clear();
+        return list;
     }
     function accept(list: WaveCandidate[], candidate: WaveCandidate, filter: WaveFilter): boolean {
         const signature = trackSignature(candidate.track);
@@ -945,7 +978,22 @@ export function installWave(config: WaveConfig): void {
         if (genre) recentGenres = [genre, ...recentGenres.filter((item) => item !== genre)].slice(0, 6);
         saveSettings();
         popOpen = false;
+        staleSeeds.clear();
         resetGeneration();
+        if (active) void restartAhead();
+        else void preparePreview();
+    }
+    // «Встряхнуть»: другие зёрна и новая подборка, текущий трек доигрывает.
+    // Показанное до запуска не вернётся, страницы жанра идут дальше, а не с начала
+    function shake(): void {
+        if (state === 'loading' || state === 'unavailable') return;
+        for (const id of usedSeeds) staleSeeds.add(id);
+        const shown = preview.map((item) => item.track.id);
+        const pages = new Map(cursors);
+        popOpen = false;
+        resetGeneration();
+        for (const [key, cursor] of pages) cursors.set(key, cursor);
+        for (const id of shown) taken.add(id);
         if (active) void restartAhead();
         else void preparePreview();
     }
@@ -973,6 +1021,114 @@ export function installWave(config: WaveConfig): void {
         }
     }
 
+    const numberOf = (value: unknown): number => (typeof value === 'number' && Number.isFinite(value) && value >= 0 ? value : 0);
+    const textOf = (value: unknown, max: number): string => (typeof value === 'string' ? value.trim().slice(0, max) : '');
+    // Подпись волны для карточки Discord: режим и жанр или трек, артист, плейлист, от которых она идёт
+    function waveLabel(): string {
+        if (seed) return fillText(seed.kind === 'track' ? T.seedTrack : seed.kind === 'artist' ? T.seedArtist : T.seedPlaylist, { seed: seed.title });
+        return [T.wave, mode === 'similar' ? T.similar : T.fresh, genre ?? ''].filter(Boolean).join(' · ');
+    }
+    function fromWave(item: SiteQueueItem | null | undefined): boolean {
+        return active && !!item && ours.has(item);
+    }
+    function publishMeta(sound: SiteSound): void {
+        const attrs = sound.attributes ?? {};
+        const user = (attrs.user && typeof attrs.user === 'object' ? attrs.user : {}) as Record<string, unknown>;
+        const meta: TrackMeta = {
+            id: sound.id,
+            url: textOf(attrs.permalink_url, 2048),
+            genre: textOf(attrs.genre, 80),
+            tags: textOf(attrs.tag_list, 500),
+            plays: numberOf(attrs.playback_count),
+            likes: numberOf(attrs.likes_count),
+            artist: textOf(user.username, 200),
+            avatar: textOf(user.avatar_url, 2048),
+            artwork: textOf(attrs.artwork_url, 2048),
+            wave: fromWave(player?.getCurrentQueueItem()) ? waveLabel() : '',
+        };
+        const json = JSON.stringify(meta);
+        if (json === sentMeta) return;
+        sentMeta = json;
+        try {
+            host.soundcloudAPI?.sendTrackMeta?.(meta);
+        } catch (error) {
+            console.warn('Волна: сведения о треке не отправлены', error);
+        }
+    }
+
+    function beginPlay(sound: SiteSound): void {
+        const attrs = sound.attributes ?? {};
+        const item = player?.getCurrentQueueItem();
+        const candidate = known.get(sound.id);
+        const waveItem = fromWave(item) && !!candidate;
+        play = {
+            signal: {
+                at: Date.now(),
+                id: sound.id,
+                artist: numberOf(attrs.user_id) || numberOf((attrs.user as { id?: unknown } | undefined)?.id),
+                dur: durationOf(sound) || numberOf(attrs.full_duration) || numberOf(attrs.duration),
+                pos: 0,
+                heard: 0,
+                end: 'skip',
+                source: waveItem ? 'wave:' + (seed ? seed.kind : mode) : siteSource(item?.sourceInfo?.type),
+                why: waveItem && candidate ? candidate.reason.kind : '',
+                liked: currentLiked,
+                likedNow: false,
+                disliked: false,
+                hiddenArtist: false,
+                genre: textOf(attrs.genre, 80),
+                tags: textOf(attrs.tag_list, 300),
+            },
+            lastPosition: positionOf(sound),
+            likedAtStart: currentLiked,
+        };
+    }
+    function finishPlay(end?: PlaySignal['end']): void {
+        const current = play;
+        play = null;
+        // Трек сменили раньше, чем он прозвучал секунду: сигнала нет
+        if (!current || current.signal.heard < 1000) return;
+        const signal = current.signal;
+        signal.end = end ?? playEnd(signal.dur, signal.pos);
+        signal.likedNow = signal.liked && !current.likedAtStart;
+        pendingSignals.push(signal);
+        if (pendingSignals.length > 1000) pendingSignals.splice(0, pendingSignals.length - 1000);
+        if (signalsTimer === undefined) signalsTimer = setTimeout(flushSignals, 5000);
+    }
+    // Раз в секунду: сколько реально прозвучало (перемотка не считается), где сейчас и стоит ли лайк
+    function trackPlay(sound: SiteSound, playing: boolean): void {
+        const current = play;
+        if (!current) return;
+        const position = positionOf(sound);
+        const signal = current.signal;
+        if (!signal.dur) signal.dur = durationOf(sound);
+        // Трек на повторе: позиция вернулась в начало после конца, это новое прослушивание
+        if (signal.dur && current.lastPosition >= signal.dur - 5000 && position < 5000) {
+            finishPlay('done');
+            beginPlay(sound);
+            return;
+        }
+        const delta = position - current.lastPosition;
+        if (playing && delta > 0 && delta <= 3000) signal.heard += delta;
+        current.lastPosition = position;
+        signal.pos = position;
+        signal.liked = currentLiked;
+    }
+    function flushSignals(): void {
+        signalsTimer = undefined;
+        if (!pendingSignals.length) return;
+        if (!userId) {
+            if (!disposed) void ensureUser().then(() => { if (userId) flushSignals(); }, (error: unknown) => console.warn('Волна: пользователь не определён', error));
+            return;
+        }
+        const signals = pendingSignals.splice(0);
+        try {
+            host.soundcloudAPI?.waveSignals?.add(userId, signals);
+        } catch (error) {
+            console.warn('Волна: сигналы не записаны', error);
+        }
+    }
+
     // Раз в секунду: журнал слышанного, пропуски, лайки, конец волны и догрузка
     function tick(): void {
         const p = player;
@@ -988,10 +1144,12 @@ export function installWave(config: WaveConfig): void {
                 pool = pool.filter((item) => !skippedArtists.has(trackArtist(item.track)));
             }
             jumped = false;
+            finishPlay();
             currentId = id;
             currentPosition = 0;
             currentDuration = durationOf(sound);
             currentLiked = likeButton()?.classList.contains('sc-button-selected') ?? false;
+            if (sound) beginPlay(sound);
             render();
         } else if (sound) {
             currentPosition = positionOf(sound);
@@ -1003,7 +1161,9 @@ export function installWave(config: WaveConfig): void {
                 if (liked && candidate && !likedSeeds.includes(candidate.track)) likedSeeds.unshift(candidate.track);
                 updateLike();
             }
+            trackPlay(sound, p.isPlaying());
         }
+        if (sound) publishMeta(sound);
         // Пауза кнопкой сайта или медиаклавишей: иначе кнопка блока остаётся в старом состоянии
         if (section && (active && p.isPlaying()) !== shownPlaying) render();
         if (!active) return;
@@ -1110,6 +1270,7 @@ export function installWave(config: WaveConfig): void {
             // Лайки прошлой волны тянули бы новую в сторону
             likedSeeds.length = 0;
             popOpen = false;
+            staleSeeds.clear();
             resetGeneration();
             const first = loaded.first;
             const keep = !!first && player?.getCurrentSound()?.id === first.id;
@@ -1128,6 +1289,7 @@ export function installWave(config: WaveConfig): void {
         seedRequest++;
         seed = null;
         derivedSeeds = [];
+        staleSeeds.clear();
         resetGeneration();
         if (active) void restartAhead();
         else if (isVisible()) void preparePreview();
@@ -1158,6 +1320,9 @@ export function installWave(config: WaveConfig): void {
             const map = kind === 'track' ? excludedTracks : excludedArtists;
             if (excluded) map.set(entry.id, entry);
             else map.delete(entry.id);
+            // Отметка о том, что сейчас играет, уходит и в журнал сигналов
+            if (play && kind === 'track' && play.signal.id === entry.id) play.signal.disliked = excluded;
+            if (play && kind === 'artist' && play.signal.artist === entry.id) play.signal.hiddenArtist = excluded;
             showToast(kind === 'track' ? (excluded ? T.toastDisliked : T.toastUndisliked) : excluded ? T.toastHidden : T.toastShown);
             if (excluded) purgeExcluded();
         } catch (error) {
@@ -1198,6 +1363,7 @@ export function installWave(config: WaveConfig): void {
         chev: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M7.4 8.6 12 13.2l4.6-4.6L18 10l-6 6-6-6z"/></svg>',
         heart: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 21.35 10.55 20C5.4 15.36 2 12.28 2 8.5 2 5.42 4.42 3 7.5 3c1.74 0 3.41.81 4.5 2.09A6 6 0 0 1 16.5 3C19.58 3 22 5.42 22 8.5c0 3.78-3.4 6.86-8.55 11.54z"/></svg>',
         x: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M19 6.4 17.6 5 12 10.6 6.4 5 5 6.4l5.6 5.6L5 17.6 6.4 19l5.6-5.6 5.6 5.6 1.4-1.4-5.6-5.6z"/></svg>',
+        shake: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M17.65 6.35A7.96 7.96 0 0 0 12 4a8 8 0 1 0 7.73 10h-2.08A6 6 0 1 1 12 6c1.66 0 3.14.69 4.22 1.78L13 11h7V4z"/></svg>',
     };
     const CSS = [
         '#sc-wave{--scw-surface:#303030;--scw-muted:#999;--scw-faint:#757575;--scw-film:rgba(255,255,255,.06);--scw-film-strong:rgba(255,255,255,.1);--scw-btn:#fff;--scw-btn-ink:#121212;--scw-tile:rgba(255,255,255,.06);position:relative;margin:0 0 48px 16px;font-size:14px;line-height:20px}',
@@ -1216,6 +1382,10 @@ export function installWave(config: WaveConfig): void {
         '.scw-genre span.scw-label{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}',
         '.scw-genre svg{width:14px;height:14px;fill:currentColor;flex:none}',
         '#sc-wave .scw-genre.set{background:var(--scw-btn);color:var(--scw-btn-ink)}',
+        '#sc-wave .scw-icon{width:32px;height:32px;border-radius:6px;background:var(--scw-surface);display:grid;place-items:center;flex:none}',
+        '#sc-wave .scw-icon:hover{box-shadow:inset 0 0 0 32px var(--scw-film)}',
+        '#sc-wave .scw-icon:disabled{opacity:.5;cursor:default;box-shadow:none}',
+        '.scw-icon svg{width:16px;height:16px;fill:currentColor}',
         '.scw-genre .scw-x{width:18px;height:18px;margin-right:-4px;border-radius:3px;display:grid;place-items:center;flex:none}',
         '.scw-genre .scw-x:hover{background:rgba(127,127,127,.25)}',
         '.scw-pop{position:absolute;right:0;top:48px;z-index:30;width:280px;padding:8px;background:var(--scw-surface);border-radius:6px;box-shadow:0 8px 24px rgba(0,0,0,.45)}',
@@ -1353,12 +1523,15 @@ export function installWave(config: WaveConfig): void {
             option.dataset.mode = value;
             seg.append(option);
         }
+        const shakeButton = button('scw-icon', 'shake', T.shake, 'shake');
+        shakeButton.title = T.shake;
+        shakeButton.disabled = state === 'loading' || state === 'unavailable';
         // Волна от трека, артиста или плейлиста: вместо жанра его название и крестик возврата к обычной волне
         if (seed) {
             const chip = el('div', 'scw-genre set');
             chip.title = seed.title;
             chip.append(el('span', 'scw-label', seed.title), button('scw-x', 'clear-seed', T.clearSeed, 'x'));
-            controls.append(seg, chip);
+            controls.append(seg, chip, shakeButton);
             head.append(titles, controls);
             return head;
         }
@@ -1377,7 +1550,7 @@ export function installWave(config: WaveConfig): void {
             clear.insertAdjacentHTML('beforeend', ICON.x);
             genreButton.append(clear);
         } else genreButton.insertAdjacentHTML('beforeend', ICON.chev);
-        controls.append(seg, genreButton);
+        controls.append(seg, genreButton, shakeButton);
         head.append(titles, controls);
         return head;
     }
@@ -1678,6 +1851,9 @@ export function installWave(config: WaveConfig): void {
             case 'clear-seed':
                 clearSeed();
                 return;
+            case 'shake':
+                shake();
+                return;
             case 'genre':
                 popOpen = !popOpen;
                 popQuery = '';
@@ -1791,6 +1967,62 @@ export function installWave(config: WaveConfig): void {
         const knownTrack = [...known.values()].find((candidate) => canonicalUrl(candidate.track.permalink_url) === canonicalUrl(target.url));
         return { kind: target.kind, url: target.url, artistUrl: artist?.kind === 'artist' ? artist.url : '', track: knownTrack?.track };
     }
+    // Новая вёрстка SoundCloud (страница трека и не только) живёт в iframe того же сайта по адресу /n/...
+    // Классы там от MUI и меняются от сборки к сборке, поэтому опора на ссылки и заголовок h1.
+    // Строка списка это самый широкий предок, где ссылка на трек или плейлист ровно одна
+    function frameMenuTarget(node: Element): MenuTarget | null {
+        if (node.closest('input, textarea, select, [contenteditable="true"], [contenteditable=""]')) return null;
+        const doc = node.ownerDocument;
+        const path = doc.location.pathname.replace(/^\/n(?=\/)/, '');
+        const base = location.origin + path;
+        const linkOf = (anchor: Element): { kind: WaveLinkKind; url: string } | null => classifyLink(anchor.getAttribute('href') ?? '', base);
+        const artistIn = (root: Element | null): string => {
+            for (const anchor of root ? root.querySelectorAll('a[href]') : []) {
+                const found = linkOf(anchor);
+                if (found?.kind === 'artist') return found.url;
+            }
+            return '';
+        };
+        const rowOf = (from: Element): { link: { kind: WaveLinkKind; url: string }; row: Element } | null => {
+            let best: { link: { kind: WaveLinkKind; url: string }; row: Element } | null = null;
+            for (let row: Element | null = from, depth = 0; row && depth < 12 && row !== doc.body && row.tagName !== 'MAIN'; row = row.parentElement, depth++) {
+                const urls = new Map<string, { kind: WaveLinkKind; url: string }>();
+                for (const anchor of row.querySelectorAll('a[href]')) {
+                    const found = linkOf(anchor);
+                    if (found && found.kind !== 'artist') urls.set(found.url, found);
+                }
+                if (urls.size > 1) break;
+                if (urls.size === 1) best = { link: [...urls.values()][0], row };
+            }
+            return best;
+        };
+        const anchor = node.closest('a[href]');
+        let link: { kind: WaveLinkKind; url: string } | null = null;
+        let artistUrl = '';
+        if (anchor) {
+            // Ссылка не на трек, артиста или плейлист (теги, подписчики): меню сайта
+            link = linkOf(anchor);
+            if (!link) return null;
+            if (link.kind === 'track') artistUrl = artistIn(rowOf(anchor)?.row ?? null);
+        } else {
+            const hero = node.closest('section');
+            if (node.closest('h1') || hero?.querySelector('h1')) {
+                // Шапка страницы: заголовок без ссылки, это сама страница
+                link = classifyLink(path, location.origin + '/');
+                if (link?.kind === 'track') artistUrl = artistIn(hero);
+            } else {
+                const row = rowOf(node);
+                if (row) {
+                    link = row.link;
+                    if (link.kind === 'track') artistUrl = artistIn(row.row);
+                }
+            }
+        }
+        if (!link) return null;
+        const target = link;
+        const knownTrack = [...known.values()].find((candidate) => canonicalUrl(candidate.track.permalink_url) === canonicalUrl(target.url));
+        return { kind: target.kind, url: target.url, artistUrl, track: knownTrack?.track };
+    }
     function trackExcluded(target: MenuTarget): boolean {
         return target.track ? excludedTracks.has(target.track.id) : excludedUrl(excludedTracks, target.url);
     }
@@ -1872,11 +2104,14 @@ export function installWave(config: WaveConfig): void {
         menuFor = target;
         root.querySelector<HTMLElement>('[data-menu]')?.focus();
     }
-    function onContextMenu(event: MouseEvent): void {
+    // Узел из iframe принадлежит другому окну, и instanceof Element для него ложен
+    const asElement = (value: unknown): Element | null =>
+        value && typeof value === 'object' && (value as Node).nodeType === 1 ? (value as Element) : null;
+    function onContextMenu(event: MouseEvent, frame?: HTMLIFrameElement): void {
         closeMenu();
         if (!player || !api || disposed || state === 'unavailable') return;
-        const node = event.target instanceof Element ? event.target : null;
-        const target = node ? menuTarget(node) : null;
+        const node = asElement(event.target);
+        const target = node ? (frame ? frameMenuTarget(node) : menuTarget(node)) : null;
         if (!node || !target) return;
         event.preventDefault();
         let { clientX: x, clientY: y } = event;
@@ -1885,6 +2120,12 @@ export function installWave(config: WaveConfig): void {
             const rect = node.getBoundingClientRect();
             x = rect.left;
             y = rect.bottom;
+        }
+        // Координаты iframe отсчитываются от его угла, меню живёт в странице
+        if (frame) {
+            const box = frame.getBoundingClientRect();
+            x += box.left;
+            y += box.top;
         }
         openMenu(target, x, y);
         void ensureExclusions();
@@ -1897,6 +2138,46 @@ export function installWave(config: WaveConfig): void {
     const onDocumentKey = (event: KeyboardEvent): void => {
         if (event.key === 'Escape' && menu) closeMenu();
     };
+    const onPageMenu = (event: MouseEvent): void => onContextMenu(event);
+
+    // Документы iframe того же сайта: в каждый ставятся те же слушатели, что и в страницу.
+    // После перехода внутри iframe документ новый, его подхватывает событие load
+    const frameCleanups = new Map<Document, () => void>();
+    const watchedFrames = new WeakSet<HTMLIFrameElement>();
+    function frameDocument(frame: HTMLIFrameElement): Document | null {
+        try {
+            const doc = frame.contentDocument;
+            return doc && doc.defaultView && doc.location.origin === location.origin ? doc : null;
+        } catch {
+            return null;
+        }
+    }
+    function attachFrame(frame: HTMLIFrameElement): void {
+        if (!watchedFrames.has(frame)) {
+            watchedFrames.add(frame);
+            frame.addEventListener('load', () => {
+                if (!disposed) attachFrame(frame);
+            });
+        }
+        const doc = frameDocument(frame);
+        if (!doc || frameCleanups.has(doc)) return;
+        const onMenu = (event: MouseEvent): void => onContextMenu(event, frame);
+        doc.addEventListener('contextmenu', onMenu);
+        doc.addEventListener('mousedown', onOutside, true);
+        doc.addEventListener('keydown', onDocumentKey);
+        doc.addEventListener('scroll', onScroll, true);
+        frameCleanups.set(doc, () => {
+            doc.removeEventListener('contextmenu', onMenu);
+            doc.removeEventListener('mousedown', onOutside, true);
+            doc.removeEventListener('keydown', onDocumentKey);
+            doc.removeEventListener('scroll', onScroll, true);
+        });
+    }
+    function watchFrames(): void {
+        for (const frame of document.querySelectorAll('iframe')) attachFrame(frame);
+        // Ушедшие документы iframe: слушатели снимать уже не с кого, запись только занимает память
+        for (const doc of [...frameCleanups.keys()]) if (!doc.defaultView) frameCleanups.delete(doc);
+    }
 
     function mount(): void {
         const home = location.pathname === '/discover' || location.pathname === '/';
@@ -1928,6 +2209,7 @@ export function installWave(config: WaveConfig): void {
         if (!frame) frame = requestAnimationFrame(() => {
             frame = 0;
             try {
+                watchFrames();
                 mount();
             } catch (error) {
                 console.error('Волна: блок не встал', error);
@@ -1978,7 +2260,9 @@ export function installWave(config: WaveConfig): void {
         seedRequest++;
         observer.disconnect();
         themeObserver.disconnect();
-        document.removeEventListener('contextmenu', onContextMenu);
+        for (const cleanup of frameCleanups.values()) cleanup();
+        frameCleanups.clear();
+        document.removeEventListener('contextmenu', onPageMenu);
         document.removeEventListener('mousedown', onOutside, true);
         document.removeEventListener('keydown', onDocumentKey);
         window.removeEventListener('blur', closeMenu);
@@ -1993,6 +2277,9 @@ export function installWave(config: WaveConfig): void {
         if (paintTimer !== undefined) clearInterval(paintTimer);
         if (journalTimer !== undefined) clearTimeout(journalTimer);
         flushJournal();
+        finishPlay('stop');
+        if (signalsTimer !== undefined) clearTimeout(signalsTimer);
+        flushSignals();
         document.removeEventListener('scroll', onScroll, true);
         window.removeEventListener('pagehide', dispose);
         hideTip();
@@ -2009,7 +2296,7 @@ export function installWave(config: WaveConfig): void {
     };
     window.addEventListener('pagehide', dispose, { once: true });
     document.addEventListener('scroll', onScroll, true);
-    document.addEventListener('contextmenu', onContextMenu);
+    document.addEventListener('contextmenu', onPageMenu);
     document.addEventListener('mousedown', onOutside, true);
     document.addEventListener('keydown', onDocumentKey);
     window.addEventListener('blur', closeMenu);
@@ -2017,6 +2304,7 @@ export function installWave(config: WaveConfig): void {
     observer.observe(document.documentElement, { childList: true, subtree: true });
     themeObserver.observe(document.documentElement, { attributes: true, attributeFilter: ['class'] });
     state = 'loading';
+    watchFrames();
     mount();
     attach();
 }
@@ -2025,7 +2313,7 @@ export function installWave(config: WaveConfig): void {
 const pageHelpers = [
     normalizeTag, genreKeys, parseGenres, formatGenres, genreKeysFor, classifyLink, canonicalUrl, trackMatchesGenre, trackArtist,
     isWaveEligible, acceptCandidate, trackSignature, pickSpaced, shuffleInPlace, topGenres, fillText, reasonText, shapeSamples,
-    artworkUrl, formatTime,
+    artworkUrl, formatTime, playEnd, siteSource,
 ];
 
 export function waveScript(): string {

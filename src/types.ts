@@ -27,6 +27,55 @@ export interface TrackInfo {
 }
 
 /**
+ * Сведения о текущем треке из модели сайта: для шаблонов и фильтров карточки Discord
+ */
+export interface TrackMeta {
+    id: number;
+    /** Ссылка на трек, по ней метаданные сверяются с TrackInfo */
+    url: string;
+    genre: string;
+    tags: string;
+    plays: number;
+    likes: number;
+    /** Имя загрузившего на SoundCloud */
+    artist: string;
+    avatar: string;
+    artwork: string;
+    /** Подпись волны, если трек играет из неё, иначе пусто */
+    wave: string;
+}
+
+/**
+ * Одно прослушивание трека для журнала сигналов волны
+ */
+export interface PlaySignal {
+    /** Начало прослушивания, мс от эпохи */
+    at: number;
+    id: number;
+    artist: number;
+    /** Длительность трека, мс */
+    dur: number;
+    /** Где остановился, мс */
+    pos: number;
+    /** Сколько реально играло без перемоток, мс */
+    heard: number;
+    /** done: дослушал, skip: ушёл раньше, stop: закрыта страница или клиент */
+    end: 'done' | 'skip' | 'stop';
+    /** wave:similar, wave:fresh, wave:track, wave:artist, wave:playlist или site:<тип очереди сайта> */
+    source: string;
+    /** Почему волна взяла трек: вид причины */
+    why: string;
+    /** Лайк стоял к концу прослушивания */
+    liked: boolean;
+    /** Лайк поставлен во время прослушивания */
+    likedNow: boolean;
+    disliked: boolean;
+    hiddenArtist: boolean;
+    genre: string;
+    tags: string;
+}
+
+/**
  * Общие данные воспроизведения для интеграций
  */
 export interface PlaybackTrackData {

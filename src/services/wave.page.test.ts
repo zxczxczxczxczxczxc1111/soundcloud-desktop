@@ -6,7 +6,9 @@ import { afterEach, beforeEach, expect, it, vi } from 'vitest';
 import { waveScript, type WaveTrack } from './wave';
 
 // Поддельный сайт: плеер, API и модель трека через тот же webpackJsonp, что у SoundCloud
-interface FakeItem { sound: { id: number }; explicit?: boolean }
+interface FakeItem { sound: { id: number; currentTime?(): number; getMediaDuration?(): number }; explicit?: boolean; sourceInfo?: { type: string } }
+// Позиция играющего трека, мс: тест двигает её сам
+let position = 0;
 type Extra = (name: string, path: Record<string, unknown>, query: Record<string, unknown>) => unknown;
 function fakeSite(related: (seed: number) => WaveTrack[], extra: Extra = () => undefined) {
     let items: FakeItem[] = [];
@@ -21,15 +23,17 @@ function fakeSite(related: (seed: number) => WaveTrack[], extra: Extra = () => u
     }
     class Sound {
         id: number;
+        attributes: WaveTrack;
         constructor(json: WaveTrack) {
             this.id = json.id;
+            this.attributes = json;
         }
         isSnippetized(): boolean { return false; }
         isBlocked(): boolean { return false; }
         isPlayable(): boolean { return true; }
         seek(): void {}
         getMediaDuration(): number { return 200000; }
-        currentTime(): number { return 0; }
+        currentTime(): number { return position; }
     }
     const queue = {
         model: Item,
@@ -80,6 +84,7 @@ function fakeSite(related: (seed: number) => WaveTrack[], extra: Extra = () => u
 
 beforeEach(() => {
     vi.useFakeTimers();
+    position = 0;
     history.replaceState(null, '', '/discover');
     localStorage.clear();
     document.body.innerHTML = '<div class="l-content"><div class="modular-home-mixed-selection"></div></div>';
@@ -93,6 +98,7 @@ afterEach(() => {
     delete (window as unknown as Record<string, unknown>).soundcloudAPI;
     Reflect.deleteProperty(HTMLElement.prototype, 'offsetParent');
     vi.unstubAllGlobals();
+    vi.restoreAllMocks();
     vi.useRealTimers();
     document.body.innerHTML = '';
 });
@@ -278,6 +284,8 @@ it('волна по треку, который уже играет: он дои�
 });
 
 it('ПКМ по артисту: волна от его треков, его треки в подборке', async () => {
+    // Свои 6 треков тасуются с 21 похожим: без закреплённой случайности в первые 10 они не попадают в ~4% прогонов
+    vi.spyOn(Math, 'random').mockReturnValue(0.5);
     const site = fakeSite(relatedTracks, siteExtra);
     fakeExclusions();
     const row = listRow();
@@ -408,4 +416,90 @@ it('на русском сайте пишет по-русски и помнит 
     expect(JSON.parse(localStorage.getItem('scDesktopWave') ?? '{}').mode).toBe('fresh');
     expect(section.querySelector('[data-mode="fresh"]')?.getAttribute('aria-checked')).toBe('true');
     delete (window as unknown as Record<string, unknown>).__scSiteTranslation;
+});
+
+// Мост в main: журнал сигналов и сведения о треке для Discord
+function fakeBridge() {
+    const bridge = { waveSignals: { add: vi.fn() }, sendTrackMeta: vi.fn() };
+    Object.assign(window, { soundcloudAPI: bridge });
+    return bridge;
+}
+async function playFor(ms: number): Promise<void> {
+    for (let passed = 0; passed < ms; passed += 1000) {
+        position += 1000;
+        await vi.advanceTimersByTimeAsync(1000);
+    }
+}
+
+it('журнал сигналов: где ушёл, сколько прозвучало, откуда трек; дослушанный отмечен', async () => {
+    const site = fakeSite(relatedTracks);
+    const bridge = fakeBridge();
+    window.eval(waveScript());
+    await vi.advanceTimersByTimeAsync(100);
+    document.querySelector<HTMLButtonElement>('#sc-wave .scw-play')!.click();
+    await vi.advanceTimersByTimeAsync(1000);
+    await playFor(40000);
+    // Перемотка вперёд не считается прослушанным
+    position += 60000;
+    await vi.advanceTimersByTimeAsync(1000);
+    const queued = site.player.replaceQueue.mock.calls[0][0] as FakeItem[];
+    position = 0;
+    site.setItems(queued, 1);
+    await vi.advanceTimersByTimeAsync(1000);
+    // Трек не из волны: тип очереди сайта, дослушан до конца
+    site.setItems([{ sound: { id: 5, currentTime: () => position, getMediaDuration: () => 200000 }, sourceInfo: { type: 'playlist' } }], 0);
+    await vi.advanceTimersByTimeAsync(1000);
+    await vi.advanceTimersByTimeAsync(6000);
+    const signals = bridge.waveSignals.add.mock.calls.flatMap(([userId, list]) => (userId === 77 ? list : []));
+    expect(signals[0]).toEqual(expect.objectContaining({
+        id: queued[0].sound.id, end: 'skip', source: 'wave:similar', why: 'similar', dur: 200000, liked: false, disliked: false,
+    }));
+    expect(signals[0].heard).toBeGreaterThanOrEqual(39000);
+    expect(signals[0].heard).toBeLessThanOrEqual(41000);
+    expect(signals[0].pos).toBeGreaterThanOrEqual(100000);
+    // Второй трек сменили, не дав ему прозвучать секунду: сигнала нет
+    expect(signals.some((signal: { id: number }) => signal.id === queued[1].sound.id)).toBe(false);
+
+    position = 0;
+    await playFor(190000);
+    site.setItems([{ sound: { id: 6 } }], 0);
+    await vi.advanceTimersByTimeAsync(7000);
+    const later = bridge.waveSignals.add.mock.calls.flatMap(([, list]) => list);
+    expect(later.find((signal: { id: number }) => signal.id === 5)).toEqual(expect.objectContaining({ end: 'done', source: 'site:playlist', why: '' }));
+});
+
+it('сведения о треке для Discord: жанр, счётчики и подпись волны', async () => {
+    const tracks = (seed: number): WaveTrack[] => relatedTracks(seed).map((track) => ({ ...track, genre: 'Techno', playback_count: 1500, likes_count: 3 } as WaveTrack));
+    fakeSite(tracks);
+    const bridge = fakeBridge();
+    window.eval(waveScript());
+    await vi.advanceTimersByTimeAsync(100);
+    document.querySelector<HTMLButtonElement>('#sc-wave .scw-play')!.click();
+    await vi.advanceTimersByTimeAsync(1100);
+    expect(bridge.sendTrackMeta).toHaveBeenLastCalledWith(expect.objectContaining({ genre: 'Techno', plays: 1500, likes: 3, wave: 'My Wave · Similar' }));
+    const calls = bridge.sendTrackMeta.mock.calls.length;
+    await vi.advanceTimersByTimeAsync(3000);
+    // Без изменений повторно не шлётся
+    expect(bridge.sendTrackMeta.mock.calls.length).toBe(calls);
+});
+
+it('«Встряхнуть»: впереди другие треки, играющий не прерывается', async () => {
+    const site = fakeSite(relatedTracks);
+    window.eval(waveScript());
+    await vi.advanceTimersByTimeAsync(100);
+    const section = document.getElementById('sc-wave')!;
+    section.querySelector<HTMLButtonElement>('.scw-play')!.click();
+    await vi.advanceTimersByTimeAsync(1100);
+    const current = site.player.getCurrentSound()?.id;
+    const ahead = (): number[] => site.player.getQueue().slice(site.player.getQueueState().currentIndex + 1).map((item) => item.sound.id);
+    const before = ahead();
+    const shake = section.querySelector<HTMLButtonElement>('[data-act="shake"]')!;
+    expect(shake.getAttribute('aria-label')).toBe('Shake up');
+    shake.click();
+    await vi.advanceTimersByTimeAsync(1100);
+    const after = ahead();
+    expect(site.player.getCurrentSound()?.id).toBe(current);
+    expect(after.length).toBeGreaterThan(0);
+    expect(after.filter((id) => before.includes(id))).toEqual([]);
+    expect(site.player.replaceQueue).toHaveBeenCalledTimes(1);
 });

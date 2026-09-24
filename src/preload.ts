@@ -207,6 +207,16 @@ contextBridge.exposeInMainWorld('soundcloudAPI', {
             ipcRenderer.send('soundcloud:wave-journal:add', userId, ids);
         },
     },
+    // Журнал сигналов: как слушался каждый трек, события проверяет main
+    waveSignals: {
+        add: (userId: number, signals: unknown[]) => {
+            ipcRenderer.send('soundcloud:wave-signals:add', userId, signals);
+        },
+    },
+    // Жанр, счётчики и волна текущего трека для карточки Discord
+    sendTrackMeta: (meta: unknown) => {
+        ipcRenderer.send('soundcloud:track-meta', meta);
+    },
     // Отметки «Не нравится» и скрытых артистов, ввод проверяет main
     waveExclusions: {
         load: (userId: number): Promise<unknown> => ipcRenderer.invoke('soundcloud:wave-exclusions:load', userId),
