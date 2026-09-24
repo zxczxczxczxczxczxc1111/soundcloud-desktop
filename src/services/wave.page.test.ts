@@ -567,3 +567,39 @@ it('«Встряхнуть» не возвращает другую версию
     expect(after.length).toBeGreaterThan(0);
     expect(after.filter((title) => title.startsWith('Tune') && heard.includes(title))).toEqual([]);
 });
+
+it('ожидание рисует заготовки плиток; обложка берёт цвет из кэша плавности и проявляется поверх', async () => {
+    const withArt = (seed: number): WaveTrack[] => relatedTracks(seed).map((track) => ({
+        ...track, permalink_url: 'https://soundcloud.com/a/t' + track.id, artwork_url: 'https://i1.sndcdn.com/artworks-' + track.id + '-large.jpg',
+    }));
+    fakeSite(withArt);
+    const learned: string[] = [];
+    const scope = window as unknown as Record<string, unknown>;
+    const originalImage = scope.Image;
+    // Картинка «загружается» сразу, цвет знает кэш плавности сайта
+    scope.Image = class {
+        onload: (() => void) | null = null;
+        onerror: (() => void) | null = null;
+        set src(_value: string) { queueMicrotask(() => this.onload?.()); }
+    };
+    Object.assign(window, { __scmCoverColor: (key: string) => (key.startsWith('/a/t') ? '#123456' : undefined), __scmLearnCover: (key: string) => learned.push(key) });
+    try {
+        window.eval(waveScript());
+        const waiting = document.querySelector<HTMLElement>('#sc-wave .scw-tiles');
+        expect(waiting?.classList.contains('wait')).toBe(true);
+        expect(waiting?.querySelectorAll('.scw-tile')).toHaveLength(5);
+        expect(waiting?.style.getPropertyValue('--scw-wait-delay')).toBe('150ms');
+        await vi.advanceTimersByTimeAsync(100);
+        const tiles = document.querySelector('#sc-wave .scw-tiles');
+        expect(tiles?.classList.contains('wait')).toBe(false);
+        const arts = [...document.querySelectorAll<HTMLElement>('#sc-wave .scw-tile[data-track] .scw-art')];
+        expect(arts).toHaveLength(5);
+        expect(arts.every((art) => art.style.backgroundColor === 'rgb(18, 52, 86)')).toBe(true);
+        expect(arts.every((art) => art.querySelector('.scw-img.on')?.getAttribute('style')?.includes('-t300x300.jpg'))).toBe(true);
+        expect(learned).toEqual(expect.arrayContaining(arts.map((art) => '/a/t' + art.closest<HTMLElement>('.scw-tile')?.dataset.track)));
+    } finally {
+        scope.Image = originalImage;
+        delete scope.__scmCoverColor;
+        delete scope.__scmLearnCover;
+    }
+});

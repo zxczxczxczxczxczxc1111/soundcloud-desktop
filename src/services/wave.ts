@@ -359,6 +359,9 @@ interface WaveWindow extends Window {
     __disposeWave?: () => void;
     __scWaveExclusionsChanged?: () => void;
     __scWaveTakeSignals?: () => { userId: number; signals: PlaySignal[] };
+    // Кэш средних цветов обложек из плавности сайта (pageMotion), ключ это путь трека
+    __scmCoverColor?: (key: string) => string | undefined;
+    __scmLearnCover?: (key: string, url: string) => void;
     __scSiteTranslation?: { language?: string };
     soundcloudAPI?: {
         waveJournal?: WaveJournalApi;
@@ -1417,14 +1420,25 @@ export function installWave(config: WaveConfig): void {
         '#sc-wave .scw-like:hover{background:var(--scw-film-strong)}',
         '.scw-like[aria-pressed="true"] svg{fill:#ff5500}',
         '#sc-wave .scw-btn{height:32px;padding:0 12px;border-radius:4px;background:var(--scw-surface);font-weight:600}',
-        '.scw-cover{width:200px;height:200px;flex:none;background:var(--scw-tile) center/cover}',
+        '.scw-cover{position:relative;width:200px;height:200px;flex:none;background:var(--scw-tile)}',
         '.scw-cover.collage{display:grid;grid-template-columns:1fr 1fr}',
-        '.scw-cover.collage>span{background:var(--scw-tile) center/cover}',
+        '.scw-cover.collage>span{position:relative;background:var(--scw-tile)}',
+        // Картинка проявляется поверх подложки со средним цветом обложки
+        '.scw-img{position:absolute;inset:0;background:center/cover;opacity:0;transition:opacity .2s cubic-bezier(.2,0,0,1)}',
+        '.scw-img.on{opacity:1}',
         '.scw-up-h{color:var(--scw-muted);margin:32px 0 12px}',
         '.scw-tiles{display:grid;grid-template-columns:repeat(5,minmax(0,1fr));gap:28px}',
-        '.scw-tiles.wait{opacity:.35;pointer-events:none}',
+        // Ожидание: заготовки той же формы, полосы поверх строк, высота плиток не меняется
+        '.scw-tiles.wait{pointer-events:none;animation:scw-fade .2s cubic-bezier(.2,0,0,1) var(--scw-wait-delay,150ms) backwards}',
+        '.scw-tiles.wait.held{animation:none}',
+        '@keyframes scw-fade{from{opacity:0}}',
+        '.scw-tiles.wait .scw-t1,.scw-tiles.wait .scw-t2,.scw-tiles.wait .scw-t3{position:relative}',
+        '.scw-tiles.wait .scw-t1::after,.scw-tiles.wait .scw-t2::after,.scw-tiles.wait .scw-t3::after{content:"";position:absolute;left:0;top:22%;bottom:22%;border-radius:3px;background:var(--scw-film)}',
+        '.scw-tiles.wait .scw-t1::after{width:70%}',
+        '.scw-tiles.wait .scw-t2::after{width:45%}',
+        '.scw-tiles.wait .scw-t3::after{width:60%}',
         '.scw-tile{min-width:0;cursor:pointer}',
-        '.scw-art{aspect-ratio:1;background:var(--scw-tile) center/cover;margin-bottom:8px}',
+        '.scw-art{position:relative;aspect-ratio:1;background:var(--scw-tile);margin-bottom:8px}',
         '.scw-t1{font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}',
         '.scw-t2{color:var(--scw-muted);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}',
         '.scw-t3{font-size:12px;line-height:16px;color:var(--scw-faint);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;margin-top:2px}',
@@ -1446,6 +1460,8 @@ export function installWave(config: WaveConfig): void {
         'html.theme-light .scw-toast{background:#fff;color:#121212;box-shadow:0 4px 12px rgba(0,0,0,.18)}',
         '.scw-toast.on{opacity:1}',
         '@media (prefers-reduced-motion:reduce){.scw-tip,.scw-toast{transition:none}.scw-menu{animation:none}}',
+        // «Меньше движения» в F1: без масштаба меню, растворения остаются
+        'html.scm-reduce .scw-menu{animation:none}',
     ].join('\n');
     const MENU_ICON: Record<string, string> = {
         wave: '<svg viewBox="0 0 16 16" aria-hidden="true"><path d="M1 6.5h1.5v3H1zM4 4.5h1.5v7H4zM7 2h1.5v12H7zM10 5h1.5v6H10zM13 7h1.5v2H13z"/></svg>',
@@ -1487,8 +1503,32 @@ export function installWave(config: WaveConfig): void {
         node.dataset.act = act;
         return node;
     }
-    const art = (node: HTMLElement, url: string): void => {
-        if (url) node.style.backgroundImage = 'url("' + url.replace(/["\\]/g, '') + '")';
+    // Обложка слоем поверх подложки: до загрузки средний цвет из кэша, картинка проявляется один раз.
+    // render() пересобирает секцию целиком, поэтому уже загруженные адреса ставятся сразу, без проявления
+    const loadedArt = new Set<string>();
+    const coverPath = (track: WaveTrack): string => canonicalUrl(track.permalink_url).replace(/^https:\/\/soundcloud\.com/, '');
+    const art = (node: HTMLElement, track: WaveTrack, size: 't300x300' | 't500x500'): void => {
+        const url = artworkUrl(track, size);
+        if (!url) return;
+        const key = coverPath(track);
+        const color = key ? host.__scmCoverColor?.(key) : undefined;
+        if (color) node.style.backgroundColor = color;
+        const image = el('span', 'scw-img');
+        image.style.backgroundImage = 'url("' + url.replace(/["\\]/g, '') + '")';
+        node.append(image);
+        if (loadedArt.has(url)) {
+            image.classList.add('on');
+            return;
+        }
+        const probe = new Image();
+        probe.onload = () => {
+            if (loadedArt.size > 500) loadedArt.clear();
+            loadedArt.add(url);
+            image.classList.add('on');
+            if (key) host.__scmLearnCover?.(key, url);
+        };
+        probe.onerror = () => image.classList.add('on');
+        probe.src = url;
     };
     const artistName = (track: WaveTrack): string => track.user?.username ?? '';
     const hintText = (): string => {
@@ -1595,19 +1635,29 @@ export function installWave(config: WaveConfig): void {
         }
         return pop;
     }
+    let waitSince = 0;
     function renderTiles(): HTMLElement[] {
         if (state === 'empty' || state === 'error' || state === 'unavailable') return [];
         const waiting = state === 'loading' && !active;
         const list = upcoming(5);
         if (!waiting && !list.length) return [];
         const tiles = el('div', 'scw-tiles' + (waiting ? ' wait' : ''));
+        // Заготовки появляются через 150 мс от начала ожидания; пересборка секции продолжает то же появление
+        if (!waiting) waitSince = 0;
+        else {
+            const now = Date.now();
+            if (!waitSince) waitSince = now;
+            const elapsed = now - waitSince;
+            if (elapsed > 350) tiles.classList.add('held');
+            else tiles.style.setProperty('--scw-wait-delay', 150 - elapsed + 'ms');
+        }
         for (let i = 0; i < 5; i++) {
             const candidate = waiting ? undefined : list[i];
             if (!waiting && !candidate) break;
             const tile = el('div', 'scw-tile');
             if (candidate) tile.dataset.track = String(candidate.track.id);
             const cover = el('div', 'scw-art');
-            if (candidate) art(cover, artworkUrl(candidate.track, 't300x300'));
+            if (candidate) art(cover, candidate.track, 't300x300');
             tile.append(
                 cover,
                 el('div', 'scw-t1', candidate?.track.title ?? '\u00a0'),
@@ -1658,12 +1708,12 @@ export function installWave(config: WaveConfig): void {
         } else if (state === 'error') meta.append(textButton('retry', T.retry));
         info.append(top, canvas, meta);
         const cover = el('div', 'scw-cover');
-        if (current) art(cover, artworkUrl(current.track, 't500x500'));
+        if (current) art(cover, current.track, 't500x500');
         else {
             cover.classList.add('collage');
             for (let i = 0; i < 4; i++) {
                 const cell = el('span', '');
-                if (state === 'idle' && preview[i]) art(cell, artworkUrl(preview[i].track, 't300x300'));
+                if (state === 'idle' && preview[i]) art(cell, preview[i].track, 't300x300');
                 cover.append(cell);
             }
         }
