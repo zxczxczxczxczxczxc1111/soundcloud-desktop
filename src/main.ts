@@ -13,6 +13,7 @@ import { pageFeaturesScript } from './services/pageFeatures';
 import { fullShuffleScript } from './services/fullShuffle';
 import { homeBlockDefaults, homeBlocksCss, homePageScript, isHomeBlockKey } from './services/homeBlocks';
 import { waveScript } from './services/wave';
+import { pageMotionScript } from './services/pageMotion';
 import { WaveJournal } from './services/waveJournal';
 import { WaveExclusions } from './services/waveExclusions';
 import { WaveSignals } from './services/waveSignals';
@@ -126,6 +127,7 @@ const store = new Store<Record<string, unknown>>({
         hideEventsNearYou: true,
         hideArtistUpsells: true,
         fullShuffle: true,
+        reduceMotion: false,
         siteLanguage: 'ru',
         ...homeBlockDefaults,
         accounts: [{ id: 'default', name: 'Основной аккаунт' }],
@@ -1062,6 +1064,8 @@ async function init() {
             // Inject audio monitoring script
             await contentView.webContents.executeJavaScript(audioMonitorScript);
             await contentView.webContents.executeJavaScript(fullShuffleScript(store.get('fullShuffle', true) === true));
+            // Плавность раньше волны: волна берёт у неё цвета обложек
+            await contentView.webContents.executeJavaScript(pageMotionScript(store.get('reduceMotion', false) === true));
             await contentView.webContents.executeJavaScript(homePageScript());
             await contentView.webContents.executeJavaScript(waveScript());
 
@@ -1150,6 +1154,8 @@ async function init() {
             applyThemeToContent(isDarkTheme);
         } else if (key === 'fullShuffle') {
             void contentView.webContents.executeJavaScript(fullShuffleScript(data.value === true)).catch(console.error);
+        } else if (key === 'reduceMotion') {
+            void contentView.webContents.executeJavaScript(pageMotionScript(data.value === true)).catch(console.error);
         }
         // Предпросмотр карточки в F1 собирает main: шаблоны, стоп-листы, строка под ником, язык чисел
         if (key.startsWith('discord') || key.startsWith('display') || key === 'statusDisplayType' || key === 'trackParserEnabled' || key === 'siteLanguage') sendPresencePreview();

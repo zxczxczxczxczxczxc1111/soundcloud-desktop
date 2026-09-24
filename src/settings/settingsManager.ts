@@ -16,6 +16,7 @@ const defaults: Record<string, string | number | boolean> = {
     hideEventsNearYou: true,
     hideArtistUpsells: true,
     fullShuffle: true,
+    reduceMotion: false,
     siteLanguage: 'ru',
     ...homeBlockDefaults,
     adBlocker: true,

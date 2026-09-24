@@ -487,6 +487,9 @@ async function initializeSettings() {
     document.getElementById('fullShuffle')?.addEventListener('change', (e) => {
         ipcRenderer.send('setting-changed', { key: 'fullShuffle', value: e.target.checked });
     });
+    document.getElementById('reduceMotion')?.addEventListener('change', (e) => {
+        ipcRenderer.send('setting-changed', { key: 'reduceMotion', value: e.target.checked });
+    });
 
     // Перевод сайта ставится до его скриптов, поэтому сайт ждёт перезагрузки, а панель переводится сразу.
     // Строки обновлений main присылает заново уже на новом языке
