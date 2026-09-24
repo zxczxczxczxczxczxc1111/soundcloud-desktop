@@ -3,7 +3,7 @@
     padding: 0;
     box-sizing: border-box;
 }
-/* Цвета как у сайта SoundCloud: тёмная #121212, светлая белая; всё прочее белым или чёрным с альфой */
+/* Цвета как у тёмного сайта SoundCloud: фон #121212, всё прочее белым с альфой */
 :root {
     --bg: #121212;
     --text: rgba(255, 255, 255, 0.92);
@@ -11,14 +11,6 @@
     --track: rgba(255, 255, 255, 0.1);
     --film: rgba(255, 255, 255, 0.08);
     --focus: rgba(255, 255, 255, 0.9);
-}
-html.theme-light {
-    --bg: #ffffff;
-    --text: rgba(0, 0, 0, 0.88);
-    --text-secondary: rgba(0, 0, 0, 0.6);
-    --track: rgba(0, 0, 0, 0.1);
-    --film: rgba(0, 0, 0, 0.05);
-    --focus: rgba(0, 0, 0, 0.85);
 }
 html,
 body {

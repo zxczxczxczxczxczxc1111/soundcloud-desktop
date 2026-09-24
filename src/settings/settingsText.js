@@ -13,7 +13,6 @@ window.SETTINGS_EN = {
     'Аккаунт': 'Account',
     'Дополнительно': 'Advanced',
 
-    'Тёмная тема': 'Dark theme',
     'Сворачивать в трей': 'Minimize to tray',
     'Кнопки навигации в шапке': 'Navigation buttons in the title bar',
     'Меньше анимаций': 'Reduce motion',

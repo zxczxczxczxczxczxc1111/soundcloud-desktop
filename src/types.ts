@@ -135,7 +135,6 @@ export interface NormalizedTrackInfo {
  */
 export interface Translations {
     client: string;
-    darkMode: string;
     adBlocker: string;
     enableAdBlocker: string;
     changesAppRestart: string;

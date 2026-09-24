@@ -8,7 +8,6 @@ import type { ThemeColors } from '../utils/colorExtractor';
 import { join } from 'path';
 
 const defaults: Record<string, string | number | boolean> = {
-    theme: 'dark',
     minimizeToTray: false,
     navigationControlsEnabled: false,
     trackParserEnabled: true,

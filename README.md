@@ -180,8 +180,6 @@ module.exports = {
     // track: { title, author, isPlaying, ... }
     onTrackChange(track) {},
 
-    onThemeChange(isDark) {},
-
     // Строка с кодом, который выполняется на странице SoundCloud
     // при каждой загрузке и навигации.
     contentScript() {
@@ -196,7 +194,7 @@ module.exports = {
 };
 ```
 
-Хуки `onEnable`, `onDisable`, `onTrackChange` и `onThemeChange` крутятся в отдельном процессе, до окна им не дотянуться. На страницу попадает только строка из `contentScript`.
+Хуки `onEnable`, `onDisable` и `onTrackChange` крутятся в отдельном процессе, до окна им не дотянуться. На страницу попадает только строка из `contentScript`.
 
 ### Своя тема
 

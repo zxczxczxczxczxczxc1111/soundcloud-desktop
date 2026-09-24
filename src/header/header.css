@@ -36,16 +36,6 @@ body {
     --scrollbar-thumb-hover: rgba(255, 255, 255, 0.3);
 }
 
-html.theme-light {
-    --header-bg: #ffffff;
-    --header-text: #333333;
-    --header-accent: #ff5500;
-    --hover-bg: rgba(0, 0, 0, 0.1);
-    --scrollbar-bg: rgba(0, 0, 0, 0.05);
-    --scrollbar-thumb: rgba(0, 0, 0, 0.2);
-    --scrollbar-thumb-hover: rgba(0, 0, 0, 0.3);
-}
-
 .custom-header {
     display: flex;
     justify-content: space-between;
@@ -267,56 +257,4 @@ body.platform-win32 .windows-controls {
     --scrollbar-bg: rgba(255, 255, 255, 0.05);
     --scrollbar-thumb: rgba(255, 255, 255, 0.2);
     --scrollbar-thumb-hover: rgba(255, 255, 255, 0.3);
-}
-
-html.theme-light {
-    --header-bg: #ffffff;
-    --header-text: #333333;
-    --header-accent: #ff5500;
-    --hover-bg: rgba(0, 0, 0, 0.1);
-    --scrollbar-bg: rgba(0, 0, 0, 0.05);
-    --scrollbar-thumb: rgba(0, 0, 0, 0.2);
-    --scrollbar-thumb-hover: rgba(0, 0, 0, 0.3);
-}
-
-html.theme-light .custom-header {
-    background-color: var(--header-bg);
-    color: var(--header-text);
-}
-
-html.theme-light .nav-button svg {
-    color: var(--header-text);
-}
-
-html.theme-light .nav-button:hover {
-    background-color: var(--hover-bg);
-}
-
-html.theme-light .windows-controls .control svg,
-html.theme-light .theme-toggle svg {
-    color: var(--header-text);
-}
-
-html.theme-light .windows-controls .control svg path,
-html.theme-light .theme-toggle svg path {
-    fill: currentColor;
-    stroke: currentColor;
-}
-
-html.theme-light .windows-controls .close:hover {
-    background-color: #e81123 !important;
-}
-
-html.theme-light .windows-controls .close:hover .icon-glyph {
-    color: #ffffff !important;
-}
-
-html.theme-light:root {
-    --header-bg: #ffffff;
-    --header-text: #333333;
-    --header-accent: #ff5500;
-    --hover-bg: rgba(0, 0, 0, 0.1);
-    --scrollbar-bg: rgba(0, 0, 0, 0.05);
-    --scrollbar-thumb: rgba(0, 0, 0, 0.2);
-    --scrollbar-thumb-hover: rgba(0, 0, 0, 0.3);
 }

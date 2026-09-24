@@ -218,10 +218,6 @@
         fmtWd = new Intl.DateTimeFormat(state.lang, { weekday: 'short', day: 'numeric', month: 'long' });
         document.title = T.title;
     }
-    function setTheme(dark) {
-        document.documentElement.classList.toggle('theme-light', dark === false);
-    }
-
     const ICON = {
         wave: '<svg width="14" height="14" viewBox="0 0 14 14" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"><path d="M1 7c1.5-3.5 3-3.5 4 0s2.5 3.5 4 0 2.5-3.5 4 0"/></svg>',
         like: '<svg width="14" height="14" viewBox="0 0 14 14" fill="currentColor"><path d="M7 12.3 5.9 11.3C2.8 8.5 1 6.8 1 4.7 1 3 2.3 1.7 4 1.7c.9 0 1.9.4 2.5 1.1h1c.6-.7 1.6-1.1 2.5-1.1 1.7 0 3 1.3 3 3 0 2.1-1.8 3.8-4.9 6.6z"/></svg>',
@@ -658,7 +654,7 @@
         tip.hidden = true;
     });
 
-    // Названия старых треков добрались, язык или тема сменились
+    // Названия старых треков добрались, язык сменился
     api.on('history:changed', async () => {
         if (!state.loaded || state.failed) return;
         await reload(false);
@@ -668,14 +664,12 @@
         setLanguage(lang);
         render(true);
     });
-    api.on('theme-changed', (dark) => setTheme(dark));
 
     async function start() {
         setLanguage(document.documentElement.lang);
         try {
             const init = await api.invoke('history:init');
             setLanguage(init.language);
-            setTheme(init.dark);
             state.signedIn = init.signedIn === true;
             if (state.signedIn) await reload(true);
             else state.loaded = true;

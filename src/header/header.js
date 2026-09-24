@@ -1,4 +1,3 @@
-/* eslint-disable */
 const ipcRenderer = {
     send: (channel, ...args) => window.headerAPI.send(channel, ...args),
     invoke: (channel, ...args) => window.headerAPI.invoke(channel, ...args),
@@ -7,12 +6,10 @@ const ipcRenderer = {
 const platform = window.headerAPI.platform;
 
 let isMaximized = false;
-let isDarkTheme = true;
 let canGoBack = false;
 let canGoForward = false;
 let isRefreshing = false;
 let navButtons = null;
-let themeColors = null;
 let minimizeGlyphEl = null;
 let maximizeGlyphEl = null;
 let closeGlyphEl = null;
@@ -48,7 +45,6 @@ function applyTexts(next) {
 }
 
 function applyThemeColors(colors) {
-    themeColors = colors;
     if (!colors) {
         // Reset to default - remove custom properties so CSS theme classes take effect
         document.documentElement.style.removeProperty('--header-bg');
@@ -210,25 +206,6 @@ document.querySelector('.title-bar')?.addEventListener('dblclick', () => {
     ipcRenderer.send('title-bar-double-click');
     isMaximized = !isMaximized;
     updateWindowControls();
-});
-
-// Listen for theme changes
-ipcRenderer.on('theme-changed', (_, isDark) => {
-    isDarkTheme = isDark;
-    if (isDark) {
-        document.documentElement.classList.remove('theme-light');
-    } else {
-        document.documentElement.classList.add('theme-light');
-    }
-
-    // If no custom theme colors are applied, reset inline styles to use CSS variables
-    if (!themeColors) {
-        const header = document.querySelector('.custom-header');
-        if (header) {
-            header.style.removeProperty('background-color');
-            header.style.removeProperty('color');
-        }
-    }
 });
 
 // Listen for theme color updates

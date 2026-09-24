@@ -156,8 +156,6 @@ function getAccounts(): Account[] {
     return accounts;
 }
 
-let isDarkTheme = store.get('theme') !== 'light';
-
 // Global variables
 let mainWindow: BrowserWindow;
 let notificationManager: NotificationManager;
@@ -488,7 +486,7 @@ function createBrowserWindow(windowState: ReturnType<typeof windowStateManager>)
             backgroundThrottling: true,
             ...(isMac ? { spellcheck: false } : {}),
         },
-        backgroundColor: isDarkTheme ? '#121212' : '#ffffff',
+        backgroundColor: '#121212',
     });
 
     window.webContents.setUserAgent(globalUserAgent);
@@ -662,17 +660,6 @@ function setupWindowControls() {
         }
     });
 
-    ipcMain.on('toggle-theme', (event) => {
-            if (!isTrustedLocalSender(event)) return;
-
-        isDarkTheme = !isDarkTheme;
-        if (headerView && headerView.webContents) {
-            headerView.webContents.send('theme-changed', isDarkTheme);
-        }
-        historyManager?.setTheme(isDarkTheme);
-        applyThemeToContent(isDarkTheme);
-    });
-
     // Подсказки кнопок шапки на языке приложения
     ipcMain.handle('get-header-texts', (event) => {
         if (!isTrustedLocalSender(event)) throw new Error('Недопустимый отправитель IPC');
@@ -733,7 +720,6 @@ function handleUpdateStatus(status: UpdateStatus): void {
         percent,
         later: translationService.translate('updateScreenLater'),
         installing,
-        dark: isDarkTheme,
     });
     if (installing && !updateService?.installNow()) closeUpdateScreen();
 }
@@ -876,7 +862,7 @@ async function init() {
     pluginService.setContentView(contentView);
     // hot reload custom theme CSS when files change
     themeService.onCustomThemeUpdated(() => {
-        applyThemeToContent(isDarkTheme);
+        applyThemeToContent();
     });
     notificationManager = new NotificationManager(mainWindow, focusTopView);
     settingsManager = new SettingsManager(
@@ -1046,7 +1032,6 @@ async function init() {
         site: () => (contentView.webContents.isDestroyed() ? null : contentView.webContents),
         fallbackUser: () => waveExclusions?.currentUser() ?? 0,
         language: appLanguage,
-        dark: () => isDarkTheme,
         beforeOpen: () => {
             if (settingsManager.getView()) settingsManager.toggle();
         },
@@ -1069,7 +1054,7 @@ async function init() {
             if (!isTrustedLocalSender(event)) return;
 
         settingsManager.toggle();
-        applyThemeToContent(isDarkTheme);
+        applyThemeToContent();
     });
     ipcMain.removeAllListeners('toggle-history');
     ipcMain.on('toggle-history', (event) => {
@@ -1137,7 +1122,7 @@ async function init() {
 
     initializeShortcuts();
 
-    setupThemeHandlers();
+    applyThemeToContent();
     ipcMain.handle('export-diagnostics', async (event) => {
         if (!isTrustedLocalSender(event)) throw new Error('Недопустимый отправитель IPC');
         const result = await dialog.showSaveDialog(mainWindow, {
@@ -1254,7 +1239,7 @@ async function init() {
     async function reinitializeAfterPageLoad() {
         try {
             // Reapply theme to content after page reload
-            applyThemeToContent(isDarkTheme);
+            applyThemeToContent();
 
             // Inject audio monitoring script
             await contentView.webContents.executeJavaScript(audioMonitorScript);
@@ -1346,9 +1331,9 @@ async function init() {
                 themeService.applyCustomTheme(data.value);
             }
             // Re-apply the theme to all content
-            applyThemeToContent(isDarkTheme);
+            applyThemeToContent();
         } else if (key === 'hidePromotions' || key === 'hideEventsNearYou' || key === 'hideArtistUpsells' || isHomeBlockKey(key)) {
-            applyThemeToContent(isDarkTheme);
+            applyThemeToContent();
         } else if (key === 'fullShuffle') {
             void contentView.webContents.executeJavaScript(fullShuffleScript(data.value === true)).catch(console.error);
         } else if (key === 'reduceMotion') {
@@ -1462,48 +1447,8 @@ async function init() {
 
 
 
-function setupThemeHandlers() {
-    // load initial theme from store
-    isDarkTheme = store.get('theme', 'dark') === 'dark';
-
-    // send initial theme to all views
-    if (headerView && headerView.webContents) {
-        headerView.webContents.send('theme-changed', isDarkTheme);
-    }
-    if (settingsManager) {
-        settingsManager.getView()?.webContents.send('theme-changed', isDarkTheme);
-    }
-    historyManager?.setTheme(isDarkTheme);
-    applyThemeToContent(isDarkTheme);
-
-    // Listen for theme changes from settings or header
-    ipcMain.on('setting-changed', (_, data) => {
-            if (!isTrustedLocalSender(_)) return;
-            if (!validateSettingChange(data)) return;
-
-        if (data.key === 'theme') {
-            isDarkTheme = data.value === 'dark';
-            store.set('theme', data.value);
-
-            if (pluginService) {
-                pluginService.notifyThemeChange(isDarkTheme);
-            }
-
-            // Update all views
-            if (headerView && headerView.webContents) {
-                headerView.webContents.send('theme-changed', isDarkTheme);
-            }
-            if (settingsManager) {
-                settingsManager.getView()?.webContents.send('theme-changed', isDarkTheme);
-            }
-            historyManager?.setTheme(isDarkTheme);
-            applyThemeToContent(isDarkTheme);
-        }
-    });
-}
-
 const viewStyles = new ViewStyles();
-function applyThemeToContent(isDark: boolean) {
+function applyThemeToContent() {
     if (!contentView || contentView.webContents.isDestroyed()) return;
     const sections = splitThemeCSS(themeService.getCurrentCustomThemeCSS());
     const themeColors = themeService.getCurrentThemeColors();
@@ -1511,9 +1456,9 @@ function applyThemeToContent(isDark: boolean) {
     settingsManager?.setThemeColors(themeColors);
     headerView?.webContents.send('theme-colors-changed', themeColors);
     const css = [
-        ':root{--background-base:' + (isDark ? '#121212' : '#ffffff') + ';--background-surface:' + (isDark ? '#212121' : '#f2f2f2') + ';--text-base:' + (isDark ? '#ffffff' : '#333333') + ';}',
+        ':root{--background-base:#121212;--background-surface:#212121;--text-base:#ffffff;}',
         // Стандартные свойства: ::-webkit-scrollbar рисуется главным потоком и отстаёт от прокрутки.
-        'html{scrollbar-width:thin;scrollbar-color:' + (isDark ? 'rgba(255,255,255,.2) rgba(255,255,255,.05)' : 'rgba(0,0,0,.2) rgba(0,0,0,.05)') + '}',
+        'html{scrollbar-width:thin;scrollbar-color:rgba(255,255,255,.2) rgba(255,255,255,.05)}',
         store.get('hidePromotions', true) ? '.banner.m-promotion{display:none!important}' : '',
         store.get('hideEventsNearYou', true) ? '.velvetCakeModule{display:none!important}' : '',
         homeBlocksCss((key) => store.get(key, homeBlockDefaults[key]) === true),
@@ -1523,7 +1468,7 @@ function applyThemeToContent(isDark: boolean) {
     // До первой загрузки сайта страницы нет: стили и скрипты всё равно пропали бы, их ставит did-finish-load
     if (contentView.webContents.getURL()) {
         void viewStyles.apply(contentView.webContents, css).catch(console.error);
-        void contentView.webContents.executeJavaScript('document.documentElement.classList.toggle("theme-light",' + JSON.stringify(!isDark) + ');document.documentElement.classList.toggle("theme-dark",' + JSON.stringify(isDark) + ');document.body.classList.toggle("theme-light",' + JSON.stringify(!isDark) + ');document.body.classList.toggle("theme-dark",' + JSON.stringify(isDark) + ');').catch(console.error);
+        void contentView.webContents.executeJavaScript('for(const n of [document.documentElement,document.body]){n.classList.remove("theme-light");n.classList.add("theme-dark")}').catch(console.error);
         void contentView.webContents.executeJavaScript(pageFeaturesScript(store.get('hideArtistUpsells', true) === true)).catch(console.error);
     }
     if (headerView) void viewStyles.apply(headerView.webContents, sections.all + '\n' + sections.header).catch(console.error);
@@ -1718,7 +1663,6 @@ function setupTranslationHandlers() {
 
         return {
             client: translationService.translate('client'),
-            darkMode: translationService.translate('darkMode'),
             adBlocker: translationService.translate('adBlocker'),
             enableAdBlocker: translationService.translate('enableAdBlocker'),
             changesAppRestart: translationService.translate('changesAppRestart'),

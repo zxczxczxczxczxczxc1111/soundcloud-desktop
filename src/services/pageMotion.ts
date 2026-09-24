@@ -332,7 +332,6 @@ export function installPageMotion(config: PageMotionConfig): void {
 export function pageMotionCss(): string {
     return [
         ':root{--scm-film:rgba(255,255,255,.06);--scm-ease:cubic-bezier(.2,0,0,1)}',
-        'html.theme-light{--scm-film:rgba(0,0,0,.05)}',
         // Обложка до загрузки: средний цвет из кэша или нейтральная подложка вместо пастельного градиента
         'html .sc-artwork[class*="sc-artwork-placeholder-"]{background-image:none;background-color:var(--scm-cover,var(--scm-film))}',
         'html .image .sc-artwork.g-opacity-transition{transition:opacity .2s var(--scm-ease)}',

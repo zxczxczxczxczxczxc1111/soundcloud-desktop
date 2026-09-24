@@ -24,29 +24,6 @@
     --font: Söhne, system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif;
     color-scheme: dark;
 }
-html.theme-light {
-    --bg: #ffffff;
-    --surface: #f2f2f2;
-    --text: #333333;
-    --muted: #707070;
-    --faint: #767676;
-    --film: rgba(0, 0, 0, 0.04);
-    --film-strong: rgba(0, 0, 0, 0.08);
-    --line: rgba(0, 0, 0, 0.1);
-    --mark: rgba(0, 0, 0, 0.45);
-    --mark-idle: rgba(0, 0, 0, 0.1);
-    --focus: #121212;
-    --tip-bg: #121212;
-    --tip-text: #ffffff;
-    /* Чёрный с альфой поверх белого, проверена validate_palette --ordinal --mode light */
-    --h0: rgba(0, 0, 0, 0.05);
-    --h1: rgba(0, 0, 0, 0.3);
-    --h2: rgba(0, 0, 0, 0.45);
-    --h3: rgba(0, 0, 0, 0.6);
-    --h4: rgba(0, 0, 0, 0.75);
-    --h5: rgba(0, 0, 0, 0.9);
-    color-scheme: light;
-}
 * {
     box-sizing: border-box;
     margin: 0;

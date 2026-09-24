@@ -1793,7 +1793,6 @@ export function installWave(config: WaveConfig): void {
     };
     const CSS = [
         '#sc-wave{--scw-surface:#303030;--scw-muted:#999;--scw-faint:#757575;--scw-film:rgba(255,255,255,.06);--scw-film-strong:rgba(255,255,255,.1);--scw-btn:#fff;--scw-btn-ink:#121212;--scw-tile:rgba(255,255,255,.06);position:relative;margin:0 0 48px 16px;font-size:14px;line-height:20px}',
-        'html.theme-light #sc-wave{--scw-surface:#f2f2f2;--scw-muted:#666;--scw-faint:#999;--scw-film:rgba(0,0,0,.05);--scw-film-strong:rgba(0,0,0,.08);--scw-btn:#121212;--scw-btn-ink:#fff;--scw-tile:rgba(0,0,0,.05)}',
         '#sc-wave button{font:inherit;color:inherit;background:none;border:0;cursor:pointer;padding:0}',
         '#sc-wave :focus-visible{outline:2px solid currentColor;outline-offset:2px}',
         '#sc-wave svg{display:block}',
@@ -1864,7 +1863,6 @@ export function installWave(config: WaveConfig): void {
         '.scw-t2{color:var(--scw-muted);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}',
         '.scw-t3{font-size:12px;line-height:16px;color:var(--scw-faint);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;margin-top:2px}',
         '.scw-tip{position:fixed;z-index:2147483000;max-width:300px;padding:6px 8px;border-radius:4px;background:#303030;color:#fff;box-shadow:0 4px 12px rgba(0,0,0,.45);font-size:12px;line-height:16px;pointer-events:none;opacity:0;transition:opacity .12s}',
-        'html.theme-light .scw-tip{background:#fff;color:#121212;box-shadow:0 4px 12px rgba(0,0,0,.18)}',
         '.scw-tip.on{opacity:1}',
         '.scw-tip b{display:block;font-weight:600}',
         '.scw-tip span{display:block;opacity:.7}',
@@ -1878,7 +1876,6 @@ export function installWave(config: WaveConfig): void {
         '.scw-menu .scw-mi:focus{box-shadow:none;outline:none}',
         '.scw-menu .scw-mi:focus-visible{outline:2px solid currentColor;outline-offset:-2px}',
         '.scw-toast{position:fixed;left:50%;bottom:72px;z-index:2147483000;transform:translateX(-50%);max-width:420px;padding:8px 12px;border-radius:4px;background:#303030;color:#fff;box-shadow:0 4px 12px rgba(0,0,0,.45);font-size:14px;line-height:20px;pointer-events:none;opacity:0;transition:opacity .15s}',
-        'html.theme-light .scw-toast{background:#fff;color:#121212;box-shadow:0 4px 12px rgba(0,0,0,.18)}',
         '.scw-toast.on{opacity:1}',
         '@media (prefers-reduced-motion:reduce){.scw-tip,.scw-toast{transition:none}.scw-menu{animation:none}}',
         // «Меньше анимаций» в F1: без масштаба меню, растворения остаются
@@ -2200,8 +2197,7 @@ export function installWave(config: WaveConfig): void {
         const context = canvas.getContext('2d');
         if (!context) return;
         context.scale(ratio, ratio);
-        const light = document.documentElement.classList.contains('theme-light');
-        const ink = (alpha: number): string => (light ? 'rgba(0,0,0,' : 'rgba(255,255,255,') + alpha + ')';
+        const ink = (alpha: number): string => 'rgba(255,255,255,' + alpha + ')';
         const current = currentCandidate();
         let samples: Array<number | null> | null = null;
         let look: 'live' | 'dim' | 'flat' = 'flat';
@@ -2747,8 +2743,6 @@ export function installWave(config: WaveConfig): void {
             }
         });
     });
-    // Смена темы на паузе: форма волны иначе остаётся нарисованной цветом прошлой темы
-    const themeObserver = new MutationObserver(() => paint());
     let tickTimer: ReturnType<typeof setInterval> | undefined;
     let paintTimer: ReturnType<typeof setInterval> | undefined;
     let attempts = 0;
@@ -2790,7 +2784,6 @@ export function installWave(config: WaveConfig): void {
         generation++;
         seedRequest++;
         observer.disconnect();
-        themeObserver.disconnect();
         for (const cleanup of frameCleanups.values()) cleanup();
         frameCleanups.clear();
         document.removeEventListener('contextmenu', onPageMenu);
@@ -2848,7 +2841,6 @@ export function installWave(config: WaveConfig): void {
     window.addEventListener('blur', closeMenu);
     window.addEventListener('resize', closeMenu);
     observer.observe(document.documentElement, { childList: true, subtree: true });
-    themeObserver.observe(document.documentElement, { attributes: true, attributeFilter: ['class'] });
     state = 'loading';
     watchFrames();
     mount();

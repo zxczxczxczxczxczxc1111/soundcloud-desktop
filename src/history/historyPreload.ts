@@ -2,7 +2,7 @@ import { contextBridge, ipcRenderer, type IpcRendererEvent } from 'electron';
 
 const SEND_CHANNELS = new Set(['history:ready', 'history:close', 'history:artist']);
 const INVOKE_CHANNELS = new Set(['history:init', 'history:overview', 'history:day', 'history:search', 'history:play', 'history:taste', 'history:taste-remove']);
-const ON_CHANNELS = new Set(['history:changed', 'history:language', 'theme-changed']);
+const ON_CHANNELS = new Set(['history:changed', 'history:language']);
 
 contextBridge.exposeInMainWorld('historyAPI', {
     send: (channel: string, ...args: unknown[]) => {

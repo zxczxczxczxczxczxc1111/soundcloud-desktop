@@ -111,10 +111,9 @@ export function installFullShuffle(enabled: boolean, texts: Record<'ru' | 'en', 
                 'pointer-events:none;white-space:nowrap;box-shadow:0 4px 12px rgba(0,0,0,.3);transition:opacity .15s;opacity:0';
             document.body.appendChild(status);
         }
-        const light = document.documentElement.classList.contains('theme-light');
-        status.style.background = light ? '#ffffff' : '#2a2a2a';
-        status.style.color = light ? 'rgba(0,0,0,.87)' : 'rgba(255,255,255,.87)';
-        status.style.border = '1px solid ' + (light ? 'rgba(0,0,0,.1)' : 'rgba(255,255,255,.08)');
+        status.style.background = '#2a2a2a';
+        status.style.color = 'rgba(255,255,255,.87)';
+        status.style.border = '1px solid rgba(255,255,255,.08)';
         const button = document.querySelector('.shuffleControl');
         const rect = button?.getBoundingClientRect();
         status.style.left = (rect && rect.width ? rect.left + rect.width / 2 : window.innerWidth / 2) + 'px';

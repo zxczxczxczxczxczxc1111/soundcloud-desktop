@@ -1,7 +1,7 @@
 import { utilityProcess, type UtilityProcess } from 'electron';
 import { join } from 'path';
 
-export type PluginCommand = { kind: 'load'; source: string; filename: string } | { kind: 'track'; track: Record<string, unknown> } | { kind: 'theme'; isDark: boolean } | { kind: 'disable' };
+export type PluginCommand = { kind: 'load'; source: string; filename: string } | { kind: 'track'; track: Record<string, unknown> } | { kind: 'disable' };
 
 export class PluginProcess {
     private child: UtilityProcess;
@@ -52,11 +52,6 @@ export class PluginProcess {
             }
         } catch (error) { if (!this.closed) this.fail(error instanceof Error ? error : new Error(String(error))); }
         finally { this.trackBusy = false; }
-    }
-    public notifyTheme(isDark: boolean): void {
-        void this.request({ kind: 'theme', isDark }).catch((error: unknown) => {
-            if (!this.closed) this.fail(error instanceof Error ? error : new Error(String(error)));
-        });
     }
     private terminate(): void {
         this.closed = true;

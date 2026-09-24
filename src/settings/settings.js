@@ -18,10 +18,8 @@ async function initializeSettings() {
         event.preventDefault();
         ipcRenderer.send('toggle-settings');
     });
-    document.getElementById('darkMode').checked = initial.theme !== 'light';
     document.getElementById('useArtistInStatusLineToggle').checked = initial.statusDisplayType === 1;
     document.getElementById('siteLanguage').value = initial.siteLanguage === 'en' ? 'en' : 'ru';
-    document.documentElement.classList.toggle('theme-light', initial.theme === 'light');
     for (const [id, setting] of [
         ['proxyFields', 'proxyEnabled'],
         ['webhookFields', 'webhookEnabled'],
@@ -645,13 +643,6 @@ async function initializeSettings() {
         toggle.setAttribute('aria-expanded', String(expand));
     });
 
-    document.getElementById('darkMode')?.addEventListener('change', (e) => {
-        const isDark = e.target.checked;
-        ipcRenderer.send('setting-changed', { key: 'theme', value: isDark ? 'dark' : 'light' });
-        document.documentElement.classList.toggle('theme-light', !isDark);
-        document.documentElement.classList.toggle('theme-dark', isDark);
-    });
-
     document.getElementById('minimizeToTray')?.addEventListener('change', (e) => {
         ipcRenderer.send('setting-changed', { key: 'minimizeToTray', value: e.target.checked });
     });
@@ -978,12 +969,6 @@ async function initializeSettings() {
     // external event triggers
     ipcRenderer.on('presence-preview-update', (_, preview) => {
         updatePreview(preview);
-    });
-
-    ipcRenderer.on('theme-changed', (_, isDark) => {
-        const dm = document.getElementById('darkMode');
-        if (dm) dm.checked = isDark;
-        document.documentElement.classList.toggle('theme-light', !isDark);
     });
 
     ipcRenderer.on('update-translations', () => {

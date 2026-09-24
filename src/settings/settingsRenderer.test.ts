@@ -57,7 +57,7 @@ function updateState(language: 'ru' | 'en'): Record<string, unknown> {
 }
 
 it('загружает настройки из IPC и подключает закрытие без встроенных скриптов', async () => {
-    const { send } = await openSettings({ theme: 'dark', statusDisplayType: 1, proxyEnabled: true, proxyHost: 'localhost', webhookEnabled: false });
+    const { send } = await openSettings({ statusDisplayType: 1, proxyEnabled: true, proxyHost: 'localhost', webhookEnabled: false });
     expect((document.getElementById('useArtistInStatusLineToggle') as HTMLInputElement).checked).toBe(true);
     expect((document.getElementById('proxyHost') as HTMLInputElement).value).toBe('localhost');
     await vi.waitFor(() => expect(document.getElementById('updateStatus')?.textContent).toBe('Установлена последняя версия.'));
@@ -67,7 +67,7 @@ it('загружает настройки из IPC и подключает за�
 });
 
 it('блоки главной переключаются сразу, язык сайта просит перезагрузку', async () => {
-    const { send } = await openSettings({ theme: 'dark', siteLanguage: 'en', homeMore: false, homeRecent: true });
+    const { send } = await openSettings({ siteLanguage: 'en', homeMore: false, homeRecent: true });
     const more = document.getElementById('homeMore') as HTMLInputElement;
     expect(more.checked).toBe(false);
     expect((document.getElementById('homeRecent') as HTMLInputElement).checked).toBe(true);
@@ -93,7 +93,7 @@ it('блоки главной переключаются сразу, язык с
 
 it('показывает исключённое из волны и возвращает трек', async () => {
     const { invoke } = await openSettings(
-        { theme: 'dark' },
+        {},
         { tracks: [{ id: 5, title: '<b>Трек</b>', artist: 'Артист', url: '', at: 1 }], artists: [] },
     );
     const tracks = document.getElementById('waveExcludedTracks') as HTMLElement;
@@ -126,7 +126,7 @@ function russianLeft(): string[] {
 }
 
 it('переводит панель на английский и обратно без перезагрузки', async () => {
-    const { send, emit } = await openSettings({ theme: 'dark', siteLanguage: 'ru' }, { tracks: [], artists: [{ id: 7, title: 'Станции', artist: '', url: '', at: 1 }] });
+    const { send, emit } = await openSettings({ siteLanguage: 'ru' }, { tracks: [], artists: [{ id: 7, title: 'Станции', artist: '', url: '', at: 1 }] });
     const artists = document.getElementById('waveExcludedArtists') as HTMLElement;
     await vi.waitFor(() => expect(artists.querySelector('button')?.textContent).toBe('Вернуть'));
     expect(document.documentElement.lang).toBe('ru');
@@ -162,7 +162,7 @@ it('переводит панель на английский и обратно 
 });
 
 it('открывается сразу на английском, если сайт английский', async () => {
-    await openSettings({ theme: 'dark', siteLanguage: 'en' });
+    await openSettings({ siteLanguage: 'en' });
     expect(document.getElementById('settingsTitle')?.textContent).toBe('Settings');
     await vi.waitFor(() => expect(document.getElementById('waveExcludedTracks')?.textContent).toBe('Empty'));
     expect(document.getElementById('proxyHost')?.getAttribute('placeholder')).toBe('Host');
@@ -170,7 +170,7 @@ it('открывается сразу на английском, если сай
 });
 
 it('строки карточки: метка встаёт под курсор, ввод сохраняется одной отправкой, «Как было» возвращает шаблон', async () => {
-    const { send } = await openSettings({ theme: 'dark', discordLine1: '{track} · {genre}', discordHiddenArtists: 'Art' });
+    const { send } = await openSettings({ discordLine1: '{track} · {genre}', discordHiddenArtists: 'Art' });
     const line1 = document.getElementById('discordLine1') as HTMLInputElement;
     const line2 = document.getElementById('discordLine2') as HTMLInputElement;
     const artists = document.getElementById('discordHiddenArtists') as HTMLTextAreaElement;
@@ -206,7 +206,7 @@ it('строки карточки: метка встаёт под курсор, 
 });
 
 it('предпросмотр рисует карточку из main и объясняет, почему её нет', async () => {
-    const { send, emit } = await openSettings({ theme: 'dark', discordIncognito: false });
+    const { send, emit } = await openSettings({ discordIncognito: false });
     const track = { title: 'Song', author: 'Art', duration: '3:00', elapsed: '0:10', isPlaying: false, artwork: '', url: 'https://soundcloud.com/art/song' };
     emit('presence-preview-update', {
         track,
@@ -240,7 +240,7 @@ it('предпросмотр рисует карточку из main и объя
 });
 
 it('скачанное обновление можно поставить из F1 с перезапуском', async () => {
-    const { invoke, emit } = await openSettings({ theme: 'dark' });
+    const { invoke, emit } = await openSettings({});
     const install = document.getElementById('installUpdate') as HTMLButtonElement;
     await vi.waitFor(() => expect(document.getElementById('updateStatus')?.textContent).toBe('Установлена последняя версия.'));
     expect(install.hidden).toBe(true);
@@ -255,7 +255,7 @@ it('скачанное обновление можно поставить из F
 });
 
 it('волна на главной включается с вкладки «Моя волна»', async () => {
-    const { send } = await openSettings({ theme: 'dark', homeWave: true });
+    const { send } = await openSettings({ homeWave: true });
     const wave = document.getElementById('homeWave') as HTMLInputElement;
     expect(wave.closest('section')?.id).toBe('wave');
     expect(wave.checked).toBe(true);

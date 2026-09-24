@@ -31,20 +31,6 @@ select {
     --focus: rgba(255, 255, 255, 0.9);
     --link-color: #5bb7ff;
 }
-html.theme-light {
-    --bg-primary: #ffffff;
-    --bg-secondary: rgba(245, 245, 245, 0.7);
-    --text-primary: #333333;
-    --text-secondary: rgba(0, 0, 0, 0.7);
-    --text-muted: rgba(0, 0, 0, 0.5);
-    --accent: rgba(0, 0, 0, 0.9);
-    --accent-muted: rgba(0, 0, 0, 0.6);
-    --border: rgba(0, 0, 0, 0.1);
-    --film: rgba(0, 0, 0, 0.04);
-    --film-strong: rgba(0, 0, 0, 0.08);
-    --focus: rgba(0, 0, 0, 0.85);
-    --link-color: #0088ff;
-}
 html,
 body {
     height: 100%;

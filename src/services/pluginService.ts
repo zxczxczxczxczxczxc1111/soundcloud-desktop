@@ -239,16 +239,6 @@ export class PluginService {
         }
     }
 
-    public notifyThemeChange(isDark: boolean): void {
-        for (const [id, runtime] of this.runtimes) {
-            try {
-                runtime.process.notifyTheme(isDark);
-            } catch (e) {
-                console.error(`[plugin:${id}] onThemeChange error:`, e);
-            }
-        }
-    }
-
     public dispose(): void {
         this.stopWatching?.();
         for (const id of this.runtimes.keys()) this.deactivatePlugin(id);

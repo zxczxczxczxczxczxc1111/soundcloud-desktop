@@ -17,7 +17,6 @@ export interface HistoryHost {
     /** Пользователь, если страница сайта его не назвала */
     fallbackUser(): number;
     language(): 'ru' | 'en';
-    dark(): boolean;
     /** Перед открытием: закрыть то, что история перекроет */
     beforeOpen(): void;
     onState(open: boolean): void;
@@ -81,7 +80,7 @@ export class HistoryManager {
                 }
                 void this.fill(this.userId);
             }
-            return { language: this.host.language(), dark: this.host.dark(), signedIn: this.userId > 0 };
+            return { language: this.host.language(), signedIn: this.userId > 0 };
         });
         ipcMain.handle('history:overview', (event, from: unknown, to: unknown) => {
             this.guard(event);
@@ -204,7 +203,7 @@ export class HistoryManager {
             },
         });
         this.view.setVisible(false);
-        this.view.setBackgroundColor(this.host.dark() ? '#121212' : '#ffffff');
+        this.view.setBackgroundColor('#121212');
         trustLocalFile(this.view.webContents, join(__dirname, 'history.html'));
         this.host.attach(this.view.webContents);
         this.parentWindow.contentView.addChildView(this.view);
@@ -232,11 +231,6 @@ export class HistoryManager {
         if (!this.view || this.view.webContents.isDestroyed()) return false;
         this.view.webContents.focus();
         return true;
-    }
-    public setTheme(dark: boolean): void {
-        if (!this.view) return;
-        this.view.setBackgroundColor(dark ? '#121212' : '#ffffff');
-        this.view.webContents.send('theme-changed', dark);
     }
     public setLanguage(language: 'ru' | 'en'): void {
         this.view?.webContents.send('history:language', language);

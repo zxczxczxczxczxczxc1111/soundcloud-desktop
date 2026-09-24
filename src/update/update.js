@@ -9,7 +9,6 @@
     later.addEventListener('click', () => api.later());
     api.onState((state) => {
         if (!state || typeof state !== 'object') return;
-        document.documentElement.classList.toggle('theme-light', state.dark === false);
         title.textContent = String(state.title || '');
         status.textContent = String(state.status || '');
         const percent = Math.max(0, Math.min(100, Number(state.percent) || 0));

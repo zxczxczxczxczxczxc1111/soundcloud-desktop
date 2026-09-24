@@ -20,7 +20,6 @@ const ON_CHANNELS = new Set([
     'navigation-controls-toggle',
     'navigation-state-changed',
     'refresh-state-changed',
-    'theme-changed',
     'theme-colors-changed',
     'window-maximized-changed',
 ]);

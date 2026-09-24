@@ -9,7 +9,6 @@ export interface UpdateScreenState {
     percent: number;
     later: string;
     installing: boolean;
-    dark: boolean;
 }
 
 // Экран «Загружаю обновление» поверх страницы, под шапкой: кнопки окна остаются доступны

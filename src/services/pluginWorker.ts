@@ -6,7 +6,6 @@ interface PluginExports {
     onEnable?: () => unknown;
     onDisable?: () => unknown;
     onTrackChange?: (track: Record<string, unknown>) => unknown;
-    onThemeChange?: (isDark: boolean) => unknown;
     contentScript?: () => unknown;
 }
 let plugin: PluginExports = {};
@@ -37,7 +36,6 @@ process.parentPort.on('message', async ({ data }: { data: { id: number; command:
             value = await plugin.contentScript?.();
             if (value !== undefined && typeof value !== 'string') throw new Error('contentScript должен возвращать строку');
         } else if (command.kind === 'track') value = await plugin.onTrackChange?.(command.track);
-        else if (command.kind === 'theme') value = await plugin.onThemeChange?.(command.isDark);
         else if (command.kind === 'disable') { await plugin.onDisable?.(); clearTimers(); plugin = {}; }
         process.parentPort.postMessage({ id, ok: true, value });
     } catch (error) {
