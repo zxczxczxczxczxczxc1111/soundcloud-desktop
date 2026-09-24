@@ -6,7 +6,8 @@ import { artworkOf, text, trackPathOf } from './waveSignals';
 
 // Индекс истории прослушиваний поверх журнала сигналов. Первоисточник остаётся JSONL: индекс досинхронизируется
 // из него при открытии страницы истории и пересобирается целиком, если файла нет, схема сменилась или файл испорчен
-export const HISTORY_SCHEMA = 1;
+// 2: теги трека и лайк во время прослушивания для модели вкуса волны
+export const HISTORY_SCHEMA = 2;
 /** Трек засчитывается в топах и счётчиках с 30 секунд реально прозвучавшего звука */
 export const COUNTED_MS = 30000;
 const DAY = 86400000;
@@ -59,6 +60,23 @@ export interface HistoryOverview {
     total: number;
     firstAt: number | null;
 }
+/** Прослушивание для модели вкуса: исход, источник и метки трека */
+export interface TastePlay {
+    at: number;
+    id: number;
+    artist: number;
+    heard: number;
+    dur: number;
+    end: string;
+    source: string;
+    likedNow: boolean;
+    away: boolean;
+    genre: string;
+    tags: string;
+    artistName: string;
+    artwork: string;
+    path: string;
+}
 export interface ResolvedTrack {
     id: number;
     artist: number;
@@ -97,8 +115,8 @@ export function ftsQuery(value: unknown): string {
 
 const SCHEMA = [
     'create table if not exists meta(key text primary key, value integer not null)',
-    "create table if not exists tracks(id integer primary key, artist integer not null default 0, title text not null default '', artist_name text not null default '', path text not null default '', artwork text not null default '', genre text not null default '', dur integer not null default 0, resolved integer not null default 0)",
-    'create table if not exists plays(at integer not null, id integer not null, artist integer not null, heard integer not null, dur integer not null, end text not null, source text not null, liked integer not null, away integer not null, tz integer, primary key(at, id)) without rowid',
+    "create table if not exists tracks(id integer primary key, artist integer not null default 0, title text not null default '', artist_name text not null default '', path text not null default '', artwork text not null default '', genre text not null default '', tags text not null default '', dur integer not null default 0, resolved integer not null default 0)",
+    'create table if not exists plays(at integer not null, id integer not null, artist integer not null, heard integer not null, dur integer not null, end text not null, source text not null, liked integer not null, liked_now integer not null default 0, away integer not null, tz integer, primary key(at, id)) without rowid',
     'create index if not exists plays_id on plays(id)',
     'create index if not exists plays_artist on plays(artist, at)',
     'create index if not exists tracks_resolved on tracks(resolved)',
@@ -110,13 +128,14 @@ const FTS = [
     "create trigger if not exists tracks_au after update of title, artist_name on tracks begin insert into tracks_fts(tracks_fts, rowid, title, artist_name) values ('delete', old.id, old.title, old.artist_name); insert into tracks_fts(rowid, title, artist_name) values (new.id, new.title, new.artist_name); end",
 ];
 const UPSERT_TRACK =
-    'insert into tracks(id, artist, title, artist_name, path, artwork, genre, dur, resolved) values (?, ?, ?, ?, ?, ?, ?, ?, ?) on conflict(id) do update set ' +
+    'insert into tracks(id, artist, title, artist_name, path, artwork, genre, tags, dur, resolved) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?) on conflict(id) do update set ' +
     'artist = case when excluded.artist > 0 then excluded.artist else tracks.artist end, ' +
     "title = case when excluded.title != '' then excluded.title else tracks.title end, " +
     "artist_name = case when excluded.artist_name != '' then excluded.artist_name else tracks.artist_name end, " +
     "path = case when excluded.path != '' then excluded.path else tracks.path end, " +
     "artwork = case when excluded.artwork != '' then excluded.artwork else tracks.artwork end, " +
     "genre = case when excluded.genre != '' then excluded.genre else tracks.genre end, " +
+    "tags = case when excluded.tags != '' then excluded.tags else tracks.tags end, " +
     'dur = case when excluded.dur > 0 then excluded.dur else tracks.dur end, ' +
     "resolved = case when excluded.title != '' or tracks.title != '' then 1 else max(tracks.resolved, excluded.resolved) end";
 const ROW =
@@ -228,15 +247,18 @@ export class HistoryIndex {
         if (!signals.length) return 0;
         const { db } = handle;
         const upsert = db.prepare(UPSERT_TRACK);
-        const insert = db.prepare('insert or ignore into plays(at, id, artist, heard, dur, end, source, liked, away, tz) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)');
+        const insert = db.prepare('insert or ignore into plays(at, id, artist, heard, dur, end, source, liked, liked_now, away, tz) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)');
         let added = 0;
         let latest = 0;
         db.exec('begin');
         try {
             for (const signal of signals) {
                 const title = signal.title ?? '';
-                upsert.run(signal.id, signal.artist, title, signal.artistName ?? '', signal.path ?? '', signal.artwork ?? '', genreKey(signal.genre), signal.dur, title ? 1 : 0);
-                const result = insert.run(signal.at, signal.id, signal.artist, signal.heard, signal.dur, signal.end, signal.source, signal.liked || signal.likedNow ? 1 : 0, signal.away ? 1 : 0, signal.tz ?? null);
+                upsert.run(signal.id, signal.artist, title, signal.artistName ?? '', signal.path ?? '', signal.artwork ?? '', genreKey(signal.genre), text(signal.tags, 300), signal.dur, title ? 1 : 0);
+                const result = insert.run(
+                    signal.at, signal.id, signal.artist, signal.heard, signal.dur, signal.end, signal.source,
+                    signal.liked || signal.likedNow ? 1 : 0, signal.likedNow ? 1 : 0, signal.away ? 1 : 0, signal.tz ?? null,
+                );
                 added += num(result.changes);
                 latest = Math.max(latest, signal.at);
             }
@@ -283,7 +305,7 @@ export class HistoryIndex {
             const giveUp = db.prepare('update tracks set resolved = 2 where id = ? and resolved = 0');
             db.exec('begin');
             try {
-                for (const track of found) upsert.run(track.id, track.artist, track.title, track.artistName, track.path, track.artwork, track.genre, track.dur, 1);
+                for (const track of found) upsert.run(track.id, track.artist, track.title, track.artistName, track.path, track.artwork, track.genre, '', track.dur, 1);
                 const got = new Set(found.map((track) => track.id));
                 for (const id of wanted) if (!got.has(id)) giveUp.run(id);
                 db.exec('commit');
@@ -351,6 +373,33 @@ export class HistoryIndex {
                 firstAt,
             };
         });
+    }
+
+    /** Прослушивания с момента since для модели вкуса, старые сверху; закрытие клиента (stop) не сигнал */
+    public tastePlays(userId: unknown, since: number): TastePlay[] {
+        if (!isId(userId)) return [];
+        return this.guarded(userId, ({ db }) =>
+            (db.prepare(
+                "select p.at, p.id, p.artist, p.heard, p.dur, p.end, p.source, p.liked_now, p.away, coalesce(t.genre, '') as genre, coalesce(t.tags, '') as tags, " +
+                    "coalesce(t.artist_name, '') as artistName, coalesce(t.artwork, '') as artwork, coalesce(t.path, '') as path " +
+                    "from plays p left join tracks t on t.id = p.id where p.at >= ? and p.end != 'stop' order by p.at",
+            ).all(since) as Values[]).map((row) => ({
+                at: num(row.at),
+                id: num(row.id),
+                artist: num(row.artist),
+                heard: num(row.heard),
+                dur: num(row.dur),
+                end: str(row.end),
+                source: str(row.source),
+                likedNow: num(row.liked_now) === 1,
+                away: num(row.away) === 1,
+                genre: str(row.genre),
+                tags: str(row.tags),
+                artistName: str(row.artistName),
+                artwork: str(row.artwork),
+                path: str(row.path),
+            })),
+        );
     }
 
     /** Прослушивания за [from, to), новые сверху */

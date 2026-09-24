@@ -20,6 +20,7 @@ import { WaveExclusions } from './services/waveExclusions';
 import { WaveSignals } from './services/waveSignals';
 import { HistoryIndex } from './services/historyIndex';
 import { HistoryManager } from './history/historyManager';
+import { TasteService } from './services/tasteModel';
 import { AwayTracker } from './services/awayTracker';
 import { OPEN_PROTOCOL, parseOpenLink } from './services/openLink';
 import { getSiteDictionary } from './services/siteDictionary';
@@ -170,6 +171,7 @@ let waveJournal: WaveJournal | null = null;
 let waveExclusions: WaveExclusions | null = null;
 let waveSignals: WaveSignals | null = null;
 let historyManager: HistoryManager | null = null;
+let tasteService: TasteService | null = null;
 let presenceService: PresenceService;
 let webhookService: WebhookService;
 let updateService: UpdateService | null = null;
@@ -991,27 +993,32 @@ async function init() {
         presenceService.updateMeta(meta);
         sendPresencePreview();
     });
-    // «Не нравится» и скрытые артисты волны: отметки ставит страница, снимает и F1
-    waveExclusions = new WaveExclusions(path.join(app.getPath('userData'), 'wave'));
-    for (const channel of ['soundcloud:wave-exclusions:load', 'soundcloud:wave-exclusions:set', 'get-wave-exclusions', 'remove-wave-exclusion']) ipcMain.removeHandler(channel);
+    // Отметки волны («Не нравится», скрытые артисты, «Не сейчас», «Больше такого»): ставит страница, снимает и F1
+    const exclusions = new WaveExclusions(path.join(app.getPath('userData'), 'wave'));
+    waveExclusions = exclusions;
+    for (const channel of ['soundcloud:wave-exclusions:load', 'soundcloud:wave-exclusions:set', 'get-wave-exclusions', 'remove-wave-exclusion', 'soundcloud:wave-taste']) ipcMain.removeHandler(channel);
     ipcMain.handle('soundcloud:wave-exclusions:load', (event, userId: unknown) =>
-        isTrustedSoundCloudSender(event) ? waveExclusions?.load(userId) ?? null : null,
+        isTrustedSoundCloudSender(event) ? exclusions.load(userId) : null,
     );
     ipcMain.handle('soundcloud:wave-exclusions:set', (event, userId: unknown, kind: unknown, entry: unknown, excluded: unknown) => {
         if (!isTrustedSoundCloudSender(event)) return false;
-        const saved = waveExclusions?.set(userId, kind, entry, excluded) ?? false;
-        if (saved) settingsManager.getView()?.webContents.send('wave-exclusions-changed');
+        const saved = exclusions.set(userId, kind, entry, excluded);
+        if (saved) {
+            settingsManager.getView()?.webContents.send('wave-exclusions-changed');
+            // «Больше такого» учит модель вкуса, «Не нравится» снимает его с трека
+            tasteService?.invalidate(userId);
+        }
         return saved;
     });
     ipcMain.handle('get-wave-exclusions', (event) => {
         if (!isTrustedLocalSender(event)) throw new Error('Недопустимый отправитель IPC');
-        const userId = waveExclusions?.currentUser() ?? 0;
-        return userId ? waveExclusions?.load(userId) ?? null : { tracks: [], artists: [] };
+        return exclusions.load(exclusions.currentUser());
     });
     ipcMain.handle('remove-wave-exclusion', (event, kind: unknown, id: unknown) => {
         if (!isTrustedLocalSender(event)) throw new Error('Недопустимый отправитель IPC');
-        const userId = waveExclusions?.currentUser() ?? 0;
-        if (!waveExclusions?.set(userId, kind, { id }, false)) throw new Error('Отметка не снята');
+        const userId = exclusions.currentUser();
+        if (!exclusions.set(userId, kind, { id }, false)) throw new Error('Отметка не снята');
+        tasteService?.invalidate(userId);
         // Страница держит отметки у себя, поэтому перечитывает их по сигналу
         if (!contentView.webContents.isDestroyed())
             contentView.webContents.executeJavaScript('window.__scWaveExclusionsChanged && window.__scWaveExclusionsChanged()').catch((error: unknown) => {
@@ -1020,7 +1027,22 @@ async function init() {
     });
     // История прослушиваний: индекс поверх журнала сигналов, страница поверх сайта до его плеера
     historyManager?.dispose();
-    historyManager = new HistoryManager(mainWindow, new HistoryIndex(path.join(app.getPath('userData'), 'wave'), waveSignals), {
+    const historyIndex = new HistoryIndex(path.join(app.getPath('userData'), 'wave'), waveSignals);
+    // Модель вкуса волны по тому же индексу: профиль для страницы волны, вкус для страницы истории
+    tasteService = new TasteService(path.join(app.getPath('userData'), 'wave'), historyIndex, (userId) =>
+        exclusions.load(userId).more.map((entry) => ({ id: entry.id, artist: entry.artistId ?? 0, genre: entry.genre ?? '', tags: entry.tags ?? '', at: entry.at })),
+    );
+    const taste = tasteService;
+    ipcMain.handle('soundcloud:wave-taste', (event, userId: unknown) => {
+        if (!isTrustedSoundCloudSender(event)) return null;
+        try {
+            return taste.profile(userId);
+        } catch (error) {
+            console.warn('Вкус волны не посчитан:', error);
+            return null;
+        }
+    });
+    historyManager = new HistoryManager(mainWindow, historyIndex, taste, {
         site: () => (contentView.webContents.isDestroyed() ? null : contentView.webContents),
         fallbackUser: () => waveExclusions?.currentUser() ?? 0,
         language: appLanguage,

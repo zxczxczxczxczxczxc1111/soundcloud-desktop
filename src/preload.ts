@@ -229,10 +229,14 @@ contextBridge.exposeInMainWorld('soundcloudAPI', {
     sendTrackMeta: (meta: unknown) => {
         ipcRenderer.send('soundcloud:track-meta', meta);
     },
-    // Отметки «Не нравится» и скрытых артистов, ввод проверяет main
+    // Отметки волны: «Не нравится», скрытые артисты, «Не сейчас», «Больше такого»; ввод проверяет main
     waveExclusions: {
         load: (userId: number): Promise<unknown> => ipcRenderer.invoke('soundcloud:wave-exclusions:load', userId),
         set: (userId: number, kind: string, entry: object, excluded: boolean): Promise<unknown> =>
             ipcRenderer.invoke('soundcloud:wave-exclusions:set', userId, kind, entry, excluded),
+    },
+    // Профиль вкуса для порядка волны: считает main по истории прослушиваний
+    waveTaste: {
+        load: (userId: number): Promise<unknown> => ipcRenderer.invoke('soundcloud:wave-taste', userId),
     },
 });

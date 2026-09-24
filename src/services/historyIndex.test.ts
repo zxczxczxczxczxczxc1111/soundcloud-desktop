@@ -69,6 +69,22 @@ it('sync переносит журнал один раз и дальше чит�
     expect(index.day(USER, T0, T0 + 3 * HOUR).map((row) => row.id)).toEqual([13, 12, 11]);
 });
 
+it('модели вкуса уходят теги, лайк во время прослушивания и исход, без закрытий клиента', () => {
+    const journal = new Journal();
+    journal.list = [
+        signal({ genre: 'Techno', tags: '"dark techno" berlin', likedNow: true, liked: true }),
+        signal({ at: T0 + HOUR, id: 12, end: 'stop', heard: 20000 }),
+        signal({ at: T0 + 2 * HOUR, id: 13, end: 'skip', heard: 5000, source: 'site:single', away: true }),
+    ];
+    const index = open(journal);
+    index.sync(USER);
+    const plays = index.tastePlays(USER, 0);
+    expect(plays.map((item) => item.id)).toEqual([11, 13]);
+    expect(plays[0]).toMatchObject({ likedNow: true, genre: 'techno', tags: '"dark techno" berlin', end: 'done', source: 'wave:similar' });
+    expect(plays[1]).toMatchObject({ likedNow: false, away: true, end: 'skip', heard: 5000 });
+    expect(index.tastePlays(USER, T0 + HOUR).map((item) => item.id)).toEqual([13]);
+});
+
 it('чужой или кривой userId не открывает базу', () => {
     const index = open(new Journal());
     expect(index.sync(0)).toBe(0);

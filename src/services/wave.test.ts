@@ -2,8 +2,67 @@ import { describe, expect, it } from 'vitest';
 import {
     WAVE_TEXTS, acceptCandidate, artworkUrl, canonicalUrl, classifyLink, formatGenres, genreKeys, genreKeysFor, isWaveEligible,
     moodTags, normalizeTag, trackPath, parseGenres, pickSpaced, reasonText, shapeSamples, topGenres, trackMatchesGenre, trackSignature,
-    type WaveCandidate, type WaveFilter, type WaveTrack,
+    applyTasteReasons, tagKeys, tasteMaps, tasteOrder, tasteReason, type TasteMaps, type WaveCandidate, type WaveFilter, type WaveTrack,
 } from './wave';
+
+describe('вкус волны', () => {
+    const taste = (artists: Array<[number, number]>, tags: Array<[string, number]> = [], tracks: Array<[number, number]> = []): TasteMaps =>
+        tasteMaps({ artists, tags, tracks }) ?? { artists: new Map(), tags: new Map(), tracks: new Map() };
+    const item = (id: number, artist: number, extra: Partial<WaveTrack> = {}): WaveCandidate => ({
+        track: { id, kind: 'track', user_id: artist, duration: 180000, title: 'T' + id, ...extra },
+        reason: { kind: 'similar', seed: 'Seed' },
+    });
+
+    it('ключи тегов как у модели в main, профиль из main проверяется', () => {
+        expect(tagKeys('Drum & Bass', '"liquid dnb" chill Chill x')).toEqual(['drumandbass', 'liquiddnb', 'chill']);
+        expect(tasteMaps(null)).toBeNull();
+        const maps = tasteMaps({ artists: [[1, 2], [-1, 3], ['x', 1], [2, Infinity]], tags: [['techno', 1], ['', 2]], tracks: 'bad' });
+        expect([...(maps?.artists ?? [])]).toEqual([[1, 2]]);
+        expect([...(maps?.tags ?? [])]).toEqual([['techno', 1]]);
+        expect(maps?.tracks.size).toBe(0);
+    });
+
+    it('сильный минус отсеивается, любимое чаще встаёт вперёд, треть мест у новых артистов', () => {
+        const list = [item(1, 10), item(2, 20), item(3, 30, { genre: 'Techno' }), item(4, 40), item(5, 50), item(6, 60), item(7, 70), item(8, 80), item(9, 90), item(10, 100)];
+        const profile = taste([[10, 3], [20, 3], [30, 3], [40, 3], [50, 3], [60, 3], [70, 3]], [], [[9, -1.2]]);
+        let seed = 1;
+        const random = (): number => {
+            seed = (seed * 16807) % 2147483647;
+            return seed / 2147483647;
+        };
+        let loved = 0;
+        for (let run = 0; run < 200; run++) {
+            const ordered = tasteOrder(list, profile, random);
+            expect(ordered.map((entry) => entry.track.id)).not.toContain(9);
+            expect(ordered).toHaveLength(9);
+            // Новые артисты 80 и 100: хотя бы один в первых четырёх
+            const firstFour = ordered.slice(0, 4).map((entry) => entry.track.user_id);
+            expect(firstFour.some((artist) => artist === 80 || artist === 100)).toBe(true);
+            if ([10, 20, 30, 40, 50, 60, 70].includes(ordered[0].track.user_id ?? 0)) loved++;
+        }
+        expect(loved).toBeGreaterThan(150);
+    });
+
+    it('причина по вкусу: любимый артист, иначе любимый тег, похожее на зерно без вкуса не трогается', () => {
+        const profile = taste([[10, 1.5], [30, 0.1]], [['darktechno', 2]]);
+        const byArtist = item(1, 10, { user: { id: 10, username: 'Artist' } });
+        const byTag = item(2, 20, { tag_list: '"Dark Techno" berlin' });
+        const plain = item(3, 30, { genre: 'house' });
+        expect(tasteReason(byArtist, profile)).toEqual({ kind: 'tasteArtist', artist: 'Artist' });
+        expect(tasteReason(byTag, profile)).toEqual({ kind: 'tasteTag', genre: 'dark techno' });
+        expect(tasteReason(plain, profile)).toBeNull();
+        expect(tasteReason({ ...byArtist, reason: { kind: 'artistTrack', artist: 'X' } }, profile)).toBeNull();
+        expect(reasonText({ kind: 'tasteTag', genre: 'dark techno' }, WAVE_TEXTS.ru)).toBe('В духе dark techno, который ты любишь');
+    });
+
+    it('причина по вкусу достаётся только заметной трети подборки', () => {
+        const profile = taste([], [['techno', 2]]);
+        const list = Array.from({ length: 10 }, (_, i) => item(i + 1, 100 + i, { genre: 'techno' }));
+        applyTasteReasons(list, profile);
+        expect(list.filter((entry) => entry.reason.kind === 'tasteTag')).toHaveLength(3);
+        expect(list.filter((entry) => entry.reason.kind === 'similar')).toHaveLength(7);
+    });
+});
 
 const track = (id: number, extra: Partial<WaveTrack> = {}): WaveTrack => ({ id, kind: 'track', user_id: id, duration: 180000, policy: 'ALLOW', title: 'Track ' + id, ...extra });
 const filter = (extra: Partial<WaveFilter> = {}): WaveFilter => ({

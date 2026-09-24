@@ -29,7 +29,9 @@ export type WaveReason =
     | { kind: 'genreSimilar'; genre: string; seed: string }
     | { kind: 'seedTrack' }
     | { kind: 'artistTrack'; artist: string }
-    | { kind: 'mood'; seed: string; genre: string };
+    | { kind: 'mood'; seed: string; genre: string }
+    | { kind: 'tasteArtist'; artist: string }
+    | { kind: 'tasteTag'; genre: string };
 export interface WaveCandidate {
     track: WaveTrack;
     reason: WaveReason;
@@ -57,7 +59,9 @@ export type WaveTexts = Record<
     | 'dropGenre' | 'toSimilar' | 'play' | 'pause' | 'clearGenre' | 'upFirst' | 'next' | 'like' | 'error' | 'retry' | 'unavailable'
     | 'whySeedTrack' | 'whyArtistTrack' | 'whyMood' | 'seedTrack' | 'seedArtist' | 'seedPlaylist' | 'clearSeed' | 'emptySeed'
     | 'menuWaveTrack' | 'menuWaveArtist' | 'menuWavePlaylist' | 'menuDislike' | 'menuUndislike' | 'menuHideArtist' | 'menuShowArtist'
-    | 'toastDisliked' | 'toastUndisliked' | 'toastHidden' | 'toastShown' | 'toastFailed' | 'toastNotSaved' | 'toastEmpty' | 'shake' | 'history',
+    | 'toastDisliked' | 'toastUndisliked' | 'toastHidden' | 'toastShown' | 'toastFailed' | 'toastNotSaved' | 'toastEmpty' | 'shake' | 'history'
+    | 'whyTasteArtist' | 'whyTasteTag' | 'more' | 'later' | 'menuUnmore' | 'menuUnlater' | 'toastMore' | 'toastUnmore' | 'toastLater'
+    | 'toastLaterArtist' | 'toastUnlater',
     string
 >;
 
@@ -84,6 +88,10 @@ export const WAVE_TEXTS: Record<'ru' | 'en', WaveTexts> = {
         toastHidden: 'Артист больше не попадёт в волну', toastShown: 'Артист снова может попасть в волну',
         toastFailed: 'Не получилось: SoundCloud не ответил', toastNotSaved: 'Отметка не сохранилась', toastEmpty: 'Не нашлось похожих треков',
         shake: 'Встряхнуть', history: 'История, Ctrl+H',
+        whyTasteArtist: 'Ты часто дослушиваешь {artist}', whyTasteTag: 'В духе {genre}, который ты любишь',
+        more: 'Больше такого', later: 'Не сейчас', menuUnmore: 'Отменить «Больше такого»', menuUnlater: 'Вернуть в волну',
+        toastMore: 'Волна подберёт больше такого', toastUnmore: 'Отметка «Больше такого» снята',
+        toastLater: 'Трек не попадёт в волну неделю', toastLaterArtist: 'Артист не попадёт в волну неделю', toastUnlater: 'Снова может попасть в волну',
     },
     en: {
         wave: 'My Wave', similar: 'Similar', fresh: 'New', anyGenre: 'Any genre', genreInput: 'Genres, comma separated', fromLikes: 'From your likes',
@@ -107,12 +115,29 @@ export const WAVE_TEXTS: Record<'ru' | 'en', WaveTexts> = {
         toastHidden: 'This artist won’t play in My Wave', toastShown: 'This artist can play in My Wave again',
         toastFailed: 'Didn’t work: SoundCloud didn’t respond', toastNotSaved: 'Couldn’t save this', toastEmpty: 'No similar tracks found',
         shake: 'Shake up', history: 'History, Ctrl+H',
+        whyTasteArtist: 'You often finish {artist}', whyTasteTag: 'The {genre} you love',
+        more: 'More like this', later: 'Not now', menuUnmore: 'Undo “More like this”', menuUnlater: 'Allow in My Wave',
+        toastMore: 'My Wave will play more like this', toastUnmore: '“More like this” removed',
+        toastLater: 'This track won’t play in My Wave for a week', toastLaterArtist: 'This artist won’t play in My Wave for a week',
+        toastUnlater: 'Can play in My Wave again',
     },
 };
 
 // Жанр и теги на SoundCloud свободный текст: сравниваются без регистра, пробелов и знаков
 export function normalizeTag(text: string): string {
     return text.toLowerCase().replace(/&/g, 'and').replace(/[^\p{L}\p{N}]+/gu, '');
+}
+
+// Ключи жанра и тегов трека для модели вкуса: одни и те же в main и на странице, не больше шести
+export function tagKeys(genre: string | null | undefined, tagList: string | null | undefined): string[] {
+    const keys: string[] = [];
+    const add = (label: string): void => {
+        const key = normalizeTag(label);
+        if (key.length >= 2 && keys.length < 6 && !keys.includes(key)) keys.push(key);
+    };
+    add(genre ?? '');
+    for (const match of (tagList ?? '').matchAll(/"([^"]+)"|(\S+)/g)) add(match[1] ?? match[2] ?? '');
+    return keys;
 }
 
 export function genreKeys(genre: string): string[] {
@@ -243,6 +268,109 @@ export function pickSpaced(pool: WaveCandidate[], count: number, recentArtists: 
     return picked;
 }
 
+// Профиль вкуса из main: веса треков, артистов и тегов
+export interface TasteMaps {
+    artists: Map<number, number>;
+    tags: Map<string, number>;
+    tracks: Map<number, number>;
+}
+export interface TasteScore {
+    score: number;
+    track: number;
+    artist: number;
+    /** Средний вес известных тегов трека */
+    tag: number;
+    /** Самый любимый из тегов трека и его вес */
+    tagKey: string;
+    tagBest: number;
+    /** У артиста есть история */
+    known: boolean;
+}
+// Ответ main недоверенный: берутся только пары [id или ключ тега, конечное число]
+export function tasteMaps(input: unknown): TasteMaps | null {
+    if (!input || typeof input !== 'object') return null;
+    const source = input as { artists?: unknown; tags?: unknown; tracks?: unknown };
+    const isId = (value: unknown): value is number => typeof value === 'number' && Number.isSafeInteger(value) && value > 0;
+    const isKey = (value: unknown): value is string => typeof value === 'string' && value.length > 0 && value.length <= 80;
+    const pairs = <K>(list: unknown, valid: (value: unknown) => value is K, limit: number): Map<K, number> => {
+        const map = new Map<K, number>();
+        if (!Array.isArray(list)) return map;
+        for (const item of list.slice(0, limit))
+            if (Array.isArray(item) && valid(item[0]) && typeof item[1] === 'number' && Number.isFinite(item[1])) map.set(item[0], item[1]);
+        return map;
+    };
+    return { artists: pairs(source.artists, isId, 500), tags: pairs(source.tags, isKey, 300), tracks: pairs(source.tracks, isId, 1000) };
+}
+export function tasteScore(track: WaveTrack, taste: TasteMaps): TasteScore {
+    const artistId = trackArtist(track);
+    const own = taste.tracks.get(track.id) ?? 0;
+    const artist = taste.artists.get(artistId) ?? 0;
+    let sum = 0;
+    let count = 0;
+    let tagKey = '';
+    let tagBest = 0;
+    for (const key of tagKeys(track.genre, track.tag_list)) {
+        const weight = taste.tags.get(key);
+        if (weight === undefined) continue;
+        sum += weight;
+        count++;
+        if (weight > tagBest) {
+            tagBest = weight;
+            tagKey = key;
+        }
+    }
+    const tag = count ? sum / count : 0;
+    return { score: own + artist + tag, track: own, artist, tag, tagKey, tagBest, known: taste.artists.has(artistId) };
+}
+// Порядок подборки по вкусу вместо перемешивания: взвешенная случайная выборка (чем выше оценка, тем раньше),
+// треки с сильным минусом не берутся, не меньше 30% артистов без истории, чтобы волна не кормила сама себя
+export function tasteOrder<T extends { track: WaveTrack }>(list: T[], taste: TasteMaps, random: () => number = Math.random): T[] {
+    const keyed: Array<{ item: T; known: boolean; key: number }> = [];
+    for (const item of list) {
+        const score = tasteScore(item.track, taste);
+        if (score.track <= -1) continue;
+        const weight = Math.exp(Math.max(-3, Math.min(3, score.score)));
+        keyed.push({ item, known: score.known, key: Math.log(Math.max(random(), 1e-12)) / weight });
+    }
+    keyed.sort((a, b) => b.key - a.key);
+    const fresh = keyed.filter((entry) => !entry.known);
+    const familiar = keyed.filter((entry) => entry.known);
+    const ordered: T[] = [];
+    let freshTaken = 0;
+    while (fresh.length || familiar.length) {
+        const needFresh = fresh.length > 0 && freshTaken < Math.floor(0.3 * (ordered.length + 1));
+        const takeFresh = needFresh || !familiar.length || (fresh.length > 0 && fresh[0].key >= familiar[0].key);
+        const next = takeFresh ? fresh.shift() : familiar.shift();
+        if (!next) break;
+        if (takeFresh) freshTaken++;
+        ordered.push(next.item);
+    }
+    return ordered;
+}
+// Причина, когда трек поставила оценка: любимый артист или любимый тег. Похожее на зерно без явного вкуса не трогается
+export function tasteReason(candidate: WaveCandidate, taste: TasteMaps): WaveReason | null {
+    if (candidate.reason.kind !== 'similar' && candidate.reason.kind !== 'fresh') return null;
+    const score = tasteScore(candidate.track, taste);
+    const name = (candidate.track.user?.username ?? '').trim();
+    if (name && score.artist >= 1 && score.artist >= score.tag) return { kind: 'tasteArtist', artist: name };
+    if (!score.tagKey || score.tagBest < 1 || score.artist >= 0.3) return null;
+    const labels = [candidate.track.genre ?? '', ...Array.from((candidate.track.tag_list ?? '').matchAll(/"([^"]+)"|(\S+)/g), (match) => match[1] ?? match[2] ?? '')];
+    const label = labels.find((item) => normalizeTag(item) === score.tagKey);
+    return label ? { kind: 'tasteTag', genre: label.trim().toLowerCase() } : null;
+}
+
+// Причина по вкусу только у заметной трети подборки: иначе с ростом журнала строка «почему» у всех одна и та же
+export function applyTasteReasons(list: WaveCandidate[], taste: TasteMaps): void {
+    const scored = list
+        .map((candidate) => ({ candidate, score: tasteScore(candidate.track, taste).score }))
+        .filter((entry) => entry.score >= 1)
+        .sort((a, b) => b.score - a.score);
+    for (const { candidate } of scored.slice(0, Math.ceil(list.length * 0.3))) {
+        const reason = tasteReason(candidate, taste);
+        if (reason) candidate.reason = reason;
+    }
+}
+
 export function shuffleInPlace<T>(list: T[]): T[] {
     for (let i = list.length - 1; i > 0; i--) {
         const j = Math.floor(Math.random() * (i + 1));
@@ -280,6 +408,8 @@ export function reasonText(reason: WaveReason, texts: WaveTexts): string {
         case 'seedTrack': return texts.whySeedTrack;
         case 'artistTrack': return fillText(texts.whyArtistTrack, { artist: reason.artist });
         case 'mood': return fillText(texts.whyMood, { seed: reason.seed, genre: reason.genre });
+        case 'tasteArtist': return fillText(texts.whyTasteArtist, { artist: reason.artist });
+        case 'tasteTag': return fillText(texts.whyTasteTag, { genre: reason.genre });
     }
 }
 
@@ -389,7 +519,7 @@ interface WaveJournalApi {
 }
 interface WaveExclusionsApi {
     load(userId: number): Promise<unknown>;
-    set(userId: number, kind: 'track' | 'artist', entry: object, excluded: boolean): Promise<unknown>;
+    set(userId: number, kind: 'track' | 'artist' | 'later-track' | 'later-artist' | 'more', entry: object, excluded: boolean): Promise<unknown>;
 }
 interface WaveWindow extends Window {
     __disposeWave?: () => void;
@@ -406,6 +536,7 @@ interface WaveWindow extends Window {
     soundcloudAPI?: {
         waveJournal?: WaveJournalApi;
         waveExclusions?: WaveExclusionsApi;
+        waveTaste?: { load(userId: number): Promise<unknown> };
         waveSignals?: { add(userId: number, signals: PlaySignal[]): void };
         reportWaveEmpty?(counts: { seen: number; artistTracks: number; moodTags: number }): void;
         sendTrackMeta?(meta: TrackMeta): void;
@@ -501,11 +632,21 @@ export function installWave(config: WaveConfig): void {
     let seenCount = 0;
     let artistCount = 0;
     let seedRequest = 0;
-    // Копия отметок «Не нравится» и скрытых артистов из main
-    interface Excluded { id: number; title: string; artist: string; url: string }
+    // Копия отметок из main: «Не нравится» и скрытые артисты навсегда, «Не сейчас» до until,
+    // «Больше такого» это локальный лайк: трек становится зерном, модель вкуса учится на нём
+    interface Excluded { id: number; title: string; artist: string; url: string; until?: number }
+    interface MoreEntry extends Excluded { artistId: number; genre: string; tags: string }
+    type MarkKind = 'track' | 'artist' | 'later-track' | 'later-artist' | 'more';
     const excludedTracks = new Map<number, Excluded>();
     const excludedArtists = new Map<number, Excluded>();
+    const laterTracks = new Map<number, Excluded>();
+    const laterArtists = new Map<number, Excluded>();
+    const moreTracks = new Map<number, MoreEntry>();
     let exclusionsPromise: Promise<void> | null = null;
+    // Профиль вкуса из main: порядок подборки и причины, живёт 30 минут
+    let taste: TasteMaps | null = null;
+    let tasteAt = 0;
+    let tastePromise: Promise<void> | null = null;
     // Слежение за текущим треком: журнал, пропуски и лайки
     let currentId = 0;
     let currentPosition = 0;
@@ -647,7 +788,23 @@ export function installWave(config: WaveConfig): void {
         const text = (value: unknown): string => (typeof value === 'string' ? value : '');
         for (const value of input) {
             const entry = value as Partial<Record<keyof Excluded, unknown>> | null;
-            if (entry && typeof entry.id === 'number' && entry.id > 0) map.set(entry.id, { id: entry.id, title: text(entry.title), artist: text(entry.artist), url: text(entry.url) });
+            if (!entry || typeof entry.id !== 'number' || entry.id <= 0) continue;
+            const item: Excluded = { id: entry.id, title: text(entry.title), artist: text(entry.artist), url: text(entry.url) };
+            if (typeof entry.until === 'number') item.until = entry.until;
+            map.set(entry.id, item);
+        }
+    }
+    function fillMore(input: unknown): void {
+        moreTracks.clear();
+        if (!Array.isArray(input)) return;
+        const text = (value: unknown): string => (typeof value === 'string' ? value : '');
+        for (const value of input) {
+            const entry = value as Record<string, unknown> | null;
+            if (!entry || typeof entry.id !== 'number' || entry.id <= 0) continue;
+            moreTracks.set(entry.id, {
+                id: entry.id, title: text(entry.title), artist: text(entry.artist), url: text(entry.url),
+                artistId: typeof entry.artistId === 'number' ? entry.artistId : 0, genre: text(entry.genre), tags: text(entry.tags),
+            });
         }
     }
     // Отметки нужны до подбора и до меню. Не загрузились: следующий подбор попробует снова
@@ -655,26 +812,56 @@ export function installWave(config: WaveConfig): void {
         exclusionsPromise ??= (async () => {
             const id = await ensureUser();
             const loaded = id ? await host.soundcloudAPI?.waveExclusions?.load(id) : null;
-            const source = loaded && typeof loaded === 'object' ? (loaded as { tracks?: unknown; artists?: unknown }) : {};
+            const source = loaded && typeof loaded === 'object' ? (loaded as Record<string, unknown>) : {};
             fillExcluded(excludedTracks, source.tracks);
             fillExcluded(excludedArtists, source.artists);
+            fillExcluded(laterTracks, source.laterTracks);
+            fillExcluded(laterArtists, source.laterArtists);
+            fillMore(source.more);
         })().catch((error: unknown) => {
             exclusionsPromise = null;
             console.warn('Волна: исключения не загружены', error);
         });
         return exclusionsPromise;
     }
-    const isExcluded = (track: WaveTrack): boolean => excludedTracks.has(track.id) || excludedArtists.has(trackArtist(track));
-    const excludedUrl = (map: Map<number, Excluded>, url: string): boolean => {
-        const key = canonicalUrl(url);
-        return !!key && [...map.values()].some((entry) => entry.url === key);
+    // Не загрузился: подборка идёт перемешиванием, следующий подбор попробует снова
+    function ensureTaste(): Promise<void> {
+        if (taste && Date.now() - tasteAt < 30 * 60000) return Promise.resolve();
+        tastePromise ??= (async () => {
+            const id = await ensureUser();
+            const maps = tasteMaps(id ? await host.soundcloudAPI?.waveTaste?.load(id) : null);
+            if (maps) {
+                taste = maps;
+                tasteAt = Date.now();
+            }
+        })().catch((error: unknown) => {
+            console.warn('Волна: вкус не загружен', error);
+        }).finally(() => {
+            tastePromise = null;
+        });
+        return tastePromise;
+    }
+    // «Не сейчас» кончается сам: клиент в трее живёт днями без перезагрузки страницы
+    const marked = (map: Map<number, Excluded>, id: number): boolean => {
+        const entry = map.get(id);
+        return !!entry && (entry.until === undefined || entry.until > Date.now());
     };
+    const isExcluded = (track: WaveTrack): boolean =>
+        excludedTracks.has(track.id) || excludedArtists.has(trackArtist(track)) || marked(laterTracks, track.id) || marked(laterArtists, trackArtist(track));
+    const liveKeys = (map: Map<number, Excluded>): number[] => [...map.keys()].filter((id) => marked(map, id));
+    // «Больше такого» как зерно волны: для похожих хватает id, для жанра и причины нужны название и метки
+    const moreSeeds = (): WaveTrack[] =>
+        [...moreTracks.values()].map((entry) => ({
+            id: entry.id, kind: 'track', title: entry.title, genre: entry.genre, tag_list: entry.tags, permalink_url: entry.url,
+            user_id: entry.artistId || undefined, user: { id: entry.artistId || undefined, username: entry.artist },
+        }));
 
     function currentFilter(): WaveFilter {
         const p = profile;
         return {
             mode, taken, recent: p?.recent ?? new Set(), heard: p?.heard ?? new Set(), liked: p?.liked ?? new Set(), skippedArtists,
-            excludedTracks: new Set(excludedTracks.keys()), excludedArtists: new Set(excludedArtists.keys()),
+            excludedTracks: new Set([...excludedTracks.keys(), ...liveKeys(laterTracks)]),
+            excludedArtists: new Set([...excludedArtists.keys(), ...liveKeys(laterArtists)]),
         };
     }
     function seedsFor(keys: string[]): WaveTrack[] {
@@ -684,7 +871,8 @@ export function installWave(config: WaveConfig): void {
         if (seed) mixed.push(...seed.tracks, ...derivedSeeds);
         else {
             const history = p.history.slice(0, 30);
-            const likes = p.likedTracks.slice(0, 50);
+            // «Больше такого» идёт вперёд лайков сайта
+            const likes = [...moreSeeds(), ...p.likedTracks].slice(0, 50);
             for (let i = 0; i < Math.max(history.length, likes.length); i++) {
                 if (history[i]) mixed.push(history[i]);
                 if (likes[i]) mixed.push(likes[i]);
@@ -741,7 +929,7 @@ export function installWave(config: WaveConfig): void {
     async function gatherRound(): Promise<number> {
         const own = generation;
         const p = await ensureProfile();
-        await ensureExclusions();
+        await Promise.all([ensureExclusions(), ensureTaste()]);
         if (own !== generation) return 0;
         const tags = !seed && genre ? parseGenres(genre) : [];
         const keys = tags.length ? genreKeysFor(genre) : [];
@@ -835,7 +1023,12 @@ export function installWave(config: WaveConfig): void {
             if (own !== generation) return 0;
         }
         if (tasks.length && failures === tasks.length && !found.length) throw new Error('Источники волны не ответили');
-        pool.push(...shuffleInPlace(found));
+        // По вкусу, если профиль есть; без него как раньше, перемешиванием
+        const current = taste;
+        if (current) {
+            applyTasteReasons(found, current);
+            pool.push(...tasteOrder(found, current));
+        } else pool.push(...shuffleInPlace(found));
         const pagesLeft = (list: string[]): boolean => list.some((tag) => (['recent', 'search'] as const).some((source) => !cursors.get(source + ':' + tag)?.done));
         const sourcesLeft = seedsFor(keys).length > 0 || stationRoots().length > 0 || pagesLeft(tags) || pagesLeft(fallbackMood ?? []);
         if (!found.length && !sourcesLeft) exhausted = true;
@@ -1492,35 +1685,67 @@ export function installWave(config: WaveConfig): void {
         else { state = 'idle'; render(); }
     }
 
-    async function setExcluded(kind: 'track' | 'artist', target: MenuTarget, excluded: boolean): Promise<void> {
+    async function setExcluded(kind: MarkKind, target: MenuTarget, excluded: boolean): Promise<void> {
         try {
             await ensureExclusions();
-            let entry: Excluded | null = null;
-            if (kind === 'track') {
-                const track = await trackOf(target);
-                if (track) entry = { id: track.id, title: (track.title ?? '').trim(), artist: artistName(track), url: canonicalUrl(track.permalink_url) || canonicalUrl(target.url) };
-            } else {
+            let entry: MoreEntry | null = null;
+            let marked: WaveTrack | null = null;
+            if (kind === 'artist' || kind === 'later-artist') {
                 const artist = await artistOf(target);
-                if (artist) entry = { id: artist.id, title: artist.username, artist: '', url: canonicalUrl(artist.url) || canonicalUrl(target.kind === 'artist' ? target.url : target.artistUrl) };
+                if (artist) entry = { id: artist.id, title: artist.username, artist: '', url: canonicalUrl(artist.url) || canonicalUrl(target.kind === 'artist' ? target.url : target.artistUrl), artistId: 0, genre: '', tags: '' };
+            } else {
+                marked = await trackOf(target);
+                if (marked) entry = {
+                    id: marked.id, title: (marked.title ?? '').trim(), artist: artistName(marked), url: canonicalUrl(marked.permalink_url) || canonicalUrl(target.url),
+                    artistId: trackArtist(marked), genre: (marked.genre ?? '').trim(), tags: (marked.tag_list ?? '').trim(),
+                };
             }
             if (!entry) {
                 showToast(T.toastFailed);
                 return;
             }
             const id = await ensureUser();
-            const saved = id ? await host.soundcloudAPI?.waveExclusions?.set(id, kind, entry, excluded) : false;
+            // Артист и метки трека нужны main только для «Больше такого»: по ним учится модель вкуса
+            const payload = kind === 'more' ? entry : { id: entry.id, title: entry.title, artist: entry.artist, url: entry.url };
+            const saved = id ? await host.soundcloudAPI?.waveExclusions?.set(id, kind, payload, excluded) : false;
             if (saved !== true) {
                 showToast(T.toastNotSaved);
                 return;
             }
-            const map = kind === 'track' ? excludedTracks : excludedArtists;
-            if (excluded) map.set(entry.id, entry);
-            else map.delete(entry.id);
+            const maps: Record<MarkKind, Map<number, Excluded>> = { track: excludedTracks, artist: excludedArtists, 'later-track': laterTracks, 'later-artist': laterArtists, more: moreTracks };
+            if (!excluded) maps[kind].delete(entry.id);
+            else if (kind === 'more') {
+                moreTracks.set(entry.id, entry);
+                // Как в main: «Больше такого» и «Не нравится» или «Не сейчас» у одного трека вместе не живут
+                excludedTracks.delete(entry.id);
+                laterTracks.delete(entry.id);
+            } else {
+                maps[kind].set(entry.id, kind === 'later-track' || kind === 'later-artist' ? { ...entry, until: Date.now() + 7 * 86400000 } : entry);
+                if (kind === 'track' || kind === 'later-track') moreTracks.delete(entry.id);
+                if (kind === 'track') laterTracks.delete(entry.id);
+            }
             // Отметка о том, что сейчас играет, уходит и в журнал сигналов
             if (play && kind === 'track' && play.signal.id === entry.id) play.signal.disliked = excluded;
             if (play && kind === 'artist' && play.signal.artist === entry.id) play.signal.hiddenArtist = excluded;
-            showToast(kind === 'track' ? (excluded ? T.toastDisliked : T.toastUndisliked) : excluded ? T.toastHidden : T.toastShown);
-            if (excluded) purgeExcluded();
+            if (kind === 'more') {
+                // Профиль вкуса пересчитается к следующему подбору, а сам трек сразу становится зерном, как лайк
+                tasteAt = 0;
+                if (excluded && marked && !likedSeeds.some((track) => track.id === entry.id)) likedSeeds.unshift(marked);
+                if (!excluded) {
+                    const index = likedSeeds.findIndex((track) => track.id === entry.id);
+                    if (index >= 0 && !profile?.liked.has(entry.id)) likedSeeds.splice(index, 1);
+                }
+            }
+            const toasts: Record<MarkKind, [string, string]> = {
+                track: [T.toastDisliked, T.toastUndisliked],
+                artist: [T.toastHidden, T.toastShown],
+                'later-track': [T.toastLater, T.toastUnlater],
+                'later-artist': [T.toastLaterArtist, T.toastUnlater],
+                more: [T.toastMore, T.toastUnmore],
+            };
+            showToast(toasts[kind][excluded ? 0 : 1]);
+            if (excluded && kind !== 'more') purgeExcluded();
+            else render();
         } catch (error) {
             console.warn('Волна: отметка не поставлена', error);
             showToast(T.toastFailed);
@@ -1560,6 +1785,9 @@ export function installWave(config: WaveConfig): void {
         heart: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 21.35 10.55 20C5.4 15.36 2 12.28 2 8.5 2 5.42 4.42 3 7.5 3c1.74 0 3.41.81 4.5 2.09A6 6 0 0 1 16.5 3C19.58 3 22 5.42 22 8.5c0 3.78-3.4 6.86-8.55 11.54z"/></svg>',
         x: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M19 6.4 17.6 5 12 10.6 6.4 5 5 6.4l5.6 5.6L5 17.6 6.4 19l5.6-5.6 5.6 5.6 1.4-1.4-5.6-5.6z"/></svg>',
         shake: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M17.65 6.35A7.96 7.96 0 0 0 12 4a8 8 0 1 0 7.73 10h-2.08A6 6 0 1 1 12 6c1.66 0 3.14.69 4.22 1.78L13 11h7V4z"/></svg>',
+        more: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M11 5h2v6h6v2h-6v6h-2v-6H5v-2h6z"/></svg>',
+        // Месяц: трек уснёт на неделю
+        later: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12.34 2.02C6.59 1.82 2 6.42 2 12c0 5.52 4.48 10 10 10 3.71 0 6.93-2.02 8.66-5.02-7.51-.25-12.09-8.43-8.32-14.96z"/></svg>',
         // Те же часы, что у кнопки истории в шапке
         history: '<svg class="scw-line" viewBox="0 0 16 16" aria-hidden="true"><path d="M2.6 8a5.4 5.4 0 1 0 1.6-3.8"/><path d="M2.4 2.6v2.5h2.5"/><path d="M8 5v3.2l2.2 1.4"/></svg>',
     };
@@ -1662,6 +1890,8 @@ export function installWave(config: WaveConfig): void {
         block: '<svg viewBox="0 0 16 16" aria-hidden="true"><path fill-rule="evenodd" d="M8 1a7 7 0 1 1 0 14A7 7 0 0 1 8 1zm4.3 10.2A5.5 5.5 0 0 0 4.8 3.7zM3.7 4.8a5.5 5.5 0 0 0 7.5 7.5z"/></svg>',
         hide: '<svg viewBox="0 0 16 16" aria-hidden="true"><path d="M6.5 1.5a3.25 3.25 0 1 1 0 6.5 3.25 3.25 0 0 1 0-6.5zM.5 14.5c0-3 2.7-5 6-5 1.1 0 2.2.2 3 .7v4.3zM10.5 11h5v1.5h-5z"/></svg>',
         undo: '<svg viewBox="0 0 16 16" aria-hidden="true"><path d="M4.6 3.4 5.7 4.5 4.1 6H10a4.5 4.5 0 0 1 0 9H6v-1.5h4a3 3 0 0 0 0-6H4.1l1.6 1.5-1.1 1.1L1.2 6.75z"/></svg>',
+        more: '<svg viewBox="0 0 16 16" aria-hidden="true"><path d="M7.25 2h1.5v5.25H14v1.5H8.75V14h-1.5V8.75H2v-1.5h5.25z"/></svg>',
+        later: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12.34 2.02C6.59 1.82 2 6.42 2 12c0 5.52 4.48 10 10 10 3.71 0 6.93-2.02 8.66-5.02-7.51-.25-12.09-8.43-8.32-14.96z"/></svg>',
     };
     function ensureStyle(): void {
         if (document.getElementById('sc-wave-style')) return;
@@ -1898,7 +2128,12 @@ export function installWave(config: WaveConfig): void {
         if (current) {
             const like = button('scw-like', 'like', T.like, 'heart');
             like.setAttribute('aria-pressed', String(currentLiked));
-            meta.append(el('div', 'scw-why', reasonText(current.reason, T)), like, el('div', 'scw-time'));
+            const later = button('scw-like', 'later', T.later, 'later');
+            later.title = T.later;
+            const more = button('scw-like', 'more', T.more, 'more');
+            more.title = T.more;
+            more.setAttribute('aria-pressed', String(moreTracks.has(current.track.id)));
+            meta.append(el('div', 'scw-why', reasonText(current.reason, T)), later, more, like, el('div', 'scw-time'));
         } else if (state === 'empty') {
             if (genre) meta.append(textButton('drop-genre', T.dropGenre));
             if (mode === 'fresh') meta.append(textButton('to-similar', T.toSimilar));
@@ -2130,6 +2365,15 @@ export function installWave(config: WaveConfig): void {
                 (likeButton() as HTMLElement | null)?.click();
                 setTimeout(tick, 400);
                 return;
+            case 'more':
+            case 'later': {
+                const current = currentCandidate();
+                if (!current) return;
+                // «Не сейчас» у играющего трека сразу ставит следующий, как «Не нравится»
+                if (control.dataset.act === 'later') void setExcluded('later-track', fromTrack(current.track), true);
+                else void setExcluded('more', fromTrack(current.track), !moreTracks.has(current.track.id));
+                return;
+            }
             case 'drop-genre':
                 applySettings(mode, null);
                 return;
@@ -2282,21 +2526,32 @@ export function installWave(config: WaveConfig): void {
         const knownTrack = [...known.values()].find((candidate) => canonicalUrl(candidate.track.permalink_url) === canonicalUrl(target.url));
         return { kind: target.kind, url: target.url, artistUrl, track: knownTrack?.track };
     }
-    function trackExcluded(target: MenuTarget): boolean {
-        return target.track ? excludedTracks.has(target.track.id) : excludedUrl(excludedTracks, target.url);
+    // Отметка у цели меню: по id, если трек известен, иначе по ссылке; истёкшее «Не сейчас» не считается
+    function trackMarked(map: Map<number, Excluded>, target: MenuTarget): boolean {
+        if (target.track) return marked(map, target.track.id);
+        const key = canonicalUrl(target.url);
+        return !!key && [...map.values()].some((entry) => entry.url === key && marked(map, entry.id));
     }
-    function artistExcluded(target: MenuTarget): boolean {
-        if (target.kind === 'artist') return excludedUrl(excludedArtists, target.url);
-        const id = target.track ? trackArtist(target.track) : 0;
-        return id ? excludedArtists.has(id) : excludedUrl(excludedArtists, target.artistUrl);
+    function artistMarked(map: Map<number, Excluded>, target: MenuTarget): boolean {
+        const id = target.kind !== 'artist' && target.track ? trackArtist(target.track) : 0;
+        if (id) return marked(map, id);
+        const key = canonicalUrl(target.kind === 'artist' ? target.url : target.artistUrl);
+        return !!key && [...map.values()].some((entry) => entry.url === key && marked(map, entry.id));
     }
+    const trackExcluded = (target: MenuTarget): boolean => trackMarked(excludedTracks, target);
+    const artistExcluded = (target: MenuTarget): boolean => artistMarked(excludedArtists, target);
     function menuItems(target: MenuTarget): Array<[string, string, string]> {
         const items: Array<[string, string, string]> = [];
         const hasArtist = target.kind === 'artist' || !!target.artistUrl || !!target.track;
         if (target.kind === 'track') items.push(['wave-track', T.menuWaveTrack, 'wave']);
         if (target.kind === 'playlist') items.push(['wave-playlist', T.menuWavePlaylist, 'wave']);
         if (hasArtist) items.push(['wave-artist', T.menuWaveArtist, target.kind === 'artist' ? 'wave' : 'artist']);
-        if (target.kind === 'track') items.push(trackExcluded(target) ? ['undislike', T.menuUndislike, 'undo'] : ['dislike', T.menuDislike, 'block']);
+        if (target.kind === 'track') {
+            items.push(trackMarked(moreTracks, target) ? ['unmore', T.menuUnmore, 'undo'] : ['more', T.more, 'more']);
+            items.push(trackMarked(laterTracks, target) ? ['unlater', T.menuUnlater, 'undo'] : ['later', T.later, 'later']);
+            items.push(trackExcluded(target) ? ['undislike', T.menuUndislike, 'undo'] : ['dislike', T.menuDislike, 'block']);
+        }
+        if (target.kind === 'artist') items.push(artistMarked(laterArtists, target) ? ['unlater-artist', T.menuUnlater, 'undo'] : ['later-artist', T.later, 'later']);
         if (hasArtist) items.push(artistExcluded(target) ? ['show-artist', T.menuShowArtist, 'undo'] : ['hide-artist', T.menuHideArtist, 'hide']);
         return items;
     }
@@ -2309,6 +2564,12 @@ export function installWave(config: WaveConfig): void {
             case 'undislike': void setExcluded('track', target, act === 'dislike'); return;
             case 'hide-artist':
             case 'show-artist': void setExcluded('artist', target, act === 'hide-artist'); return;
+            case 'more':
+            case 'unmore': void setExcluded('more', target, act === 'more'); return;
+            case 'later':
+            case 'unlater': void setExcluded('later-track', target, act === 'later'); return;
+            case 'later-artist':
+            case 'unlater-artist': void setExcluded('later-artist', target, act === 'later-artist'); return;
         }
     }
 
@@ -2575,6 +2836,8 @@ export function installWave(config: WaveConfig): void {
     // F1 вернул трек или артиста в волну: перечитать отметки
     host.__scWaveExclusionsChanged = () => {
         exclusionsPromise = null;
+        // Из F1 могли снять «Больше такого»: профиль вкуса тоже перечитывается
+        tasteAt = 0;
         void ensureExclusions();
     };
     window.addEventListener('pagehide', dispose, { once: true });
@@ -2594,8 +2857,8 @@ export function installWave(config: WaveConfig): void {
 
 // Помощники идут на страницу объявлениями рядом со скриптом: так они видны installWave и друг другу
 const pageHelpers = [
-    normalizeTag, genreKeys, parseGenres, formatGenres, genreKeysFor, classifyLink, canonicalUrl, trackMatchesGenre, trackArtist,
-    isWaveEligible, acceptCandidate, trackSignature, pickSpaced, shuffleInPlace, topGenres, fillText, reasonText, shapeSamples,
+    normalizeTag, tagKeys, genreKeys, parseGenres, formatGenres, genreKeysFor, classifyLink, canonicalUrl, trackMatchesGenre, trackArtist,
+    isWaveEligible, acceptCandidate, trackSignature, pickSpaced, tasteMaps, tasteScore, tasteOrder, tasteReason, applyTasteReasons, shuffleInPlace, topGenres, fillText, reasonText, shapeSamples,
     artworkUrl, formatTime, playEnd, siteSource, moodTags, trackPath,
 ];
 

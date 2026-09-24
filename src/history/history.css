@@ -596,6 +596,126 @@ h2 {
     margin-top: 12px;
 }
 
+/* Вкус глазами волны */
+.tl li.taste {
+    grid-template-columns: 22px 40px minmax(0, 1fr) auto;
+}
+.tl li.taste.noart {
+    grid-template-columns: 22px minmax(0, 1fr) auto;
+}
+.art.round {
+    border-radius: 50%;
+}
+.drop {
+    opacity: 0;
+    padding: 2px 8px;
+    border-radius: 4px;
+    font-size: 12px;
+    line-height: 18px;
+    color: var(--muted);
+    background: var(--film);
+}
+.tl li:hover .drop,
+.drop:focus-visible {
+    opacity: 1;
+}
+.drop:hover {
+    color: var(--text);
+    background: var(--film-strong);
+}
+.removed {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 8px;
+    margin: -24px 0 40px;
+}
+.chip {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    padding: 2px 8px;
+    border-radius: 4px;
+    font-size: 13px;
+    line-height: 18px;
+    color: var(--muted);
+    background: var(--film);
+}
+.chip:hover {
+    color: var(--text);
+    background: var(--film-strong);
+}
+.note {
+    margin: -6px 0 16px;
+}
+/* Ранние пропуски: доля по дням, ось 0-100% */
+.cc {
+    position: relative;
+    padding-left: 44px;
+}
+.cc-plot {
+    position: relative;
+    height: 120px;
+}
+.cc-grid {
+    position: absolute;
+    inset: 0 0 0 -44px;
+    pointer-events: none;
+}
+.cc-grid div {
+    position: absolute;
+    left: 0;
+    right: 0;
+    border-top: 1px solid var(--line);
+}
+.cc-grid span {
+    position: absolute;
+    left: 0;
+    top: -9px;
+    width: 36px;
+    font-size: 12px;
+    line-height: 16px;
+    color: var(--faint);
+    background: var(--bg);
+}
+.cc-bars {
+    position: absolute;
+    inset: 0;
+    display: grid;
+    gap: 2px;
+    align-items: end;
+}
+.cc-slot {
+    height: 100%;
+    display: flex;
+    align-items: flex-end;
+    justify-content: center;
+    border-radius: 2px;
+}
+.cc-slot i {
+    width: min(20px, 100%);
+    border-radius: 3px 3px 0 0;
+    background: var(--mark);
+}
+.cc-slot:hover i,
+.cc-slot:focus-visible i {
+    background: var(--text);
+}
+.cc-x {
+    display: grid;
+    gap: 2px;
+    margin-top: 6px;
+    height: 16px;
+}
+.cc-x span {
+    display: flex;
+    justify-content: center;
+    font-size: 12px;
+    line-height: 16px;
+    color: var(--faint);
+    white-space: nowrap;
+}
+
 .tip {
     position: fixed;
     z-index: 60;

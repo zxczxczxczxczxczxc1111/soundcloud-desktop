@@ -52,6 +52,10 @@ window.SETTINGS_EN = {
     'Трек': 'Track',
     'Артист': 'Artist',
     'Вернуть': 'Restore',
+    'Не сейчас': 'Not now',
+    'Больше такого': 'More like this',
+    'Убрать': 'Remove',
+    'до': 'until',
 
     'Показывать трек в статусе': 'Show track in status',
     'Значок SoundCloud на обложке': 'SoundCloud badge on artwork',

@@ -2,12 +2,13 @@ import { WebContentsView, BrowserWindow, ipcMain, type IpcMainEvent, type IpcMai
 import { join } from 'path';
 import { trustLocalFile } from '../trustedViews';
 import type { HistoryIndex } from '../services/historyIndex';
+import type { TasteService } from '../services/tasteModel';
 import { trackPathOf } from '../services/waveSignals';
 
 const HEADER = 32;
 const DAY = 86400000;
 const ARTIST_PATH = /^\/[a-z0-9_-]{1,100}$/;
-const INVOKE = ['history:init', 'history:overview', 'history:day', 'history:search', 'history:play'] as const;
+const INVOKE = ['history:init', 'history:overview', 'history:day', 'history:search', 'history:play', 'history:taste', 'history:taste-remove'] as const;
 const SEND = ['history:ready', 'history:close', 'history:artist'] as const;
 
 export interface HistoryHost {
@@ -66,7 +67,7 @@ export class HistoryManager {
             .catch((error: unknown) => console.warn('История: страница артиста не открыта', error));
     };
 
-    constructor(private parentWindow: BrowserWindow, private index: HistoryIndex, private host: HistoryHost) {
+    constructor(private parentWindow: BrowserWindow, private index: HistoryIndex, private taste: TasteService, private host: HistoryHost) {
         this.parentWindow.on('resize', this.resize);
         this.parentWindow.once('closed', () => this.dispose());
         ipcMain.handle('history:init', async (event) => {
@@ -104,6 +105,16 @@ export class HistoryManager {
             // userGesture: трек включает пользователь, политика автовоспроизведения его не держит
             const done = await (site.executeJavaScript('window.__scOpenTrack ? window.__scOpenTrack(' + JSON.stringify(track) + ', false) : false', true) as Promise<unknown>);
             return done === true;
+        });
+        // Вкус глазами волны: любимые артисты и теги модели, доля ранних пропусков
+        ipcMain.handle('history:taste', (event) => {
+            this.guard(event);
+            return this.taste.view(this.userId);
+        });
+        ipcMain.handle('history:taste-remove', (event, kind: unknown, key: unknown, removed: unknown) => {
+            this.guard(event);
+            if (!this.taste.setRemoved(this.userId, kind, key, removed)) return null;
+            return this.taste.view(this.userId);
         });
         ipcMain.on('history:ready', this.ready);
         ipcMain.on('history:close', this.close);

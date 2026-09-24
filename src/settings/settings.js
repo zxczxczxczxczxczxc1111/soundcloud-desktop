@@ -524,8 +524,9 @@ async function initializeSettings() {
             ipcRenderer.send('setting-changed', { key: e.target.id, value: e.target.checked });
         });
 
-    // Исключённое из волны: отметки ставятся в меню по ПКМ на сайте, здесь только возврат
-    function renderExcluded(containerId, kind, entries) {
+    // Отметки волны ставятся на сайте (меню по ПКМ, кнопки у играющего трека), здесь только снятие.
+    // У записи списка «Не сейчас» свой вид: трек или артист
+    function renderExcluded(containerId, kind, entries, action = 'Вернуть') {
         const box = document.getElementById(containerId);
         if (!box) return;
         const count = document.getElementById(containerId + 'Count');
@@ -539,28 +540,31 @@ async function initializeSettings() {
             return;
         }
         for (const entry of entries) {
+            const entryKind = entry.kind || kind;
             const row = document.createElement('div');
             row.className = 'row';
             const text = document.createElement('span');
             text.className = 'text';
             const title = document.createElement('span');
             title.className = 'excluded-title';
-            title.textContent = entry.title || tr(kind === 'track' ? 'Трек' : 'Артист') + ' ' + entry.id;
+            title.textContent = entry.title || tr(entryKind.endsWith('artist') ? 'Артист' : 'Трек') + ' ' + entry.id;
             title.title = title.textContent;
             text.appendChild(title);
-            if (entry.artist) {
+            const until = typeof entry.until === 'number' ? tr('до') + ' ' + new Date(entry.until).toLocaleDateString(language === 'en' ? 'en-GB' : 'ru-RU', { day: 'numeric', month: 'long' }) : '';
+            const details = [entry.artist, until].filter(Boolean).join(', ');
+            if (details) {
                 const artist = document.createElement('span');
                 artist.className = 'hint excluded-title';
-                artist.textContent = entry.artist;
+                artist.textContent = details;
                 text.appendChild(artist);
             }
             const restore = document.createElement('button');
             restore.type = 'button';
             restore.className = 'text-btn';
-            restore.textContent = tr('Вернуть');
+            restore.textContent = tr(action);
             restore.addEventListener('click', () => {
                 restore.disabled = true;
-                ipcRenderer.invoke('remove-wave-exclusion', kind, entry.id).then(loadWaveExclusions, (error) => {
+                ipcRenderer.invoke('remove-wave-exclusion', entryKind, entry.id).then(loadWaveExclusions, (error) => {
                     console.error('Не удалось вернуть в волну:', error);
                     restore.disabled = false;
                 });
@@ -574,6 +578,12 @@ async function initializeSettings() {
             const data = await ipcRenderer.invoke('get-wave-exclusions');
             renderExcluded('waveExcludedTracks', 'track', Array.isArray(data?.tracks) ? data.tracks : []);
             renderExcluded('waveExcludedArtists', 'artist', Array.isArray(data?.artists) ? data.artists : []);
+            const later = [
+                ...(Array.isArray(data?.laterTracks) ? data.laterTracks.map((entry) => ({ ...entry, kind: 'later-track' })) : []),
+                ...(Array.isArray(data?.laterArtists) ? data.laterArtists.map((entry) => ({ ...entry, kind: 'later-artist' })) : []),
+            ].sort((a, b) => (b.at || 0) - (a.at || 0));
+            renderExcluded('waveLater', 'later-track', later);
+            renderExcluded('waveMore', 'more', Array.isArray(data?.more) ? data.more : [], 'Убрать');
         } catch (error) {
             console.error('Не удалось загрузить исключения волны:', error);
         }

@@ -257,7 +257,7 @@ it('ПКМ по треку в списке: меню и волна от этог
 
     const event = rightClick(row.querySelector('.soundTitle__title')!);
     expect(event.defaultPrevented).toBe(true);
-    expect(menuActs()).toEqual(['wave-track', 'wave-artist', 'dislike', 'hide-artist']);
+    expect(menuActs()).toEqual(['wave-track', 'wave-artist', 'more', 'later', 'dislike', 'hide-artist']);
     choose('wave-track');
     expect(document.querySelector('.scw-menu')).toBeNull();
     await vi.advanceTimersByTimeAsync(100);
@@ -328,7 +328,7 @@ it('ПКМ по артисту: волна от его треков, его тр
     window.eval(waveScript());
     await vi.advanceTimersByTimeAsync(100);
     rightClick(row.querySelector('.soundTitle__username')!);
-    expect(menuActs()).toEqual(['wave-artist', 'hide-artist']);
+    expect(menuActs()).toEqual(['wave-artist', 'later-artist', 'hide-artist']);
     choose('wave-artist');
     await vi.advanceTimersByTimeAsync(100);
     expect(site.api.callEndpoint).toHaveBeenCalledWith('userToptracks', { id: 900 }, { limit: 20 });
@@ -536,6 +536,44 @@ it('«Не нравится» уводит трек из очереди, игр�
     expect(site.player.getCurrentSound()!.id).not.toBe(playing);
     const index = site.player.getQueueState().currentIndex;
     expect(site.player.getQueue().slice(index).some((item) => item.sound.id === playing)).toBe(false);
+});
+
+it('профиль вкуса из main доходит до подборки: трек с сильным минусом не встаёт в очередь', async () => {
+    const site = fakeSite(relatedTracks);
+    const load = vi.fn(async () => ({ artists: [[10, 2]], tags: [], tracks: [[1001, -2], [2001, -2], [3001, -2]] }));
+    Object.assign(window, { soundcloudAPI: { waveTaste: { load } } });
+    window.eval(waveScript());
+    await vi.advanceTimersByTimeAsync(100);
+    document.querySelector<HTMLButtonElement>('#sc-wave .scw-play')!.click();
+    await vi.advanceTimersByTimeAsync(100);
+    expect(load).toHaveBeenCalledWith(77);
+    const ids = site.player.getQueue().slice().map((item) => item.sound.id);
+    expect(ids.length).toBeGreaterThan(0);
+    expect(ids.some((id) => id % 1000 === 1)).toBe(false);
+});
+
+it('«Не сейчас» у играющего трека ставит следующий, «Больше такого» уходит в main с артистом и метками', async () => {
+    const site = fakeSite((seed) => relatedTracks(seed).map((track) => ({ ...track, genre: 'Techno', tag_list: 'berlin' })));
+    const bridge = fakeExclusions();
+    window.eval(waveScript());
+    await vi.advanceTimersByTimeAsync(100);
+    const section = document.getElementById('sc-wave')!;
+    section.querySelector<HTMLButtonElement>('.scw-play')!.click();
+    await vi.advanceTimersByTimeAsync(100);
+
+    const playing = site.player.getCurrentSound()!;
+    section.querySelector<HTMLButtonElement>('[data-act="later"]')!.click();
+    await vi.advanceTimersByTimeAsync(100);
+    expect(bridge.set).toHaveBeenCalledWith(77, 'later-track', expect.objectContaining({ id: playing.id }), true);
+    expect(site.player.getCurrentSound()!.id).not.toBe(playing.id);
+    expect(document.querySelector('.scw-toast')?.textContent).toBe('This track won’t play in My Wave for a week');
+
+    const next = site.player.getCurrentSound()!.id;
+    section.querySelector<HTMLButtonElement>('[data-act="more"]')!.click();
+    await vi.advanceTimersByTimeAsync(100);
+    expect(bridge.set).toHaveBeenLastCalledWith(77, 'more', expect.objectContaining({ id: next, artistId: next % 1000 + Math.floor(next / 1000) * 10, genre: 'Techno', tags: 'berlin' }), true);
+    expect(section.querySelector('[data-act="more"]')?.getAttribute('aria-pressed')).toBe('true');
+    expect(site.player.getCurrentSound()!.id).toBe(next);
 });
 
 it('отмеченное раньше не попадает в подборку, F1 заставляет перечитать отметки', async () => {

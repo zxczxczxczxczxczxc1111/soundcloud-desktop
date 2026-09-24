@@ -34,8 +34,8 @@ it('отклоняет чужой ввод и не пускает ссылки �
     const directory = dir();
     writeFileSync(join(directory, 'exclusions-5.json'), '{broken', 'utf8');
     const store = new WaveExclusions(directory);
-    expect(store.load(5)).toEqual({ tracks: [], artists: [] });
-    expect(store.load('../5')).toEqual({ tracks: [], artists: [] });
+    expect(store.load(5)).toEqual({ tracks: [], artists: [], laterTracks: [], laterArtists: [], more: [] });
+    expect(store.load('../5')).toEqual({ tracks: [], artists: [], laterTracks: [], laterArtists: [], more: [] });
     expect(store.set('../x', 'track', { id: 1 }, true)).toBe(false);
     expect(store.set(5, 'playlist', { id: 1 }, true)).toBe(false);
     expect(store.set(5, 'track', { id: -1 }, true)).toBe(false);
@@ -44,6 +44,25 @@ it('отклоняет чужой ввод и не пускает ссылки �
     expect(store.load(5).tracks[0].url).toBe('');
     expect(cleanExclusionUrl('http://soundcloud.com/a')).toBe('');
     expect(cleanExclusionUrl('https://evil.com/a')).toBe('');
+});
+
+it('«Не сейчас» живёт 7 дней, «Больше такого» хранит метки трека и снимает «Не нравится»', () => {
+    const directory = dir();
+    const store = new WaveExclusions(directory);
+    const t0 = Date.UTC(2026, 8, 24);
+    expect(store.set(9, 'later-track', { id: 1, title: 'Позже', until: 1 }, true, t0)).toBe(true);
+    expect(store.set(9, 'later-artist', { id: 5, title: 'Артист' }, true, t0)).toBe(true);
+    expect(store.load(9, t0 + 6 * 86400000).laterTracks.map((entry) => [entry.id, entry.until])).toEqual([[1, t0 + 7 * 86400000]]);
+    expect(store.load(9, t0 + 7 * 86400000)).toMatchObject({ laterTracks: [], laterArtists: [] });
+
+    expect(store.set(9, 'track', { id: 2, title: 'Не то' }, true, t0)).toBe(true);
+    expect(store.set(9, 'more', { id: 2, title: 'То', artistId: 70, genre: 'Drum & Bass', tags: '"liquid dnb" chill', until: 5 }, true, t0)).toBe(true);
+    const list = new WaveExclusions(directory).load(9, t0);
+    expect(list.tracks).toEqual([]);
+    expect(list.more).toEqual([{ id: 2, title: 'То', artist: '', url: '', at: t0, artistId: 70, genre: 'Drum & Bass', tags: '"liquid dnb" chill' }]);
+    // «Не сейчас» по треку снимает «Больше такого»
+    expect(store.set(9, 'later-track', { id: 2 }, true, t0)).toBe(true);
+    expect(store.load(9, t0).more).toEqual([]);
 });
 
 it('знает текущего пользователя: последнего со страницы, иначе по самому свежему файлу', () => {

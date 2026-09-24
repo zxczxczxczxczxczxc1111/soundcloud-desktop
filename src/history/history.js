@@ -64,6 +64,19 @@
             failed: 'Историю не удалось загрузить',
             retry: 'Повторить',
             artistTip: (plays, time) => plays + ', ' + time + '. Открыть страницу артиста',
+            tasteArtists: 'Артисты, которых волна ставит чаще',
+            tasteTags: 'Теги, на которые опирается волна',
+            tasteEmpty: 'Волне пока не на что опереться',
+            drop: 'Убрать из вкуса',
+            removed: 'Убрано из вкуса:',
+            restore: 'Вернуть во вкус волны',
+            early: 'Ранние пропуски в волне',
+            earlyTotal: (share) => share + '% за 30 дней',
+            earlyNone: 'волна ещё не играла',
+            earlyNote: 'Доля треков волны, пропущенных за первые 30 секунд. Чем ниже, тем точнее волна',
+            earlyDay: (day, share, early, total) => day + ': ' + share + '%, ' + early + ' из ' + total,
+            earlyIdle: (day) => day + ': волна не играла',
+            earlyLabel: 'Доля ранних пропусков в волне по дням за 30 дней',
         },
         en: {
             title: 'History',
@@ -122,6 +135,19 @@
             failed: 'Could not load history',
             retry: 'Retry',
             artistTip: (plays, time) => plays + ', ' + time + '. Open artist page',
+            tasteArtists: 'Artists the wave plays more often',
+            tasteTags: 'Tags the wave leans on',
+            tasteEmpty: 'Nothing for the wave to go on yet',
+            drop: 'Remove from taste',
+            removed: 'Removed from taste:',
+            restore: 'Put back into the wave’s taste',
+            early: 'Early skips in the wave',
+            earlyTotal: (share) => share + '% in 30 days',
+            earlyNone: 'the wave hasn’t played yet',
+            earlyNote: 'Share of wave tracks skipped in the first 30 seconds. Lower means a more accurate wave',
+            earlyDay: (day, share, early, total) => day + ': ' + share + '%, ' + early + ' of ' + total,
+            earlyIdle: (day) => day + ': the wave didn’t play',
+            earlyLabel: 'Share of early skips in the wave by day, last 30 days',
         },
     };
 
@@ -138,6 +164,8 @@
         results: null,
         allArtists: false,
         playing: '',
+        // Вкус глазами волны: не зависит от периода, считается по всей истории с забыванием
+        taste: null,
     };
     let T = TEXTS.ru;
     let fmtLong, fmtShort, fmtWd;
@@ -202,6 +230,7 @@
         search: '<svg width="14" height="14" viewBox="0 0 14 14" fill="none" stroke="currentColor" stroke-width="1.5"><circle cx="6" cy="6" r="4.5"/><path d="m9.5 9.5 3.5 3.5" stroke-linecap="round"/></svg>',
         prev: '<svg width="14" height="14" viewBox="0 0 14 14" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M9 2.5 4.5 7 9 11.5"/></svg>',
         next: '<svg width="14" height="14" viewBox="0 0 14 14" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M5 2.5 9.5 7 5 11.5"/></svg>',
+        undo: '<svg width="12" height="12" viewBox="0 0 12 12" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"><path d="M4 2 1.5 4.5 4 7"/><path d="M1.5 4.5H7a3.25 3.25 0 0 1 0 6.5H5"/></svg>',
     };
 
     // Куски страницы
@@ -308,6 +337,67 @@
         );
     }
 
+    // Вкус глазами волны: полоска это вес в модели относительно самого любимого
+    function tasteList(kind, entries) {
+        if (!entries.length) return '<p class="sub">' + esc(kind === 'artist' ? T.tasteEmpty : T.nothing) + '</p>';
+        const shown = entries.slice(0, 6);
+        const max = shown[0].weight || 1;
+        return (
+            '<ol class="tl">' +
+            shown.map((e, i) => {
+                const cover = kind === 'artist' ? art(e.artwork ? bigArt(e.artwork) : '', 'art round') : '';
+                const name = kind === 'artist' ? e.name : cap(e.label);
+                const key = kind === 'artist' ? e.id : e.key;
+                return (
+                    '<li class="taste' + (cover ? '' : ' noart') + '"><span class="rk num">' + (i + 1) + '</span>' + cover +
+                    '<span class="nm"><span class="nm-top"><b>' + esc(name) + '</b></span><span class="bar"><i style="width:' + ((e.weight / max) * 100).toFixed(1) + '%"></i></span></span>' +
+                    '<button class="drop" data-drop="' + kind + '" data-key="' + esc(key) + '">' + esc(T.drop) + '</button></li>'
+                );
+            }).join('') +
+            '</ol>'
+        );
+    }
+    function earlyChart(days) {
+        const cols = 'grid-template-columns:repeat(' + days.length + ',minmax(0,1fr))';
+        const lines = [0, 25, 50, 75, 100].map((v) => '<div style="bottom:' + v + '%"><span class="num">' + v + '%</span></div>').join('');
+        const last = days.length - 1;
+        const bars = days.map((d) => {
+            const share = d.total ? Math.round((d.early / d.total) * 100) : 0;
+            const day = cap(fmtWd.format(d.start));
+            const tipText = d.total ? T.earlyDay(day, share, d.early, d.total) : T.earlyIdle(day);
+            // День с волной без ранних пропусков виден чертой у оси, пустой день пуст
+            const height = d.total ? Math.max(2, share) : 0;
+            return '<div class="cc-slot" tabindex="0" data-tip="' + esc(tipText) + '" aria-label="' + esc(tipText) + '"><i style="height:' + height + '%"></i></div>';
+        }).join('');
+        const labels = days.map((d, i) => '<span>' + ((last - i) % 7 === 0 ? esc(i === last ? T.todayLower : fmtShort.format(d.start)) : '') + '</span>').join('');
+        return (
+            '<div class="cc" role="group" aria-label="' + esc(T.earlyLabel) + '"><div class="cc-plot"><div class="cc-grid">' + lines + '</div><div class="cc-bars" style="' + cols + '">' + bars + '</div></div>' +
+            '<div class="cc-x" style="' + cols + '">' + labels + '</div></div>'
+        );
+    }
+    function tasteBlock() {
+        const t = state.taste;
+        if (!t) return '';
+        const removed = [
+            ...t.removed.artists.map((a) => ['artist', a.id, a.name]),
+            ...t.removed.tags.map((g) => ['tag', g.key, cap(g.label)]),
+        ];
+        const restoreLine = removed.length
+            ? '<div class="removed"><span class="sub">' + esc(T.removed) + '</span>' +
+              removed.map(([kind, key, name]) => '<button class="chip" data-restore="' + kind + '" data-key="' + esc(key) + '" data-tip="' + esc(T.restore) + '">' + esc(name) + ICON.undo + '</button>').join('') +
+              '</div>'
+            : '';
+        const total = t.early.reduce((sum, d) => sum + d.total, 0);
+        const early = t.early.reduce((sum, d) => sum + d.early, 0);
+        return (
+            '<div class="grid2 sec"><div><div class="sec-h"><h2>' + esc(T.tasteArtists) + '</h2></div>' + tasteList('artist', t.artists) + '</div>' +
+            '<div><div class="sec-h"><h2>' + esc(T.tasteTags) + '</h2></div>' + tasteList('tag', t.tags) + '</div></div>' +
+            restoreLine +
+            '<div class="sec"><div class="sec-h"><h2>' + esc(T.early) + '</h2><span class="sub num">' + esc(total ? T.earlyTotal(Math.round((early / total) * 100)) : T.earlyNone) + '</span></div>' +
+            '<p class="sub note">' + esc(T.earlyNote) + '</p>' + earlyChart(t.early) + '</div>'
+        );
+    }
+
     function journal() {
         const data = state.day;
         const rows = data ? data.rows : [];
@@ -343,6 +433,7 @@
             '<div class="grid2 sec"><div><div class="sec-h"><h2>' + esc(T.tracks) + '</h2></div>' + topList('track', s.tracks, 8) + '</div>' +
             '<div><div class="sec-h"><h2>' + esc(T.genres) + '</h2></div>' + topList('genre', s.genres, 5) +
             '<div class="sec-h" style="margin-top:28px"><h2>' + esc(T.when) + '</h2></div>' + heatmap(s.heat) + '</div></div>' +
+            tasteBlock() +
             journal()
         );
     }
@@ -390,6 +481,15 @@
         state.selected = start;
         state.day = data;
     }
+    // Вкус не загрузился: страница живёт без него
+    async function loadTaste() {
+        try {
+            state.taste = await api.invoke('history:taste');
+        } catch (error) {
+            console.error('Вкус волны не загружен:', error);
+            state.taste = null;
+        }
+    }
     let searchToken = 0;
     async function loadResults() {
         const token = ++searchToken;
@@ -398,7 +498,7 @@
     }
     async function reload(first) {
         try {
-            await loadOverview();
+            await Promise.all([loadOverview(), first ? loadTaste() : Promise.resolve()]);
             await loadDay(state.selected || today());
             // Первое открытие без музыки сегодня: журнал последнего дня, когда она была
             if (first && !state.day.rows.length && state.day.before !== null) await loadDay(dayStart(state.day.before));
@@ -464,6 +564,17 @@
                 await loadDay(Number(data.day));
             } catch (error) {
                 console.error('День не загружен:', error);
+            }
+            return render(true);
+        }
+        if (data.drop || data.restore) {
+            const kind = data.drop || data.restore;
+            target.disabled = true;
+            try {
+                const next = await api.invoke('history:taste-remove', kind, kind === 'artist' ? Number(data.key) : data.key, !!data.drop);
+                if (next) state.taste = next;
+            } catch (error) {
+                console.error('Вкус волны не изменён:', error);
             }
             return render(true);
         }
