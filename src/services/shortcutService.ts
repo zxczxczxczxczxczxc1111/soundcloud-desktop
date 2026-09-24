@@ -52,7 +52,10 @@ export class ShortcutService {
 
     private matches(input: Input, accelerator: string): boolean {
         const parsed = this.parse(accelerator);
-        const keyMatch = input.key.toLowerCase() === parsed.key.toLowerCase();
+        // Буква узнаётся и по физической клавише: в русской раскладке Ctrl+H приходит с key «р»
+        const keyMatch =
+            input.key.toLowerCase() === parsed.key.toLowerCase() ||
+            (/^[a-z]$/i.test(parsed.key) && input.code === 'Key' + parsed.key.toUpperCase());
         const modMatch =
             input.control === parsed.control &&
             input.shift === parsed.shift &&

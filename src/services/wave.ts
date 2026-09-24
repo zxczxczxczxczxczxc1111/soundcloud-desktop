@@ -395,7 +395,10 @@ interface WaveWindow extends Window {
     __disposeWave?: () => void;
     __scWaveExclusionsChanged?: () => void;
     __scWaveTakeSignals?: () => { userId: number; signals: PlaySignal[] };
-    __scOpenTrack?: (path: string) => Promise<boolean>;
+    __scOpenTrack?: (path: string, navigate?: boolean) => Promise<boolean>;
+    __scNavigate?: (path: string) => boolean;
+    __scResolveTracks?: (ids: unknown) => Promise<{ asked: number[]; tracks: object[] } | null>;
+    __scWhoAmI?: () => Promise<number>;
     // Кэш средних цветов обложек из плавности сайта (pageMotion), ключ это путь трека
     __scmCoverColor?: (key: string) => string | undefined;
     __scmLearnCover?: (key: string, url: string) => void;
@@ -1408,18 +1411,24 @@ export function installWave(config: WaveConfig): void {
             showToast(T.toastFailed);
         }
     }
-    // Ссылка «открыть в клиенте» из Discord: переход на страницу трека внутри сайта без перезагрузки и сразу воспроизведение.
+    // Переход внутри сайта без перезагрузки: клик по ссылке ловит роутер сайта
+    function navigate(path: string): boolean {
+        if (typeof path !== 'string' || !/^\/[a-z0-9_-]{1,100}(\/[a-z0-9_-]{1,255})?$/.test(path)) return false;
+        if (location.pathname === path) return true;
+        const link = document.createElement('a');
+        link.href = path;
+        document.body.append(link);
+        link.click();
+        link.remove();
+        return true;
+    }
+    // Ссылка «открыть в клиенте» из Discord: переход на страницу трека внутри сайта без перезагрузки и сразу воспроизведение;
+    // страница истории включает трек, не уводя сайт со своей страницы.
     // false значит «сайт ещё не готов, спроси позже», true значит «сделано или повторять бессмысленно»
-    async function openTrack(path: string): Promise<boolean> {
+    async function openTrack(path: string, go = true): Promise<boolean> {
         if (!player || !SoundModel || !api) return false;
         if (!/^\/[a-z0-9_-]{1,100}\/[a-z0-9_-]{1,255}$/.test(path)) return true;
-        if (location.pathname !== path) {
-            const link = document.createElement('a');
-            link.href = path;
-            document.body.append(link);
-            link.click();
-            link.remove();
-        }
+        if (go) navigate(path);
         let track: WaveTrack | null;
         try {
             track = asTrack(await resolveUrl('https://soundcloud.com' + path));
@@ -1438,6 +1447,38 @@ export function installWave(config: WaveConfig): void {
         return true;
     }
     host.__scOpenTrack = openTrack;
+    host.__scNavigate = navigate;
+    // Страница истории: названия и обложки треков из старых записей журнала. null значит «сайт ещё не готов»;
+    // asked это id из пачек, на которые сайт ответил, остальные main спросит позже. Ответ проверяет main
+    host.__scResolveTracks = async (ids: unknown) => {
+        if (!api || !Array.isArray(ids)) return null;
+        const wanted = ids.filter((id): id is number => typeof id === 'number' && Number.isSafeInteger(id) && id > 0).slice(0, 200);
+        const asked: number[] = [];
+        const tracks: object[] = [];
+        for (let i = 0; i < wanted.length; i += 50) {
+            const part = wanted.slice(i, i + 50);
+            try {
+                for (const track of collection(await call('trackBatch', {}, { ids: part.join(',') })).map(asTrack)) {
+                    if (!track) continue;
+                    tracks.push({
+                        id: track.id,
+                        artist: trackArtist(track),
+                        title: track.title ?? '',
+                        artistName: track.user?.username ?? '',
+                        path: trackPath(track.permalink_url),
+                        artwork: track.artwork_url || track.user?.avatar_url || '',
+                        genre: track.genre ?? '',
+                        dur: track.full_duration ?? track.duration ?? 0,
+                    });
+                }
+                asked.push(...part);
+            } catch (error) {
+                console.warn('История: треки не добраны', error);
+            }
+        }
+        return { asked, tracks };
+    };
+    host.__scWhoAmI = async () => (api ? ensureUser() : 0);
     function clearSeed(): void {
         seedRequest++;
         seed = null;
@@ -2509,6 +2550,9 @@ export function installWave(config: WaveConfig): void {
         delete host.__disposeWave;
         delete host.__scWaveTakeSignals;
         delete host.__scOpenTrack;
+        delete host.__scNavigate;
+        delete host.__scResolveTracks;
+        delete host.__scWhoAmI;
     };
     host.__disposeWave = dispose;
     // Выход из приложения: main забирает недописанное вместе с текущим прослушиванием,

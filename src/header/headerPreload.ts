@@ -9,12 +9,14 @@ const SEND_CHANNELS = new Set([
     'navigate-forward',
     'refresh-page',
     'title-bar-double-click',
+    'toggle-history',
 ]);
 
 const INVOKE_CHANNELS = new Set(['get-header-texts', 'get-navigation-controls-enabled', 'get-theme-colors', 'is-maximized']);
 
 const ON_CHANNELS = new Set([
     'header-texts',
+    'history-state',
     'navigation-controls-toggle',
     'navigation-state-changed',
     'refresh-state-changed',

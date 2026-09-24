@@ -1,0 +1,647 @@
+/* Тёмная тема сайта и клиента: src/header/header.css, src/settings/settings.css, снимки главной soundcloud.com */
+:root {
+    --bg: #121212;
+    --surface: #303030;
+    --text: #ffffff;
+    --muted: #999999;
+    --faint: #757575;
+    --film: rgba(255, 255, 255, 0.06);
+    --film-strong: rgba(255, 255, 255, 0.1);
+    --line: rgba(255, 255, 255, 0.1);
+    --mark: rgba(255, 255, 255, 0.55);
+    --mark-idle: rgba(255, 255, 255, 0.12);
+    --focus: #ffffff;
+    --orange: #ff5500;
+    --tip-bg: #ffffff;
+    --tip-text: #121212;
+    /* Шкала тепловой карты: белый с альфой поверх #121212, проверена validate_palette --ordinal --mode dark */
+    --h0: rgba(255, 255, 255, 0.05);
+    --h1: rgba(255, 255, 255, 0.23);
+    --h2: rgba(255, 255, 255, 0.38);
+    --h3: rgba(255, 255, 255, 0.55);
+    --h4: rgba(255, 255, 255, 0.73);
+    --h5: rgba(255, 255, 255, 0.92);
+    --font: Söhne, system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif;
+    color-scheme: dark;
+}
+html.theme-light {
+    --bg: #ffffff;
+    --surface: #f2f2f2;
+    --text: #333333;
+    --muted: #707070;
+    --faint: #767676;
+    --film: rgba(0, 0, 0, 0.04);
+    --film-strong: rgba(0, 0, 0, 0.08);
+    --line: rgba(0, 0, 0, 0.1);
+    --mark: rgba(0, 0, 0, 0.45);
+    --mark-idle: rgba(0, 0, 0, 0.1);
+    --focus: #121212;
+    --tip-bg: #121212;
+    --tip-text: #ffffff;
+    /* Чёрный с альфой поверх белого, проверена validate_palette --ordinal --mode light */
+    --h0: rgba(0, 0, 0, 0.05);
+    --h1: rgba(0, 0, 0, 0.3);
+    --h2: rgba(0, 0, 0, 0.45);
+    --h3: rgba(0, 0, 0, 0.6);
+    --h4: rgba(0, 0, 0, 0.75);
+    --h5: rgba(0, 0, 0, 0.9);
+    color-scheme: light;
+}
+* {
+    box-sizing: border-box;
+    margin: 0;
+    padding: 0;
+}
+html,
+body {
+    height: 100%;
+    background: var(--bg);
+    color: var(--text);
+}
+body {
+    font: 14px/20px var(--font);
+    -webkit-font-smoothing: antialiased;
+    overflow: hidden;
+    user-select: none;
+}
+button,
+input {
+    font: inherit;
+    color: inherit;
+    background: none;
+    border: 0;
+}
+button {
+    cursor: pointer;
+}
+:focus-visible {
+    outline: 2px solid var(--focus);
+    outline-offset: 2px;
+}
+[hidden] {
+    display: none !important;
+}
+svg,
+img {
+    display: block;
+}
+.num {
+    font-variant-numeric: tabular-nums;
+}
+
+.hv {
+    height: 100%;
+    overflow-y: auto;
+    scrollbar-width: thin;
+    scrollbar-color: var(--film-strong) transparent;
+}
+.wrap {
+    max-width: 1240px;
+    margin: 0 auto;
+    padding: 24px 32px 64px;
+}
+.ph {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    margin-bottom: 20px;
+}
+.ph h1 {
+    font-size: 24px;
+    line-height: 30px;
+    font-weight: 700;
+    margin-right: auto;
+}
+.back {
+    flex: none;
+    width: 32px;
+    height: 32px;
+    border-radius: 50%;
+    display: grid;
+    place-items: center;
+    background: var(--film);
+    transition: background-color 120ms ease;
+}
+.back:hover {
+    background: var(--film-strong);
+}
+.search {
+    position: relative;
+    width: 280px;
+    flex: none;
+}
+.search input {
+    width: 100%;
+    height: 32px;
+    border-radius: 4px;
+    background: var(--surface);
+    padding: 0 32px 0 12px;
+    user-select: text;
+}
+.search input::placeholder {
+    color: var(--muted);
+}
+.search input::-webkit-search-cancel-button {
+    display: none;
+}
+.search svg {
+    position: absolute;
+    right: 10px;
+    top: 9px;
+    color: var(--muted);
+    pointer-events: none;
+}
+
+.seg {
+    display: flex;
+    gap: 2px;
+}
+.seg button {
+    padding: 4px 10px;
+    border-radius: 4px;
+    font-size: 13px;
+    line-height: 18px;
+    font-weight: 600;
+    color: var(--muted);
+    transition:
+        background-color 120ms ease,
+        color 120ms ease;
+}
+.seg button:hover {
+    background: var(--film);
+    color: var(--text);
+}
+.seg button[aria-pressed='true'] {
+    background: var(--film-strong);
+    color: var(--text);
+}
+
+h2 {
+    font-size: 18px;
+    line-height: 24px;
+    font-weight: 600;
+}
+.sub {
+    color: var(--muted);
+    font-size: 13px;
+    line-height: 18px;
+}
+.sec {
+    margin-bottom: 40px;
+}
+.sec-h {
+    display: flex;
+    align-items: baseline;
+    gap: 12px;
+    margin-bottom: 12px;
+}
+.sec-h h2 {
+    margin-right: auto;
+}
+.link {
+    color: var(--muted);
+    font-size: 13px;
+    font-weight: 600;
+    padding: 2px 8px;
+    border-radius: 4px;
+}
+.link:hover {
+    color: var(--text);
+    background: var(--film);
+}
+
+/* Строка прослушивания */
+.row {
+    position: relative;
+    display: grid;
+    grid-template-columns: 44px 40px minmax(0, 1fr) 150px 56px;
+    align-items: center;
+    gap: 12px;
+    height: 56px;
+    padding: 0 12px;
+    border-radius: 4px;
+    transition: background-color 120ms ease;
+}
+.row.play {
+    cursor: pointer;
+}
+.row.play:hover {
+    background: var(--film);
+}
+.row.skip > :not(.ic) {
+    opacity: 0.45;
+}
+.row.skip:hover > :not(.ic) {
+    opacity: 0.8;
+}
+.row.playing::before {
+    content: '';
+    position: absolute;
+    left: 0;
+    top: 10px;
+    bottom: 10px;
+    width: 3px;
+    border-radius: 0 2px 2px 0;
+    background: var(--orange);
+}
+.search-rows .row {
+    grid-template-columns: 96px 40px minmax(0, 1fr) 150px 56px;
+}
+.tm {
+    color: var(--muted);
+    font-size: 13px;
+    white-space: nowrap;
+}
+.art {
+    display: block;
+    width: 40px;
+    height: 40px;
+    object-fit: cover;
+    background: var(--surface);
+}
+.ti {
+    min-width: 0;
+    display: flex;
+    flex-direction: column;
+}
+.ti b,
+.ti span {
+    overflow: hidden;
+    white-space: nowrap;
+    text-overflow: ellipsis;
+}
+.ti b {
+    font-weight: 500;
+}
+.ti b.none {
+    color: var(--muted);
+    font-weight: 400;
+}
+.ti span {
+    color: var(--muted);
+    font-size: 13px;
+    line-height: 18px;
+}
+.hd {
+    display: flex;
+    flex-direction: column;
+    gap: 5px;
+}
+.bar {
+    height: 3px;
+    border-radius: 2px;
+    background: var(--film-strong);
+    overflow: hidden;
+}
+.bar i {
+    display: block;
+    height: 100%;
+    border-radius: 2px;
+    background: var(--mark);
+}
+.hn {
+    color: var(--muted);
+    font-size: 12px;
+    line-height: 14px;
+    white-space: nowrap;
+}
+.ic {
+    display: flex;
+    gap: 8px;
+    justify-content: flex-end;
+    color: var(--muted);
+}
+.ic .like {
+    color: var(--orange);
+}
+.empty {
+    padding: 40px 12px;
+    color: var(--muted);
+}
+.empty.wide {
+    padding: 96px 0;
+    max-width: 44ch;
+    font-size: 16px;
+    line-height: 24px;
+}
+
+/* Топы */
+.tl {
+    list-style: none;
+}
+.tl li {
+    display: grid;
+    grid-template-columns: 22px 40px minmax(0, 1fr);
+    align-items: center;
+    gap: 12px;
+    padding: 6px 0;
+    border-radius: 4px;
+}
+.tl li.noart {
+    grid-template-columns: 22px minmax(0, 1fr);
+}
+.tl li.play {
+    cursor: pointer;
+    margin: 0 -8px;
+    padding: 6px 8px;
+    transition: background-color 120ms ease;
+}
+.tl li.play:hover {
+    background: var(--film);
+}
+.tl .rk {
+    color: var(--faint);
+    font-size: 13px;
+    text-align: right;
+}
+.tl .nm {
+    min-width: 0;
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+}
+.tl .nm-top {
+    display: flex;
+    align-items: baseline;
+    gap: 8px;
+    min-width: 0;
+}
+.tl .nm-top b {
+    font-weight: 500;
+    overflow: hidden;
+    white-space: nowrap;
+    text-overflow: ellipsis;
+    margin-right: auto;
+}
+.tl .nm-top span {
+    color: var(--muted);
+    font-size: 13px;
+    flex: none;
+}
+.tl .nm-by {
+    color: var(--muted);
+    font-size: 13px;
+    line-height: 16px;
+    overflow: hidden;
+    white-space: nowrap;
+    text-overflow: ellipsis;
+    margin-top: -4px;
+}
+.tl .bar {
+    height: 4px;
+    background: none;
+}
+.tl .bar i {
+    border-radius: 0 2px 2px 0;
+}
+
+/* Цифры периода */
+.figs {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 16px 48px;
+}
+.fig b {
+    display: block;
+    font-size: 24px;
+    line-height: 30px;
+    font-weight: 600;
+}
+.fig span {
+    color: var(--muted);
+    font-size: 13px;
+}
+
+/* Тепловая карта */
+.hm {
+    display: grid;
+    grid-template-columns: 28px repeat(24, minmax(0, 18px));
+    gap: 2px;
+    align-items: center;
+}
+.hm span {
+    font-size: 12px;
+    line-height: 14px;
+    color: var(--faint);
+}
+.hm .hh {
+    grid-column: span 6;
+}
+.hm i {
+    aspect-ratio: 1;
+    border-radius: 2px;
+    background: var(--h0);
+}
+.hm i.l1 {
+    background: var(--h1);
+}
+.hm i.l2 {
+    background: var(--h2);
+}
+.hm i.l3 {
+    background: var(--h3);
+}
+.hm i.l4 {
+    background: var(--h4);
+}
+.hm i.l5 {
+    background: var(--h5);
+}
+.lg {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    margin-top: 10px;
+    color: var(--faint);
+    font-size: 12px;
+}
+.lg i {
+    width: 12px;
+    height: 12px;
+    border-radius: 2px;
+}
+
+/* Обзор */
+.hero {
+    display: flex;
+    align-items: flex-end;
+    flex-wrap: wrap;
+    gap: 16px 56px;
+    margin-bottom: 20px;
+}
+.big {
+    font-size: 56px;
+    line-height: 60px;
+    font-weight: 600;
+    letter-spacing: -0.02em;
+}
+.big small {
+    font-size: 24px;
+    font-weight: 500;
+    color: var(--muted);
+    letter-spacing: 0;
+    margin: 0 10px 0 4px;
+}
+.big-cap {
+    color: var(--muted);
+    margin-top: 4px;
+}
+.hero .figs {
+    margin-bottom: 6px;
+}
+.pwave {
+    margin-bottom: 40px;
+}
+.pwave svg {
+    width: 100%;
+    height: 124px;
+    cursor: pointer;
+}
+.pwave rect {
+    fill: var(--mark);
+}
+.pwave rect.idle {
+    fill: var(--mark-idle);
+}
+.pwave rect.on {
+    fill: var(--orange);
+}
+.pwave rect.echo {
+    opacity: 0.3;
+}
+.pwave-x {
+    display: flex;
+    justify-content: space-between;
+    color: var(--faint);
+    font-size: 12px;
+    margin-top: 4px;
+}
+.artists {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(112px, 1fr));
+    gap: 24px;
+}
+.artists > * {
+    min-width: 0;
+    text-align: left;
+    border-radius: 4px;
+}
+.artists .av {
+    position: relative;
+    display: block;
+    aspect-ratio: 1;
+    border-radius: 50%;
+    overflow: hidden;
+    background: var(--surface);
+    margin-bottom: 10px;
+}
+.artists .av img {
+    width: 100%;
+    height: 100%;
+    object-fit: cover;
+}
+/* Наведение: плёнка поверх обложки, а не подмена цвета */
+.artists .av::after {
+    content: '';
+    position: absolute;
+    inset: 0;
+    transition: background-color 120ms ease;
+}
+.artists button:hover .av::after {
+    background: var(--film-strong);
+}
+.artists b {
+    display: block;
+    font-weight: 500;
+    overflow: hidden;
+    white-space: nowrap;
+    text-overflow: ellipsis;
+}
+.artists span {
+    color: var(--muted);
+    font-size: 13px;
+}
+.grid2 {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 48px;
+}
+.jn {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+}
+.jn h2 {
+    margin-right: 8px;
+}
+.jn .sub {
+    margin-right: auto;
+}
+.icon-btn {
+    width: 32px;
+    height: 32px;
+    border-radius: 4px;
+    display: grid;
+    place-items: center;
+    background: var(--film);
+}
+.icon-btn:hover {
+    background: var(--film-strong);
+}
+.icon-btn:disabled {
+    opacity: 0.3;
+    cursor: default;
+}
+.jn-list {
+    margin-top: 12px;
+}
+
+.tip {
+    position: fixed;
+    z-index: 60;
+    pointer-events: none;
+    padding: 6px 10px;
+    border-radius: 4px;
+    background: var(--tip-bg);
+    color: var(--tip-text);
+    font-size: 13px;
+    line-height: 18px;
+    white-space: nowrap;
+    box-shadow: 0 4px 16px rgba(0, 0, 0, 0.4);
+}
+
+@media (max-width: 1100px) {
+    .grid2 {
+        grid-template-columns: minmax(0, 1fr);
+    }
+    .row {
+        grid-template-columns: 44px 40px minmax(0, 1fr) 110px 48px;
+    }
+    .search-rows .row {
+        grid-template-columns: 88px 40px minmax(0, 1fr) 110px 48px;
+    }
+}
+@media (max-width: 760px) {
+    .wrap {
+        padding: 16px 16px 48px;
+    }
+    .ph {
+        flex-wrap: wrap;
+    }
+    .search {
+        width: 100%;
+        order: 3;
+    }
+    .row,
+    .search-rows .row {
+        grid-template-columns: 44px 40px minmax(0, 1fr) 40px;
+    }
+    .row .hd {
+        display: none;
+    }
+}
+@media (prefers-reduced-motion: reduce) {
+    * {
+        transition: none !important;
+    }
+}

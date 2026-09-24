@@ -1,4 +1,4 @@
-// Кладёт рядом со скомпилированным кодом статические файлы шапки и панели настроек: tsc их не переносит
+// Кладёт рядом со скомпилированным кодом статические файлы шапки, панели настроек и истории: tsc их не переносит
 const fs = require('node:fs');
 const path = require('node:path');
 
@@ -12,9 +12,11 @@ for (const name of fs.readdirSync(updateSource)) {
     if (/\.(html|css|js)$/.test(name)) fs.copyFileSync(path.join(updateSource, name), path.join(updateTarget, name));
 }
 
-const settingsSource = path.join(root, 'src', 'settings');
-const settingsTarget = path.join(root, 'tsc', 'settings');
-fs.mkdirSync(settingsTarget, { recursive: true });
-for (const name of fs.readdirSync(settingsSource)) {
-    if (/\.(html|css|js)$/.test(name)) fs.copyFileSync(path.join(settingsSource, name), path.join(settingsTarget, name));
+for (const folder of ['settings', 'history']) {
+    const source = path.join(root, 'src', folder);
+    const target = path.join(root, 'tsc', folder);
+    fs.mkdirSync(target, { recursive: true });
+    for (const name of fs.readdirSync(source)) {
+        if (/\.(html|css|js)$/.test(name)) fs.copyFileSync(path.join(source, name), path.join(target, name));
+    }
 }

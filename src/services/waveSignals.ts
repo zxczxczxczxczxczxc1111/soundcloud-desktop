@@ -6,11 +6,17 @@ const isId = (value: unknown): value is number => typeof value === 'number' && N
 const isTime = (value: unknown): value is number => typeof value === 'number' && Number.isFinite(value) && value >= 0 && value <= 24 * 3600000;
 const ENDS = new Set(['done', 'skip', 'stop']);
 
-function text(value: unknown, max: number): string {
+export function text(value: unknown, max: number): string {
     if (typeof value !== 'string') return '';
     // Управляющие символы журналу не нужны: он читается построчно
     return Array.from(value, (char) => (char.charCodeAt(0) < 32 || char.charCodeAt(0) === 127 ? ' ' : char)).join('').trim().slice(0, max);
 }
+/** Путь публичного трека /user/track */
+export const TRACK_PATH = /^\/[a-z0-9_-]{1,100}\/[a-z0-9_-]{1,255}$/i;
+/** Обложка только с CDN SoundCloud */
+export const ARTWORK_URL = /^https:\/\/[a-z0-9-]+\.sndcdn\.com\/[\w./-]+$/i;
+export const trackPathOf = (value: unknown): string => (typeof value === 'string' && TRACK_PATH.test(value) ? value : '');
+export const artworkOf = (value: unknown): string => (typeof value === 'string' && value.length <= 400 && ARTWORK_URL.test(value) ? value : '');
 
 // Событие со страницы недоверенное: всё, что не проходит проверку, отбрасывается целиком
 export function validateSignal(input: unknown, now = Date.now()): PlaySignal | null {
@@ -46,8 +52,8 @@ export function validateSignal(input: unknown, now = Date.now()): PlaySignal | n
         tz: typeof value.tz === 'number' && Number.isInteger(value.tz) && Math.abs(value.tz) <= 840 ? value.tz : undefined,
         title: text(value.title, 300),
         artistName: text(value.artistName, 200),
-        path: typeof value.path === 'string' && /^\/[a-z0-9_-]{1,100}\/[a-z0-9_-]{1,255}$/i.test(value.path) ? value.path : '',
-        artwork: typeof value.artwork === 'string' && value.artwork.length <= 400 && /^https:\/\/[a-z0-9-]+\.sndcdn\.com\/[\w./-]+$/i.test(value.artwork) ? value.artwork : '',
+        path: trackPathOf(value.path),
+        artwork: artworkOf(value.artwork),
         away: value.away === true,
     };
 }

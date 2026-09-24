@@ -41,6 +41,7 @@ function applyTexts(next) {
     label('#forward-btn', texts.headerForward);
     label('#refresh-btn', isRefreshing ? texts.headerStop : texts.headerRefresh);
     label('.title-bar', texts.headerTitleBar);
+    label('#history-btn', texts.headerHistory, true);
     label('#minimize-btn', texts.headerMinimize, true);
     label('#close-btn', texts.headerClose, true);
     updateWindowControls();
@@ -179,6 +180,14 @@ document.querySelector('.navigation-controls')?.addEventListener('click', (e) =>
             }
             break;
     }
+});
+
+// История прослушиваний: кнопка подсвечена, пока открыта
+document.getElementById('history-btn')?.addEventListener('click', () => {
+    ipcRenderer.send('toggle-history');
+});
+ipcRenderer.on('history-state', (_, open) => {
+    document.getElementById('history-btn')?.setAttribute('aria-pressed', String(open === true));
 });
 
 // Window control event listeners for Windows

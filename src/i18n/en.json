@@ -77,6 +77,7 @@
     "headerMaximize": "Maximize",
     "headerRestore": "Restore",
     "headerClose": "Close",
+    "headerHistory": "History, Ctrl+H",
     "pluginPageTitle": "Plugin page",
     "pluginPageQuestion": "Open this address in the browser?",
     "pluginPageCancel": "Cancel",

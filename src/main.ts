@@ -17,6 +17,8 @@ import { pageMotionScript } from './services/pageMotion';
 import { WaveJournal } from './services/waveJournal';
 import { WaveExclusions } from './services/waveExclusions';
 import { WaveSignals } from './services/waveSignals';
+import { HistoryIndex } from './services/historyIndex';
+import { HistoryManager } from './history/historyManager';
 import { AwayTracker } from './services/awayTracker';
 import { OPEN_PROTOCOL, parseOpenLink } from './services/openLink';
 import { getSiteDictionary } from './services/siteDictionary';
@@ -166,6 +168,7 @@ let pageReloadNeeded = false;
 let waveJournal: WaveJournal | null = null;
 let waveExclusions: WaveExclusions | null = null;
 let waveSignals: WaveSignals | null = null;
+let historyManager: HistoryManager | null = null;
 let presenceService: PresenceService;
 let webhookService: WebhookService;
 let updateService: UpdateService | null = null;
@@ -332,6 +335,18 @@ function pagePainted(): Promise<unknown> {
     return contentView.webContents.executeJavaScript('new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve)))');
 }
 
+// Клавиши клиента (F1, Ctrl+H) ловят только страницы окна. Окно показывается раньше, чем в нём появляется сайт,
+// а уведомление при загрузке забирает фокус и, исчезнув, никому его не отдаёт. Без этого клавиши молчали
+// до первого щелчка по сайту. Фокус уходит в верхний слой: настройки, история или сайт
+function focusTopView(): void {
+    if (!mainWindow || mainWindow.isDestroyed() || !mainWindow.isFocused()) return;
+    const settings = settingsManager?.getView()?.webContents;
+    const pages = [settings, headerView?.webContents, contentView?.webContents];
+    if (historyManager?.focused() || pages.some((contents) => contents && !contents.isDestroyed() && contents.isFocused())) return;
+    if (settings && !settings.isDestroyed()) settings.focus();
+    else if (!historyManager?.focus() && contentView && !contentView.webContents.isDestroyed()) contentView.webContents.focus();
+}
+
 function showMainWindow(): void {
     if (!mainWindow || mainWindow.isDestroyed()) return;
     revealWindow(mainWindow, pagePainted);
@@ -359,7 +374,7 @@ function setupTray() {
 }
 
 function headerTexts(): Record<string, string> {
-    const keys = ['headerBack', 'headerForward', 'headerRefresh', 'headerStop', 'headerTitleBar', 'headerMinimize', 'headerMaximize', 'headerRestore', 'headerClose'] as const;
+    const keys = ['headerBack', 'headerForward', 'headerRefresh', 'headerStop', 'headerTitleBar', 'headerMinimize', 'headerMaximize', 'headerRestore', 'headerClose', 'headerHistory'] as const;
     return Object.fromEntries(keys.map((key) => [key, translationService.translate(key)]));
 }
 
@@ -375,6 +390,7 @@ function applyAppLanguage(): void {
         tray.setContextMenu(trayMenu);
     }
     if (headerView && !headerView.webContents.isDestroyed()) headerView.webContents.send('header-texts', headerTexts());
+    historyManager?.setLanguage(appLanguage());
     if (mainWindow && !mainWindow.isDestroyed()) thumbarService?.restore(mainWindow);
     presenceService?.refresh();
 }
@@ -639,6 +655,7 @@ function setupWindowControls() {
         if (headerView && headerView.webContents) {
             headerView.webContents.send('theme-changed', isDarkTheme);
         }
+        historyManager?.setTheme(isDarkTheme);
         applyThemeToContent(isDarkTheme);
     });
 
@@ -760,6 +777,7 @@ async function init() {
     mainWindow = createBrowserWindow(windowState);
 
     windowState.manage(mainWindow);
+    mainWindow.on('focus', focusTopView);
 
     // handle window close event for minimize to tray
     mainWindow.on('close', (event) => {
@@ -842,8 +860,10 @@ async function init() {
     themeService.onCustomThemeUpdated(() => {
         applyThemeToContent(isDarkTheme);
     });
-    notificationManager = new NotificationManager(mainWindow);
+    notificationManager = new NotificationManager(mainWindow, focusTopView);
     settingsManager = new SettingsManager(mainWindow, store, () => {
+        // Настройки открывались поверх истории: фокус возвращается в неё
+        if (historyManager?.focus()) return;
         if (!contentView.webContents.isDestroyed()) contentView.webContents.focus();
     });
     pluginService.onPluginsChanged(() => settingsManager.getView()?.webContents.send('plugins-changed'));
@@ -968,6 +988,24 @@ async function init() {
                 console.warn('Волна не перечитала исключения:', error);
             });
     });
+    // История прослушиваний: индекс поверх журнала сигналов, страница поверх сайта до его плеера
+    historyManager?.dispose();
+    historyManager = new HistoryManager(mainWindow, new HistoryIndex(path.join(app.getPath('userData'), 'wave'), waveSignals), {
+        site: () => (contentView.webContents.isDestroyed() ? null : contentView.webContents),
+        fallbackUser: () => waveExclusions?.currentUser() ?? 0,
+        language: appLanguage,
+        dark: () => isDarkTheme,
+        beforeOpen: () => {
+            if (settingsManager.getView()) settingsManager.toggle();
+        },
+        onState: (open) => {
+            if (headerView && !headerView.webContents.isDestroyed()) headerView.webContents.send('history-state', open);
+        },
+        restoreFocus: () => {
+            if (!contentView.webContents.isDestroyed()) contentView.webContents.focus();
+        },
+        attach: (contents) => shortcutService.attachToWebContents(contents),
+    });
     if (platform() === 'win32') {
         thumbarService = new ThumbarService(translationService, RESOURCES_PATH, playbackController);
         mainWindow.on('show', () => thumbarService.restore(mainWindow));
@@ -980,6 +1018,10 @@ async function init() {
 
         settingsManager.toggle();
         applyThemeToContent(isDarkTheme);
+    });
+    ipcMain.removeAllListeners('toggle-history');
+    ipcMain.on('toggle-history', (event) => {
+        if (isTrustedLocalSender(event)) historyManager?.toggle();
     });
 
     ipcMain.handle('confirm-open-homepage', async (_event, url: string) => {
@@ -1359,6 +1401,7 @@ async function init() {
     }
     await adblockService.setEnabled(store.get('adBlocker') === true).catch((error: unknown) => queueToastNotification(String(error)));
     await contentView.webContents.loadURL('https://soundcloud.com/discover').catch((error: unknown) => console.error('Не удалось загрузить SoundCloud:', error));
+    focusTopView();
     // Клиент запущен ссылкой из Discord: трек откроется, когда сайт будет готов
     const startLink = parseOpenLink(process.argv);
     if (startLink) openTrackLink(startLink);
@@ -1377,6 +1420,7 @@ function setupThemeHandlers() {
     if (settingsManager) {
         settingsManager.getView()?.webContents.send('theme-changed', isDarkTheme);
     }
+    historyManager?.setTheme(isDarkTheme);
     applyThemeToContent(isDarkTheme);
 
     // Listen for theme changes from settings or header
@@ -1399,6 +1443,7 @@ function setupThemeHandlers() {
             if (settingsManager) {
                 settingsManager.getView()?.webContents.send('theme-changed', isDarkTheme);
             }
+            historyManager?.setTheme(isDarkTheme);
             applyThemeToContent(isDarkTheme);
         }
     });
@@ -1433,6 +1478,7 @@ function initializeShortcuts() {
     if (!mainWindow || !contentView || !settingsManager) return;
 
     shortcutService.register('openSettings', 'F1', 'Open Settings', () => settingsManager.toggle());
+    shortcutService.register('openHistory', 'CommandOrControl+H', 'Listening History', () => historyManager?.toggle());
     // Как окно инкогнито в Chrome
     shortcutService.register('discordIncognito', 'CommandOrControl+Shift+N', 'Discord Incognito', () =>
         setDiscordIncognito(store.get('discordIncognito', false) !== true, true),
@@ -1540,6 +1586,7 @@ app.on('before-quit', (event) => {
     pluginService?.dispose();
     themeService?.dispose();
     settingsManager?.dispose();
+    historyManager?.dispose();
     notificationManager?.dispose();
     if (shortcutService) {
         shortcutService.destroy();
@@ -1692,6 +1739,7 @@ function setupAudioHandler() {
             void contentView.webContents.executeJavaScript(mediaControlsScript).catch(console.error);
         }
         lastTrackInfo = result;
+        historyManager?.refreshPlayer();
 
         if (pluginService) {
             pluginService.notifyTrackChange(result as unknown as Record<string, unknown>);

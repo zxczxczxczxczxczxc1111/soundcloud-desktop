@@ -35,7 +35,7 @@ export class NotificationManager {
         ipcMain.removeListener('notification-done', this.done);
     }
 
-    constructor(parentWindow: BrowserWindow) {
+    constructor(parentWindow: BrowserWindow, private returnFocus: () => void = () => undefined) {
         this.parentWindow = parentWindow;
         ipcMain.on('notification-done', this.done);
         parentWindow.once('closed', () => this.dispose());
@@ -58,6 +58,12 @@ export class NotificationManager {
             },
         });
         this.view.setBackgroundColor('#00000000');
+        // Уведомление только показывается: фокус, который оно получает при загрузке, сразу уходит обратно
+        this.view.webContents.on('focus', () => {
+            setTimeout(() => {
+                if (!this.disposed) this.returnFocus();
+            }, 0);
+        });
         return this.view;
     }
 

@@ -136,6 +136,34 @@ body.platform-darwin .navigation-controls {
     }
 }
 
+/* Кнопки клиента: видны всегда, в отличие от навигации */
+.app-actions {
+    display: flex;
+    align-items: center;
+    padding-left: 4px;
+    padding-top: 2px;
+    -webkit-app-region: no-drag;
+}
+.navigation-controls.visible + .app-actions {
+    padding-left: 0;
+}
+button.nav-button {
+    border: none;
+    background: transparent;
+    padding: 0;
+    color: inherit;
+    font: inherit;
+    cursor: default;
+}
+.nav-button[aria-pressed='true'] {
+    opacity: 1;
+    background-color: var(--hover-bg);
+}
+.nav-button:focus-visible {
+    outline: 2px solid var(--header-text);
+    outline-offset: -2px;
+}
+
 .title-bar {
     display: flex;
     align-items: center;
