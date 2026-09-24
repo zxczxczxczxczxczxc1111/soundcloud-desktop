@@ -875,8 +875,14 @@ async function initializeSettings() {
         const member = document.createElement('div');
         member.className = 'member-line-preview';
         member.textContent = tr('Под ником:') + ' ';
+        // В списке участников Discord под ником значок ноты и сама строка, без «Listening to»
+        const memberNote = document.createElement('span');
+        memberNote.className = 'member-line-note';
+        memberNote.setAttribute('aria-hidden', 'true');
+        memberNote.textContent = '♫';
+        member.appendChild(memberNote);
         const memberText = document.createElement('b');
-        memberText.textContent = 'Listening to ' + safeText(card.statusLine, 'SoundCloud');
+        memberText.textContent = safeText(card.statusLine, 'SoundCloud');
         member.appendChild(memberText);
         fragment.appendChild(member);
         return fragment;

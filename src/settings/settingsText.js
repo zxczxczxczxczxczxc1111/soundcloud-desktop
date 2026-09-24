@@ -58,7 +58,7 @@ window.SETTINGS_EN = {
     'Значок GitHub со ссылкой на клиент': 'GitHub badge linking to the client',
     'Кнопка перехода к треку': 'Button to open the track',
     'Вторая строка под ником': 'Second line under your name',
-    'Listening to Drake вместо Listening to SoundCloud': 'Listening to Drake instead of Listening to SoundCloud',
+    'Drake вместо SoundCloud': 'Drake instead of SoundCloud',
     'Инкогнито': 'Incognito',
     'Строки карточки': 'Card lines',
     'Первая': 'First',

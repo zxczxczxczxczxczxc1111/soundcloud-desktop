@@ -817,6 +817,9 @@ textarea.input {
     color: var(--text-primary);
     font-weight: 600;
 }
+.member-line-note {
+    margin-right: 4px;
+}
 .no-activity-preview {
     color: var(--text-secondary);
     font-size: 12.5px;

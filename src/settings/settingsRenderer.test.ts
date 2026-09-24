@@ -216,7 +216,8 @@ it('предпросмотр рисует карточку из main и объя
     expect(content.querySelector('.activity-details-text-preview')?.textContent).toBe('1,5 млн');
     expect(content.querySelector<HTMLElement>('.activity-image-preview')?.title).toBe('Art');
     expect(content.querySelector('.activity-image-preview img')?.getAttribute('src')).not.toBe('');
-    expect(content.querySelector('.member-line-preview b')?.textContent).toBe('Listening to Art');
+    expect(content.querySelector('.member-line-preview b')?.textContent).toBe('Art');
+    expect(content.querySelector('.member-line-preview')?.textContent).not.toContain('Listening to');
     expect(document.getElementById('noActivityPreview')?.style.display).toBe('none');
 
     emit('presence-preview-update', { track, card: null, hidden: 'incognito' });
