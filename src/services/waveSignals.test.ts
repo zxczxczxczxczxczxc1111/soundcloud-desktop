@@ -71,6 +71,8 @@ it('проверка события: тип очереди сайта и при�
     expect(validateSignal(signal({ source: 'site' }))?.source).toBe('site');
     expect(validateSignal(signal({ source: 'site:single' }))?.source).toBe('site:single');
     expect(validateSignal(signal({ source: 'wave:artist' }))?.source).toBe('wave:artist');
+    for (const kind of ['daily', 'forgotten', 'group', 'tracks']) expect(validateSignal(signal({ source: 'wave:' + kind }))?.source).toBe('wave:' + kind);
+    expect(validateSignal(signal({ source: 'wave:other' }))).toBeNull();
     expect(validateSignal(signal({ why: 'drop table' }))?.why).toBe('');
 });
 

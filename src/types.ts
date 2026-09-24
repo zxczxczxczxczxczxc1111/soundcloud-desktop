@@ -61,7 +61,7 @@ export interface PlaySignal {
     heard: number;
     /** done: дослушал, skip: ушёл раньше, stop: закрыта страница или клиент */
     end: 'done' | 'skip' | 'stop';
-    /** wave:similar, wave:fresh, wave:track, wave:artist, wave:playlist или site:<тип очереди сайта> */
+    /** wave:similar, wave:fresh, wave:track, wave:artist, wave:playlist, подборки wave:daily, wave:forgotten, wave:group, wave:tracks или site:<тип очереди сайта> */
     source: string;
     /** Почему волна взяла трек: вид причины */
     why: string;

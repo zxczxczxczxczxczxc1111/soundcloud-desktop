@@ -17,6 +17,7 @@ import { pageMotionScript } from './services/pageMotion';
 import { playerAreaScript } from './services/playerArea';
 import { WaveJournal } from './services/waveJournal';
 import { WaveExclusions } from './services/waveExclusions';
+import { WaveShelf } from './services/waveShelf';
 import { WaveSignals } from './services/waveSignals';
 import { HistoryIndex } from './services/historyIndex';
 import { HistoryManager } from './history/historyManager';
@@ -982,7 +983,7 @@ async function init() {
     // Отметки волны («Не нравится», скрытые артисты, «Не сейчас», «Больше такого»): ставит страница, снимает и F1
     const exclusions = new WaveExclusions(path.join(app.getPath('userData'), 'wave'));
     waveExclusions = exclusions;
-    for (const channel of ['soundcloud:wave-exclusions:load', 'soundcloud:wave-exclusions:set', 'get-wave-exclusions', 'remove-wave-exclusion', 'soundcloud:wave-taste']) ipcMain.removeHandler(channel);
+    for (const channel of ['soundcloud:wave-exclusions:load', 'soundcloud:wave-exclusions:set', 'get-wave-exclusions', 'remove-wave-exclusion', 'soundcloud:wave-taste', 'soundcloud:wave-shelf:load', 'soundcloud:wave-shelf:save']) ipcMain.removeHandler(channel);
     ipcMain.handle('soundcloud:wave-exclusions:load', (event, userId: unknown) =>
         isTrustedSoundCloudSender(event) ? exclusions.load(userId) : null,
     );
@@ -1028,6 +1029,22 @@ async function init() {
             return null;
         }
     });
+    // Подборки дня: снимок собирает страница, main хранит его до полуночи и подсказывает, что звучало за 30 дней
+    const shelf = new WaveShelf(path.join(app.getPath('userData'), 'wave'));
+    ipcMain.handle('soundcloud:wave-shelf:load', (event, userId: unknown) => {
+        if (!isTrustedSoundCloudSender(event)) return null;
+        let recent: number[] = [];
+        try {
+            if (typeof userId === 'number' && Number.isSafeInteger(userId) && userId > 0)
+                recent = [...new Set(historyIndex.tastePlays(userId, Date.now() - 30 * 86400000).map((play) => play.id))].slice(-5000);
+        } catch (error) {
+            console.warn('Недавние прослушивания для подборок не прочитаны:', error);
+        }
+        return { snapshot: shelf.load(userId), recent };
+    });
+    ipcMain.handle('soundcloud:wave-shelf:save', (event, userId: unknown, snapshot: unknown) =>
+        isTrustedSoundCloudSender(event) ? shelf.save(userId, snapshot) : false,
+    );
     historyManager = new HistoryManager(mainWindow, historyIndex, taste, {
         site: () => (contentView.webContents.isDestroyed() ? null : contentView.webContents),
         fallbackUser: () => waveExclusions?.currentUser() ?? 0,

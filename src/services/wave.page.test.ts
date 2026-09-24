@@ -3,7 +3,7 @@
  * @vitest-environment-options { "url": "https://soundcloud.com/discover" }
  */
 import { afterEach, beforeEach, expect, it, vi } from 'vitest';
-import { waveScript, type WaveTrack } from './wave';
+import { localDay, waveScript, type WaveTrack } from './wave';
 
 // Поддельный сайт: плеер, API и модель трека через тот же webpackJsonp, что у SoundCloud
 interface FakeItem { sound: { id: number; currentTime?(): number; getMediaDuration?(): number }; explicit?: boolean; sourceInfo?: { type: string } }
@@ -233,7 +233,7 @@ it('ПКМ по треку в списке: меню и волна от этог
 
     const event = rightClick(row.querySelector('.soundTitle__title')!);
     expect(event.defaultPrevented).toBe(true);
-    expect(menuActs()).toEqual(['wave-track', 'wave-artist', 'more', 'later', 'dislike', 'hide-artist']);
+    expect(menuActs()).toEqual(['wave-track', 'wave-artist', 'pick', 'more', 'later', 'dislike', 'hide-artist']);
     choose('wave-track');
     expect(document.querySelector('.scw-menu')).toBeNull();
     await vi.advanceTimersByTimeAsync(100);
@@ -756,4 +756,108 @@ it('ожидание рисует заготовки плиток; обложк�
         delete scope.__scmCoverColor;
         delete scope.__scmLearnCover;
     }
+});
+
+// Треки по id для trackBatch: из списка, остальные заготовкой
+const batchOf = (list: WaveTrack[]) => (query: Record<string, unknown>): WaveTrack[] =>
+    String(query.ids).split(',').map((id) => list.find((track) => track.id === Number(id)) ?? { id: Number(id), kind: 'track', user_id: 700, duration: 200000, title: 'Seed ' + id });
+
+it('полка из снимка дня: находки играют первыми по порядку, карточка отмечена, режим скрыт', async () => {
+    const finds = Array.from({ length: 12 }, (_, i): WaveTrack => ({ id: 5001 + i, kind: 'track', user_id: 600 + i, duration: 200000, title: 'Find ' + i }));
+    const site = fakeSite(relatedTracks, (name, _path, query) => (name === 'trackBatch' ? batchOf(finds)(query) : undefined));
+    const art = [0, 1, 2, 3].map((i) => 'https://i1.sndcdn.com/artworks-' + i + '-t300x300.jpg');
+    const snapshot = {
+        day: localDay(Date.now()),
+        cards: [
+            { kind: 'daily', title: '', sub: '', ids: finds.map((track) => track.id), seeds: [1], keys: [], art },
+            { kind: 'group', title: 'Techno and Industrial', sub: 'A, B', ids: [5101, 5102], seeds: [], keys: ['techno'], art: art.slice(0, 1) },
+        ],
+    };
+    const shelf = { load: vi.fn(async () => ({ snapshot, recent: [] })), save: vi.fn(async () => true) };
+    Object.assign(window, { soundcloudAPI: { waveShelf: shelf } });
+    window.eval(waveScript());
+    await vi.advanceTimersByTimeAsync(100);
+    const section = document.getElementById('sc-wave')!;
+    expect(shelf.load).toHaveBeenCalledWith(77);
+    expect(section.querySelector('.scw-shelf-h')?.textContent).toBe('Mixes');
+    const cards = section.querySelectorAll<HTMLButtonElement>('.scw-card[data-card]');
+    expect(cards).toHaveLength(2);
+    expect(cards[0].querySelector('.scw-t1')?.textContent).toBe('Daily finds');
+    expect(cards[0].querySelector('.scw-t2')?.textContent).toBe('12 tracks');
+    expect(cards[0].querySelectorAll('.scw-mix > span')).toHaveLength(4);
+    expect(cards[1].querySelector('.scw-t2')?.textContent).toBe('A, B');
+    expect(section.querySelector('.scw-seg')).not.toBeNull();
+
+    cards[0].click();
+    await vi.advanceTimersByTimeAsync(100);
+    const queued = site.player.replaceQueue.mock.calls[site.player.replaceQueue.mock.calls.length - 1][0] as FakeItem[];
+    expect(queued.map((item) => item.sound.id)).toEqual(finds.slice(0, 10).map((track) => track.id));
+    expect(section.querySelector('.scw-hint')?.textContent).toBe('Daily finds: artists new to you, until midnight');
+    expect(section.querySelector('.scw-why')?.textContent).toBe('Daily find: an artist new to you');
+    expect(section.querySelector('.scw-card[data-card="0"]')?.getAttribute('aria-pressed')).toBe('true');
+    expect(section.querySelector('.scw-seg')).toBeNull();
+    expect(shelf.save).not.toHaveBeenCalled();
+
+    // Вкус: свои лайки через один с похожими на них
+    section.querySelector<HTMLButtonElement>('.scw-card[data-card="1"]')!.click();
+    await vi.advanceTimersByTimeAsync(100);
+    const mixed = (site.player.replaceQueue.mock.calls[site.player.replaceQueue.mock.calls.length - 1][0] as FakeItem[]).map((item) => item.sound.id);
+    expect([mixed[0], mixed[2]].sort()).toEqual([5101, 5102]);
+    expect(mixed[1]).toBeGreaterThan(5000000);
+    expect(section.querySelector('.scw-hint')?.textContent).toBe('Your taste: Techno and Industrial');
+    expect(section.querySelector('.scw-card[data-card="1"]')?.getAttribute('aria-pressed')).toBe('true');
+    expect(section.querySelector('.scw-card[data-card="0"]')?.getAttribute('aria-pressed')).toBe('false');
+});
+
+it('без снимка собирает полку из лайков: находки, давно не слушал, два вкуса, и сохраняет её', async () => {
+    const liked = Array.from({ length: 30 }, (_, i): WaveTrack => ({
+        id: 2001 + i, kind: 'track', duration: 200000, title: 'Like ' + i,
+        ...(i < 15 ? { user_id: 500 + (i % 5), genre: 'Techno', tag_list: 'industrial' } : { user_id: 510 + (i % 5), genre: 'Lo-Fi', tag_list: 'chill' }),
+        user: { id: i < 15 ? 500 + (i % 5) : 510 + (i % 5), username: (i < 15 ? 'Tech' : 'Lo') + (i % 5) },
+    }));
+    fakeSite(relatedTracks, (name, _path, query) => {
+        if (name === 'soundLikesIds') return { collection: liked.map((track) => track.id) };
+        if (name === 'trackBatch') return batchOf(liked)(query);
+        return undefined;
+    });
+    const shelf = { load: vi.fn(async () => ({ snapshot: null, recent: [2001] })), save: vi.fn(async () => true) };
+    Object.assign(window, { soundcloudAPI: { waveShelf: shelf } });
+    window.eval(waveScript());
+    await vi.advanceTimersByTimeAsync(100);
+    expect(shelf.save).toHaveBeenCalledOnce();
+    const [userId, saved] = shelf.save.mock.calls[0] as unknown as [number, { day: string; cards: Array<{ kind: string; title: string; ids: number[] }> }];
+    expect(userId).toBe(77);
+    expect(saved.day).toBe(localDay(Date.now()));
+    expect(saved.cards.map((card) => card.kind)).toEqual(['daily', 'forgotten', 'group', 'group']);
+    expect(saved.cards[0].ids).toHaveLength(30);
+    expect(saved.cards[0].ids.every((id) => id > 2000000)).toBe(true);
+    expect(saved.cards[1].ids).not.toContain(2001);
+    expect(saved.cards.slice(2).map((card) => card.title).sort()).toEqual(['Lo-Fi and Chill', 'Techno and Industrial']);
+    expect(document.querySelectorAll('#sc-wave .scw-card[data-card]')).toHaveLength(4);
+});
+
+it('набор через меню: трек в подборку, кнопка в шапке включает волну по набору и очищает его', async () => {
+    const site = fakeSite(relatedTracks, siteExtra);
+    fakeExclusions();
+    const row = listRow();
+    window.eval(waveScript());
+    await vi.advanceTimersByTimeAsync(100);
+    rightClick(row.querySelector('.soundTitle__title')!);
+    choose('pick');
+    await vi.advanceTimersByTimeAsync(100);
+    expect(document.querySelector('.scw-toast')?.textContent).toBe('Picks: 1 track');
+    const section = document.getElementById('sc-wave')!;
+    expect(section.querySelector('[data-act="pick-start"]')?.textContent).toBe('1 track');
+    rightClick(row.querySelector('.soundTitle__title')!);
+    expect(menuActs()).toContain('unpick');
+    document.querySelector<HTMLElement>('.scw-menu')?.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
+
+    section.querySelector<HTMLElement>('[data-act="pick-start"]')!.click();
+    await vi.advanceTimersByTimeAsync(100);
+    const queued = site.player.replaceQueue.mock.calls[site.player.replaceQueue.mock.calls.length - 1][0] as FakeItem[];
+    expect(queued.length).toBeGreaterThan(1);
+    expect(queued.some((item) => item.sound.id === 555)).toBe(false);
+    expect(queued.some((item) => Math.floor(item.sound.id / 1000) === 555)).toBe(true);
+    expect(section.querySelector('.scw-hint')?.textContent).toBe('Wave from picks: Song');
+    expect(section.querySelector('[data-act="pick-start"]')).toBeNull();
 });

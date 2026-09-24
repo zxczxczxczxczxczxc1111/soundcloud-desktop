@@ -239,4 +239,9 @@ contextBridge.exposeInMainWorld('soundcloudAPI', {
     waveTaste: {
         load: (userId: number): Promise<unknown> => ipcRenderer.invoke('soundcloud:wave-taste', userId),
     },
+    // Подборки дня: снимок до полуночи и треки, звучавшие за 30 дней; снимок проверяет main
+    waveShelf: {
+        load: (userId: number): Promise<unknown> => ipcRenderer.invoke('soundcloud:wave-shelf:load', userId),
+        save: (userId: number, snapshot: object): Promise<unknown> => ipcRenderer.invoke('soundcloud:wave-shelf:save', userId, snapshot),
+    },
 });

@@ -3,6 +3,7 @@ import {
     WAVE_TEXTS, acceptCandidate, artworkUrl, canonicalUrl, classifyLink, formatGenres, genreKeys, genreKeysFor, isWaveEligible,
     moodTags, normalizeTag, trackPath, parseGenres, pickSpaced, reasonText, shapeSamples, topGenres, trackMatchesGenre, trackSignature,
     applyTasteReasons, tagKeys, tasteMaps, tasteOrder, tasteReason, type TasteMaps, type WaveCandidate, type WaveFilter, type WaveTrack,
+    countText, forgottenPicks, localDay, pickFinds, tasteGroups,
 } from './wave';
 
 describe('вкус волны', () => {
@@ -185,4 +186,51 @@ it('растягивает динамику формы и берёт облож�
     expect(Math.max(...shaped)).toBeCloseTo(1);
     expect(artworkUrl(track(1, { artwork_url: 'https://i1.sndcdn.com/artworks-abc-large.jpg' }), 't500x500')).toBe('https://i1.sndcdn.com/artworks-abc-t500x500.jpg');
     expect(artworkUrl(track(1, { artwork_url: 'javascript:alert(1)' }), 't300x300')).toBe('');
+});
+
+describe('подборки', () => {
+    it('сутки местные, число со словом по правилам языка', () => {
+        expect(localDay(new Date(2026, 8, 24, 23, 59).getTime())).toBe('2026-09-24');
+        expect(localDay(new Date(2026, 8, 25, 0, 0).getTime())).toBe('2026-09-25');
+        const ru = WAVE_TEXTS.ru.tracksCount;
+        expect([1, 3, 5, 11, 21, 22].map((count) => countText(count, ru, 'ru'))).toEqual(['1 трек', '3 трека', '5 треков', '11 треков', '21 трек', '22 трека']);
+        expect([1, 5].map((count) => countText(count, WAVE_TEXTS.en.tracksCount, 'en'))).toEqual(['1 track', '5 tracks']);
+        expect(reasonText({ kind: 'group', name: 'Techno' }, WAVE_TEXTS.ru)).toBe('Твой вкус: Techno');
+        expect(reasonText({ kind: 'daily' }, WAVE_TEXTS.en)).toBe('Daily find: an artist new to you');
+    });
+
+    it('делит лайки на вкусы по тегам, трек без тегов идёт за своим артистом, мелкое отбрасывается', () => {
+        const techno = Array.from({ length: 10 }, (_, i) => track(100 + i, { user_id: 1 + (i % 5), genre: 'Techno', tag_list: 'industrial "hard techno"' }));
+        const lofi = Array.from({ length: 10 }, (_, i) => track(200 + i, { user_id: 11 + (i % 5), genre: 'Lo-Fi', tag_list: 'chill jazzhop' }));
+        const polka = [track(300, { genre: 'Polka' }), track(301, { genre: 'Polka' })];
+        const bare = track(400, { user_id: 1 });
+        const items = [...techno, ...lofi, ...polka, bare].map((entry) => ({ track: entry, weight: entry.id === 105 ? 3 : 1 }));
+        const groups = tasteGroups(items, 4, 8);
+        expect(groups).toHaveLength(2);
+        expect(groups[0].keys).toEqual(expect.arrayContaining(['techno', 'industrial', 'hardtechno']));
+        expect(groups[0].labels[0]).toBe('Techno');
+        expect(groups[0].tracks[0].id).toBe(105);
+        expect(groups[0].tracks.map((entry) => entry.id)).toContain(400);
+        expect(groups[1].keys).toEqual(expect.arrayContaining(['lofi', 'chill', 'jazzhop']));
+        expect(groups.flatMap((group) => group.tracks).some((entry) => entry.id === 300)).toBe(false);
+        expect(tasteGroups(items, 4, 11)).toHaveLength(1);
+        expect(tasteGroups([], 4, 1)).toEqual([]);
+    });
+
+    it('давно не слушал: без недавнего и нелюбимого, ценное вперёд, дальше старые лайки', () => {
+        const liked = [track(1), track(2), track(3), track(4), track(5, { policy: 'SNIP' }), track(6)];
+        const weights = new Map([[1, -1.5], [3, 2]]);
+        expect(forgottenPicks(liked, new Set([2]), weights, 10).map((entry) => entry.id)).toEqual([3, 6, 4]);
+        expect(forgottenPicks(liked, new Set(), null, 2).map((entry) => entry.id)).toEqual([6, 4]);
+    });
+
+    it('находки: только новые артисты, по треку на артиста, без слышанного и перезаливок', () => {
+        const candidates = [
+            track(1, { user_id: 50 }), track(2, { user_id: 60 }), track(3, { user_id: 60 }), track(4, { user_id: 70, title: 'Same' }),
+            track(5, { user_id: 70, title: 'Same (Remastered)' }), track(6, { user_id: 80 }), track(7, { user_id: 90, policy: 'SNIP' }), track(8, { user_id: 95 }),
+        ];
+        const finds = pickFinds(candidates, (entry) => entry.id === 6, new Set([50]), null, 10);
+        expect(finds.map((entry) => entry.id).sort((a, b) => a - b)).toEqual([2, 4, 8]);
+        expect(pickFinds(candidates, () => false, new Set(), null, 2)).toHaveLength(2);
+    });
 });
