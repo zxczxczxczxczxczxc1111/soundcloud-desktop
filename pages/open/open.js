@@ -2,9 +2,10 @@
 // Переходник кнопки «Слушать в SoundCloud» из карточки Discord: пробует открыть трек в клиенте по ссылке soundcloud-desktop://,
 // без клиента уводит на soundcloud.com. Понять наверняка, открылся ли клиент, браузер не даёт, поэтому:
 // фокус ушёл со страницы (открылся клиент или диалог браузера «Открыть приложение?») значит остаёмся, иначе через 5 с на сайт.
-// Любое нажатие на странице отменяет уход: человек выбирает сам
+// Любое нажатие на странице отменяет уход: человек выбирает сам. «Открыть в клиенте» без ответа клиента ведёт на загрузку
 (() => {
     const DELAY = 5;
+    const RELEASES = 'https://github.com/zxczxczxczxczxczxc1111/soundcloud-desktop/releases/latest';
     const t = new URLSearchParams(location.search).get('t') || '';
     // Только путь публичного трека: иначе страница стала бы открытым редиректом под этим адресом
     const valid = /^[a-z0-9_-]{1,100}\/[a-z0-9_-]{1,255}$/i.test(t);
@@ -15,7 +16,7 @@
               title: 'Открываю трек в клиенте',
               countdown: (n) => 'Если клиента нет, через ' + n + ' с откроется сайт',
               idle: 'Если клиент не открылся, слушай на сайте',
-              failed: 'Клиент не открылся: похоже, он не установлен',
+              failed: 'Клиента нет, открываю страницу загрузки',
               app: 'Открыть в клиенте',
               web: 'Слушать на soundcloud.com',
           }
@@ -23,7 +24,7 @@
               title: 'Opening the track in the app',
               countdown: (n) => 'No app? The website opens in ' + n + ' s',
               idle: "If the app didn't open, listen on the website",
-              failed: "The app didn't open. It doesn't seem to be installed",
+              failed: 'No app found, opening the download page',
               app: 'Open in the app',
               web: 'Listen on soundcloud.com',
           };
@@ -78,7 +79,12 @@
             stop();
             left = false;
             launch();
-            setTimeout(() => { if (!left && document.hasFocus()) say(text.failed); }, 1500);
+            // Клиент или диалог браузера забрали бы фокус; не забрали значит клиента нет
+            setTimeout(() => {
+                if (left || !document.hasFocus()) return;
+                say(text.failed);
+                location.href = RELEASES;
+            }, 1500);
         });
     }
 
