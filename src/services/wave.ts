@@ -2080,10 +2080,11 @@ export function installWave(config: WaveConfig): void {
             showToast(T.toastFailed);
         });
     }
-    // Переход внутри сайта без перезагрузки: клик по ссылке ловит роутер сайта
+    // Переход внутри сайта без перезагрузки: клик по ссылке ловит роутер сайта.
+    // Пути те же, что пропускает sitePagePath в main: пользователь, трек, плейлист и запрос после них
     function navigate(path: string): boolean {
-        if (typeof path !== 'string' || !/^\/[a-z0-9_-]{1,100}(\/[a-z0-9_-]{1,255})?$/.test(path)) return false;
-        if (location.pathname === path) return true;
+        if (typeof path !== 'string' || !/^\/[a-z0-9_-]{1,100}(\/(sets\/)?[a-z0-9_-]{1,255})?(\?[A-Za-z0-9_.~%&=+/-]{1,500})?$/.test(path)) return false;
+        if (location.pathname + location.search === path) return true;
         const link = document.createElement('a');
         link.href = path;
         document.body.append(link);
@@ -2796,8 +2797,8 @@ export function installWave(config: WaveConfig): void {
         paint();
     }
     function updateLike(): void {
-        const like = section?.querySelector('.scw-like');
-        like?.setAttribute('aria-pressed', String(currentLiked));
+        // Класс scw-like у всех трёх кнопок ряда, сердце только по data-act
+        section?.querySelector('.scw-like[data-act="like"]')?.setAttribute('aria-pressed', String(currentLiked));
     }
 
     function samplesFor(track: WaveTrack | undefined): number[] | null {

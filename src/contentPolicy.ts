@@ -12,6 +12,30 @@ export function isWebUrl(value: string): boolean {
     catch { return false; }
 }
 
+// Где сайт сам просит полную загрузку: вход, выход, привязка аккаунтов
+const FULL_LOAD_ROUTES = new Set(['logout', 'signin', 'signup', 'login', 'connect', 'oauth', 'oauth2', 'email-preferences']);
+const PAGE_PATH = /^\/([a-z0-9_-]{1,100})(?:\/(?:sets\/)?[a-z0-9_-]{1,255})?$/;
+const PAGE_QUERY = /^(?:\?[A-Za-z0-9_.~%&=+/-]{1,500})?$/;
+
+// Путь страницы пользователя, трека или плейлиста, если полную загрузку этой страницы можно заменить переходом
+// внутри сайта. null значит «пусть грузится как просили»: другой адрес, служебный маршрут или повтор текущей страницы
+export function sitePagePath(target: string, current: string): string | null {
+    let to: URL;
+    let from: URL;
+    try {
+        to = new URL(target);
+        from = new URL(current);
+    } catch {
+        return null;
+    }
+    if (to.protocol !== 'https:' || to.hostname !== 'soundcloud.com' || to.username || to.password || to.port) return null;
+    if (from.protocol !== 'https:' || from.hostname !== 'soundcloud.com') return null;
+    if (to.pathname === from.pathname && to.search === from.search) return null;
+    const page = PAGE_PATH.exec(to.pathname);
+    if (!page || FULL_LOAD_ROUTES.has(page[1]) || !PAGE_QUERY.test(to.search)) return null;
+    return to.pathname + to.search;
+}
+
 export function protectContent(contents: WebContents, openExternal: (url: string) => Promise<void>): void {
     contents.session.setPermissionCheckHandler((_contents, permission, origin) =>
         permission === 'mediaKeySystem' && isSoundCloudUrl(origin));

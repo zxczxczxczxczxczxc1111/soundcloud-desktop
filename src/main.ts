@@ -2,7 +2,7 @@ import { DiagnosticJournal } from './services/diagnosticJournal';
 import { monitorEventLoopDelay } from 'perf_hooks';
 import { installRendererRecovery } from './services/rendererRecovery';
 import { mediaControlsScript } from './services/mediaControls';
-import { protectContent } from './contentPolicy';
+import { protectContent, sitePagePath } from './contentPolicy';
 import { DISCORD_TEXT_KEYS, validateSettingChange } from './settings/validateSetting';
 import { applyPreferenceMigrations } from './settings/preferenceMigrations';
 import { isTrustedLocalSender, trustLocalFile } from './trustedViews';
@@ -855,6 +855,30 @@ async function init() {
     contentView.setAutoResize({ width: true, height: true });
 
     protectContent(contentView.webContents, (url) => shell.openExternal(url));
+    // Ссылку из встроенных страниц новой вёрстки сайт иногда открывает полной загрузкой (window.location): музыка обрывается,
+    // волна сбрасывается. Такой переход ведёт роутер сайта; если сайт тут же снова просит полную загрузку того же адреса, она проходит
+    let softNavigation: { url: string; at: number } | null = null;
+    contentView.webContents.on('will-navigate', (event, url) => {
+        const contents = contentView.webContents;
+        const pagePath = sitePagePath(url, contents.getURL());
+        if (!pagePath) return;
+        if (softNavigation?.url === url && Date.now() - softNavigation.at < 5000) {
+            softNavigation = null;
+            return;
+        }
+        event.preventDefault();
+        softNavigation = { url, at: Date.now() };
+        diagnostics.record('page.soft-navigation', { playing: lastTrackInfo.isPlaying });
+        const fullLoad = (): void => {
+            if (!contents.isDestroyed()) contents.loadURL(url).catch((error: unknown) => console.warn('Страница сайта не открыта:', error));
+        };
+        (contents.executeJavaScript('window.__scNavigate ? window.__scNavigate(' + JSON.stringify(pagePath) + ') : false') as Promise<unknown>)
+            .then((done) => { if (done !== true) fullLoad(); })
+            .catch((error: unknown) => {
+                console.warn('Переход внутри сайта не удался:', error);
+                fullLoad();
+            });
+    });
     contentView.webContents.setUserAgent(globalUserAgent);
 
     // Initialize services

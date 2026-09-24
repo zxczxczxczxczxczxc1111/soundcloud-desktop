@@ -1,7 +1,7 @@
 import { appendFileSync, existsSync, mkdirSync, readFileSync, renameSync, statSync, unlinkSync, writeFileSync } from 'fs';
 import { join, resolve } from 'path';
 
-const events = new Set(['session.start', 'session.end', 'performance', 'runtime.error', 'runtime.warn', 'renderer.gone', 'renderer.unresponsive', 'renderer.responsive', 'page.loaded', 'page.load-failed', 'system.suspend', 'system.resume', 'gpu.status', 'process.gone', 'wave.empty']);
+const events = new Set(['session.start', 'session.end', 'performance', 'runtime.error', 'runtime.warn', 'renderer.gone', 'renderer.unresponsive', 'renderer.responsive', 'page.loaded', 'page.load-failed', 'page.soft-navigation', 'system.suspend', 'system.resume', 'gpu.status', 'process.gone', 'wave.empty']);
 const numbers = new Set([
     'cpuPercent', 'workingSetMiB', 'privateMiB', 'processes', 'loopP95Ms', 'loopMaxMs', 'updates', 'trackChanges', 'sinceUpdateMs', 'sinceProgressMs', 'exitCode', 'errorCode', 'line',
     'droppedEvents', 'uptimeSeconds', 'waveSeen', 'waveArtistTracks', 'waveMoodTags',

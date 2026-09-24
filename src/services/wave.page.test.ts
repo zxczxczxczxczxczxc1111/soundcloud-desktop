@@ -552,6 +552,30 @@ it('«Не сейчас» у играющего трека ставит след
     expect(site.player.getCurrentSound()!.id).toBe(next);
 });
 
+it('лайк в блоке или в плеере сайта зажигает сердце, а не соседние кнопки', async () => {
+    fakeSite(relatedTracks);
+    document.body.insertAdjacentHTML('beforeend', '<div class="playControls"><button class="playbackSoundBadge__like"></button></div>');
+    const siteLike = document.querySelector<HTMLButtonElement>('.playbackSoundBadge__like')!;
+    siteLike.addEventListener('click', () => siteLike.classList.toggle('sc-button-selected'));
+    window.eval(waveScript());
+    await vi.advanceTimersByTimeAsync(100);
+    const section = document.getElementById('sc-wave')!;
+    section.querySelector<HTMLButtonElement>('.scw-play')!.click();
+    await vi.advanceTimersByTimeAsync(100);
+
+    section.querySelector<HTMLButtonElement>('[data-act="like"]')!.click();
+    await vi.advanceTimersByTimeAsync(500);
+    expect(siteLike.classList.contains('sc-button-selected')).toBe(true);
+    expect(section.querySelector('[data-act="like"]')?.getAttribute('aria-pressed')).toBe('true');
+    expect(section.querySelector('[data-act="later"]')?.getAttribute('aria-pressed')).not.toBe('true');
+    expect(section.querySelector('[data-act="more"]')?.getAttribute('aria-pressed')).toBe('false');
+
+    siteLike.click();
+    await vi.advanceTimersByTimeAsync(1100);
+    expect(section.querySelector('[data-act="like"]')?.getAttribute('aria-pressed')).toBe('false');
+    expect(section.querySelector('[data-act="later"]')?.getAttribute('aria-pressed')).not.toBe('true');
+});
+
 it('отмеченное раньше не попадает в подборку, F1 заставляет перечитать отметки', async () => {
     const few = (seed: number): WaveTrack[] => [0, 1].map((i) => ({ id: seed * 1000 + i, kind: 'track', user_id: seed * 10 + i, duration: 200000, title: 'Few ' + seed + '-' + i }));
     fakeSite(few);
