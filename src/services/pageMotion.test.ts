@@ -172,12 +172,19 @@ it('спиннер списка становится заготовкой, пр�
     const menu = document.createElement('div');
     menu.className = 'searchMenu';
     document.body.append(menu);
+    // Слот сверху правой колонки сайт оставляет пустым: заготовки там нет
+    const slot = document.createElement('div');
+    slot.className = 'webiEmbeddedModule';
+    document.body.append(slot);
     const loading = spinner(list);
     const inMenu = spinner(menu);
+    const inSlot = spinner(slot);
     await tick();
     expect(loading.className).toContain('scm-skel scm-skel-stream');
     expect(loading.querySelectorAll('.scm-sk .scm-sk-row')).toHaveLength(2);
     expect(inMenu.className).not.toContain('scm-skel');
+    expect(inSlot.className).not.toContain('scm-skel');
+    expect(document.getElementById('scm-style')?.textContent).toContain('.webiEmbeddedModule>.loading{display:none}');
     const row = document.createElement('li');
     list.append(row);
     await tick();

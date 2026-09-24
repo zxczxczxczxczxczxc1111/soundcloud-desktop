@@ -191,8 +191,9 @@ export function installPageMotion(config: PageMotionConfig): void {
     }
     function skeleton(loading: HTMLElement): void {
         if (loading.classList.contains('scm-skel') || !loading.querySelector('svg')) return;
-        // Подсказки поиска, меню и окна со своим спиннером не трогаются
-        if (loading.closest('.searchMenu, .dropdownMenu, .modal')) return;
+        // Подсказки поиска, меню и окна со своим спиннером не трогаются. Слот сверху правой колонки
+        // (webiEmbeddedModule) сайт почти всегда оставляет пустым и прячет, заготовка там только мелькает
+        if (loading.closest('.searchMenu, .dropdownMenu, .modal, .webiEmbeddedModule')) return;
         const kind = skeletonKind(loading);
         loading.classList.add('scm-skel', 'scm-skel-' + kind);
         const box = document.createElement('div');
@@ -343,6 +344,7 @@ export function pageMotionCss(): string {
         // Заготовка вместо спиннера: появляется через 150 мс, быстрый ответ её не показывает
         'html .loading.scm-skel{display:block;padding:12px 0 0;height:auto;min-height:0}',
         'html .loading.scm-skel>:not(.scm-sk){display:none}',
+        'html .webiEmbeddedModule>.loading{display:none}',
         '.scm-sk{animation:scm-fade .2s var(--scm-ease) .15s backwards;text-align:left}',
         '.scm-sk-line,.scm-sk-cover,.scm-sk-thumb,.scm-sk-wave,.scm-sk-block{background:var(--scm-film);border-radius:3px}',
         '.scm-sk-line{height:10px;margin:6px 0}',

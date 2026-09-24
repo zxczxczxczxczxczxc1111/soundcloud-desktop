@@ -30,6 +30,10 @@ it('CSS прячет только выключенные блоки и толь�
         'html[data-sc-home] [data-sc-shelf="more"],html[data-sc-home] .l-sidebar-right .whoToFollowModule,' +
             'html[data-sc-home] .l-sidebar-right .mobileApps,html[data-sc-home] .l-sidebar-right .l-footer{display:none!important}',
     );
+    expect(css).not.toContain('.loading');
+    // Все полки сайта выключены: заготовка загрузки полок под волной тоже не видна
+    const shelvesOff = homeBlocksCss((key) => !/^home(More|Recent|Mixed|Stations|Trending|Made|Curated|Albums|Liked|Buzzing)$/.test(key));
+    expect(shelvesOff).toContain('html[data-sc-home] .modular-home-mixed-selection>.loading{display:none!important}');
 });
 
 it('метит полки по заголовку, незнакомую оставляет видимой и без перевода', async () => {

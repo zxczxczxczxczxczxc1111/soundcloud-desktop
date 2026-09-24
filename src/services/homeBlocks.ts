@@ -47,9 +47,12 @@ export function isHomeBlockKey(key: unknown): key is HomeBlockKey {
     return typeof key === 'string' && (HOME_BLOCK_KEYS as readonly string[]).includes(key);
 }
 
-// Правая колонка такая же в ленте, поэтому правила действуют только под меткой главной
+// Правая колонка такая же в ленте, поэтому правила действуют только под меткой главной.
+// Все полки сайта выключены: заготовка загрузки полок ведёт в пустоту и тоже прячется
 export function homeBlocksCss(isShown: (key: HomeBlockKey) => boolean): string {
     const hidden = HOME_BLOCK_KEYS.filter((key) => !isShown(key)).flatMap((key) => HOME_BLOCK_TARGETS[key].selectors.map((selector) => 'html[data-sc-home] ' + selector));
+    const shelves = HOME_BLOCK_KEYS.filter((key) => HOME_BLOCK_TARGETS[key].selectors.some((selector) => selector.startsWith('[data-sc-shelf=')));
+    if (shelves.every((key) => !isShown(key))) hidden.push('html[data-sc-home] .modular-home-mixed-selection>.loading');
     return hidden.length ? hidden.join(',') + '{display:none!important}' : '';
 }
 
