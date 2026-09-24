@@ -129,7 +129,7 @@ it('скачанную версию ставит сейчас с перезап�
     updater.emit('update-downloaded', { version: '0.2.0' });
     expect(statuses).toEqual(['downloading', 'progress:99', 'downloaded']);
     expect(updater.quitAndInstall).toHaveBeenCalledTimes(1);
-    expect(updater.quitAndInstall).toHaveBeenCalledWith(true, true);
+    expect(updater.quitAndInstall).toHaveBeenCalledWith(false, true);
     expect(notify).not.toHaveBeenCalled();
     // Второй раз установщик не запускается
     expect(service.installNow()).toBe(false);

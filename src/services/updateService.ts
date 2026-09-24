@@ -228,11 +228,12 @@ export class UpdateService {
         this.firstTimer = null;
         this.interval = null;
     }
-    /** Поставить скачанную версию сейчас: тихий установщик закрывает приложение и запускает новую версию */
+    /** Поставить скачанную версию сейчас: установщик закрывает приложение и запускает новую версию */
     public installNow(): boolean {
         if (this.disposed || this.installing || !this.updater || !this.getState().canInstall) return false;
         this.installing = true;
-        this.updater.quitAndInstall(true, true);
+        // Не тихо: между закрытием клиента и запуском новой версии проходит 10-25 с, окно установщика показывает, что идёт работа
+        this.updater.quitAndInstall(false, true);
         return true;
     }
     public dispose(): void {
