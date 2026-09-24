@@ -642,8 +642,12 @@ export function installWave(config: WaveConfig): void {
             }
         }
         const seen = new Set<number>();
+        // Трек, артист или плейлист выбраны руками: их треки остаются зёрнами, даже если артист пропущен или скрыт.
+        // Отметки действуют на подборку, иначе волна от такого трека играла бы его одного
+        const chosen = new Set(seed?.tracks.map((track) => track.id) ?? []);
         const list = mixed.filter((track) => {
-            if (seen.has(track.id) || usedSeeds.has(track.id) || skippedArtists.has(trackArtist(track)) || isExcluded(track)) return false;
+            if (seen.has(track.id) || usedSeeds.has(track.id)) return false;
+            if (!chosen.has(track.id) && (skippedArtists.has(trackArtist(track)) || isExcluded(track))) return false;
             seen.add(track.id);
             return !!seed || trackMatchesGenre(track, keys);
         });
@@ -671,9 +675,14 @@ export function installWave(config: WaveConfig): void {
         cursors.set(source + ':' + tag, { query: next, done: !next });
         return collection(body).map(asTrack).filter((track): track is WaveTrack => !!track);
     }
-    // Корни для станции трека: зёрна и найденное от них, ещё не использованные
+    // Корни для станции трека: зёрна и найденное от них, ещё не использованные; выбранные руками зёрна отметки не отсекают
     const stationRoots = (): WaveTrack[] =>
-        seed ? [...seed.tracks, ...derivedSeeds].filter((track) => !usedStations.has(track.id) && !isExcluded(track) && !skippedArtists.has(trackArtist(track))) : [];
+        seed
+            ? [
+                ...seed.tracks.filter((track) => !usedStations.has(track.id)),
+                ...derivedSeeds.filter((track) => !usedStations.has(track.id) && !isExcluded(track) && !skippedArtists.has(trackArtist(track))),
+            ]
+            : [];
     // Станция трека это системный плейлист, из него сайт берёт свой автоплей
     async function stationTracks(from: WaveTrack): Promise<WaveTrack[]> {
         return playlistTracks(await resolveUrl('https://soundcloud.com/discover/sets/track-stations:' + from.id));
@@ -869,6 +878,12 @@ export function installWave(config: WaveConfig): void {
             if (own !== generation) return false;
             preview = takeFromPool(BATCH);
         }
+        // Один стартовый трек без подобранных за ним это не волна: очередь не трогается, startSeed скажет, что похожих нет
+        if (first && !preview.some((item) => item.track.id !== first.track.id)) {
+            state = 'empty';
+            render();
+            return false;
+        }
         const batch = first ? [first, ...preview.filter((item) => item.track.id !== first.track.id)] : preview;
         preview = [];
         const items = makeItems(batch);
@@ -903,6 +918,7 @@ export function installWave(config: WaveConfig): void {
         autoplayReleased = false;
         seed = null;
         derivedSeeds = [];
+        skippedArtists.clear();
         const p = player;
         if (p && fallbackBefore !== null && p.getState('fallbackEnabled') === false) p.toggleState('fallbackEnabled', fallbackBefore);
         fallbackBefore = null;
@@ -1273,8 +1289,9 @@ export function installWave(config: WaveConfig): void {
             }
             seed = loaded.seed;
             derivedSeeds = [];
-            // Лайки прошлой волны тянули бы новую в сторону
+            // Лайки прошлой волны тянули бы новую в сторону, её пропуски отсекали бы артистов новой
             likedSeeds.length = 0;
+            skippedArtists.clear();
             popOpen = false;
             staleSeeds.clear();
             resetGeneration();
@@ -1295,6 +1312,7 @@ export function installWave(config: WaveConfig): void {
         seedRequest++;
         seed = null;
         derivedSeeds = [];
+        skippedArtists.clear();
         staleSeeds.clear();
         resetGeneration();
         if (active) void restartAhead();

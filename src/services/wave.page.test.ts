@@ -354,6 +354,68 @@ it('волна по треку из замкнутого круга похожи
     expect(queued.filter((item) => item.sound.id >= 7000).length).toBeGreaterThan(0);
 });
 
+// Случай «кровью» 24.09.2026: артиста пропустили в обычной волне, потом волна от его трека играла один этот трек
+it('пропуск артиста в прошлой волне не мешает новой волне от его трека', async () => {
+    vi.spyOn(Math, 'random').mockReturnValue(0.5);
+    // У каждого зерна среди похожих есть трек артиста 900, как у песни из списка
+    const withArtist = (seed: number): WaveTrack[] => [...relatedTracks(seed), { id: seed * 1000 + 900, kind: 'track', user_id: 900, duration: 200000, title: 'Art ' + seed }];
+    const site = fakeSite(withArtist, siteExtra);
+    fakeExclusions();
+    const row = listRow();
+    window.eval(waveScript());
+    await vi.advanceTimersByTimeAsync(100);
+    document.querySelector<HTMLButtonElement>('#sc-wave .scw-play')!.click();
+    await vi.advanceTimersByTimeAsync(1100);
+    const queued = site.player.replaceQueue.mock.calls[0][0] as FakeItem[];
+    const at = queued.findIndex((item) => item.sound.id % 1000 === 900);
+    expect(at).toBeGreaterThan(0);
+    // Трек артиста 900 заиграл и пропущен кнопкой сайта на первых секундах
+    site.setItems(queued, at);
+    await vi.advanceTimersByTimeAsync(1100);
+    site.setItems(queued, at + 1);
+    await vi.advanceTimersByTimeAsync(1100);
+
+    rightClick(row.querySelector('.soundTitle__title')!);
+    choose('wave-track');
+    await vi.advanceTimersByTimeAsync(100);
+    const seeded = site.player.replaceQueue.mock.calls[site.player.replaceQueue.mock.calls.length - 1][0] as FakeItem[];
+    expect(seeded[0].sound.id).toBe(555);
+    expect(seeded.length).toBeGreaterThan(1);
+    expect(document.querySelectorAll('#sc-wave .scw-tile[data-track]').length).toBeGreaterThan(0);
+    // Пропуск убирает артиста только из той волны, где он был: в новой его треки снова возможны
+    expect(seeded.some((item) => item.sound.id === 555900)).toBe(true);
+});
+
+it('волна от трека скрытого артиста подбирает похожих, сам артист в неё не попадает', async () => {
+    const site = fakeSite((seed) => [...relatedTracks(seed), { id: seed * 1000 + 900, kind: 'track', user_id: 900, duration: 200000, title: 'Art ' + seed }], siteExtra);
+    fakeExclusions([], [{ id: 900, title: 'Art', url: 'https://soundcloud.com/art' }]);
+    const row = listRow();
+    window.eval(waveScript());
+    await vi.advanceTimersByTimeAsync(100);
+    rightClick(row.querySelector('.soundTitle__title')!);
+    choose('wave-track');
+    await vi.advanceTimersByTimeAsync(100);
+    const queued = site.player.replaceQueue.mock.calls[site.player.replaceQueue.mock.calls.length - 1][0] as FakeItem[];
+    expect(queued[0].sound.id).toBe(555);
+    expect(queued.length).toBeGreaterThan(1);
+    expect(queued.slice(1).some((item) => Math.floor(item.sound.id / 1000) === 555)).toBe(true);
+    expect(queued.slice(1).some((item) => item.sound.id % 1000 === 900)).toBe(false);
+});
+
+it('волна от трека, к которому нечего подобрать, не играет его одного и говорит об этом', async () => {
+    const site = fakeSite((seed) => (seed === 555 ? [] : relatedTracks(seed)), siteExtra);
+    fakeExclusions();
+    const row = listRow();
+    window.eval(waveScript());
+    await vi.advanceTimersByTimeAsync(100);
+    rightClick(row.querySelector('.soundTitle__title')!);
+    choose('wave-track');
+    await vi.advanceTimersByTimeAsync(100);
+    expect(site.player.replaceQueue).not.toHaveBeenCalled();
+    expect(document.querySelector('.scw-toast')?.textContent).toBe('No similar tracks found');
+    expect(document.querySelector('#sc-wave .scw-hint')?.textContent).toBe('Similar to what you play and like');
+});
+
 it('исчерпанная подборка перед последним треком возвращает автоплей сайта', async () => {
     const few = (seed: number): WaveTrack[] => [0, 1].map((i) => ({ id: seed * 1000 + i, kind: 'track', user_id: seed * 10 + i, duration: 200000, title: 'Few ' + seed + '-' + i }));
     const site = fakeSite(few);
