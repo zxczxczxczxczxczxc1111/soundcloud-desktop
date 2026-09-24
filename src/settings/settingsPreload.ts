@@ -36,7 +36,7 @@ const INVOKE_CHANNELS = new Set([
     'remove-wave-exclusion',
 ]);
 
-const ON_CHANNELS = new Set(['presence-preview-update', 'theme-changed', 'update-translations', 'accounts-updated', 'plugins-changed', 'update-state', 'wave-exclusions-changed']);
+const ON_CHANNELS = new Set(['presence-preview-update', 'discord-incognito-changed', 'theme-changed', 'update-translations', 'accounts-updated', 'plugins-changed', 'update-state', 'wave-exclusions-changed']);
 
 function isHttpsUrl(value: string): boolean {
     try {

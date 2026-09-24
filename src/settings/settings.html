@@ -109,18 +109,47 @@
                         <h2>Discord</h2>
                         <label class="row"><span class="text">Показывать трек в статусе</span><span class="toggle"><input type="checkbox" id="discordRichPresence" /><span class="slider"></span></span></label>
                         <div class="sub" id="discordDetails">
+                            <label class="row">
+                                <span class="text"><span>Инкогнито</span><span class="hint">Ctrl+Shift+N</span></span>
+                                <span class="toggle"><input type="checkbox" id="discordIncognito" /><span class="slider"></span></span>
+                            </label>
                             <label class="row"><span class="text">Значок SoundCloud на обложке</span><span class="toggle"><input type="checkbox" id="displaySCSmallIcon" /><span class="slider"></span></span></label>
                             <label class="row"><span class="text">Значок GitHub со ссылкой на клиент</span><span class="toggle"><input type="checkbox" id="displayGithubLink" /><span class="slider"></span></span></label>
                             <label class="row"><span class="text">Кнопка перехода к треку</span><span class="toggle"><input type="checkbox" id="displayButtons" /><span class="slider"></span></span></label>
                             <label class="row">
-                                <span class="text"><span>Артист под ником</span><span class="hint">Listening to Drake вместо Listening to SoundCloud</span></span>
+                                <span class="text"><span>Вторая строка под ником</span><span class="hint">Listening to Drake вместо Listening to SoundCloud</span></span>
                                 <span class="toggle"><input type="checkbox" id="useArtistInStatusLineToggle" /><span class="slider"></span></span>
                             </label>
+                            <div class="group">Строки карточки</div>
+                            <div class="template-grid">
+                                <label for="discordLine1">Первая</label>
+                                <input type="text" class="input" id="discordLine1" maxlength="256" autocomplete="off" spellcheck="false" />
+                                <label for="discordLine2">Вторая</label>
+                                <input type="text" class="input" id="discordLine2" maxlength="256" autocomplete="off" spellcheck="false" />
+                                <label for="discordCoverText">На обложке</label>
+                                <input type="text" class="input" id="discordCoverText" maxlength="256" autocomplete="off" spellcheck="false" placeholder="Подсказка при наведении" />
+                            </div>
+                            <div class="tokens" id="discordTokens">
+                                <button type="button" class="token" data-token="{track}" title="Название трека">{track}</button>
+                                <button type="button" class="token" data-token="{artist}" title="Артист">{artist}</button>
+                                <button type="button" class="token" data-token="{genre}" title="Жанр">{genre}</button>
+                                <button type="button" class="token" data-token="{wave}" title="Моя волна, если трек из неё">{wave}</button>
+                                <button type="button" class="token" data-token="{plays}" title="Прослушивания">{plays}</button>
+                                <button type="button" class="token" data-token="{likes}" title="Лайки">{likes}</button>
+                                <button type="button" class="text-btn" id="discordTemplateReset">Как было</button>
+                            </div>
+                            <div class="group">Не показывать в Discord</div>
+                            <div class="field-stack">
+                                <textarea class="input area" id="discordHiddenArtists" rows="2" maxlength="4000" spellcheck="false" placeholder="Артисты через запятую" aria-label="Артисты, которых не видно в Discord"></textarea>
+                            </div>
+                            <div class="field-stack">
+                                <textarea class="input area" id="discordHiddenGenres" rows="2" maxlength="4000" spellcheck="false" placeholder="Жанры через запятую" aria-label="Жанры, которых не видно в Discord"></textarea>
+                            </div>
                             <div class="preview" id="presencePreviewContainer">
                                 <div class="preview-title">Так статус видят в Discord</div>
                                 <div class="discord-preview">
                                     <div class="activity-section-preview" id="activitySectionPreview">
-                                        <div class="no-activity-preview" id="noActivityPreview">Сейчас ничего не играет</div>
+                                        <div class="no-activity-preview" id="noActivityPreview" data-no-i18n>Сейчас ничего не играет</div>
                                     </div>
                                 </div>
                             </div>

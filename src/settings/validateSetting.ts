@@ -1,8 +1,11 @@
 import { HOME_BLOCK_KEYS, type HomeBlockKey } from '../services/homeBlocks';
 
-const booleanKeys = new Set(['adBlocker', 'proxyEnabled', 'webhookEnabled', 'displaySCSmallIcon', 'displayGithubLink', 'discordRichPresence', 'displayButtons', 'minimizeToTray', 'navigationControlsEnabled', 'trackParserEnabled', 'richPresencePreviewEnabled', 'hidePromotions', 'hideEventsNearYou', 'hideArtistUpsells', 'fullShuffle', 'autoUpdateEnabled', ...HOME_BLOCK_KEYS]);
-type BooleanKey = 'adBlocker' | 'proxyEnabled' | 'webhookEnabled' | 'displaySCSmallIcon' | 'displayGithubLink' | 'discordRichPresence' | 'displayButtons' | 'minimizeToTray' | 'navigationControlsEnabled' | 'trackParserEnabled' | 'richPresencePreviewEnabled' | 'hidePromotions' | 'hideEventsNearYou' | 'hideArtistUpsells' | 'fullShuffle' | 'autoUpdateEnabled' | HomeBlockKey;
-type StringKey = 'proxyHost' | 'proxyPort' | 'proxyUsername' | 'proxyPassword' | 'webhookUrl' | 'customTheme';
+const booleanKeys = new Set(['adBlocker', 'proxyEnabled', 'webhookEnabled', 'displaySCSmallIcon', 'displayGithubLink', 'discordRichPresence', 'displayButtons', 'minimizeToTray', 'navigationControlsEnabled', 'trackParserEnabled', 'richPresencePreviewEnabled', 'hidePromotions', 'hideEventsNearYou', 'hideArtistUpsells', 'fullShuffle', 'autoUpdateEnabled', 'discordIncognito', ...HOME_BLOCK_KEYS]);
+type BooleanKey = 'adBlocker' | 'proxyEnabled' | 'webhookEnabled' | 'displaySCSmallIcon' | 'displayGithubLink' | 'discordRichPresence' | 'displayButtons' | 'minimizeToTray' | 'navigationControlsEnabled' | 'trackParserEnabled' | 'richPresencePreviewEnabled' | 'hidePromotions' | 'hideEventsNearYou' | 'hideArtistUpsells' | 'fullShuffle' | 'autoUpdateEnabled' | 'discordIncognito' | HomeBlockKey;
+type StringKey = 'proxyHost' | 'proxyPort' | 'proxyUsername' | 'proxyPassword' | 'webhookUrl' | 'customTheme' | DiscordTextKey;
+/** Шаблоны строк карточки Discord и стоп-листы артистов и жанров */
+export type DiscordTextKey = 'discordLine1' | 'discordLine2' | 'discordCoverText' | 'discordHiddenArtists' | 'discordHiddenGenres';
+export const DISCORD_TEXT_KEYS: ReadonlySet<string> = new Set<DiscordTextKey>(['discordLine1', 'discordLine2', 'discordCoverText', 'discordHiddenArtists', 'discordHiddenGenres']);
 export type SettingChange = { key: BooleanKey; value: boolean } | { key: StringKey; value: string } | { key: 'webhookTriggerPercentage' | 'statusDisplayType'; value: number } | { key: 'theme'; value: 'dark' | 'light' } | { key: 'siteLanguage'; value: 'ru' | 'en' };
 
 export function validateSettingChange(input: unknown): input is SettingChange {
@@ -17,6 +20,9 @@ export function validateSettingChange(input: unknown): input is SettingChange {
     if (typeof value !== 'string') return false;
     if (key === 'proxyPassword') return value.length <= 4096;
     if (key === 'proxyHost' || key === 'proxyUsername' || key === 'customTheme') return value.length <= 256 && !/[\r\n\0]/.test(value);
+    // Шаблон это одна строка карточки; стоп-листы бывают в несколько строк
+    if (key === 'discordLine1' || key === 'discordLine2' || key === 'discordCoverText') return value.length <= 256 && !/[\r\n\0]/.test(value);
+    if (key === 'discordHiddenArtists' || key === 'discordHiddenGenres') return value.length <= 4000 && !value.includes('\0');
     if (key === 'proxyPort') return /^\d{0,5}$/.test(value) && (!value || (Number(value) >= 1 && Number(value) <= 65535));
     if (key === 'webhookUrl') {
         if (!value) return true;

@@ -1,6 +1,7 @@
 import { trustLocalFile } from '../trustedViews';
 import { ViewStyles } from '../services/viewStyles';
 import { homeBlockDefaults } from '../services/homeBlocks';
+import { TEMPLATE_DEFAULTS } from '../services/presenceService';
 import { WebContentsView, BrowserWindow, ipcMain, type IpcMainInvokeEvent } from 'electron';
 import type ElectronStore from 'electron-store';
 import type { ThemeColors } from '../utils/colorExtractor';
@@ -31,6 +32,10 @@ const defaults: Record<string, string | number | boolean> = {
     displayButtons: false,
     statusDisplayType: 1,
     richPresencePreviewEnabled: false,
+    discordIncognito: false,
+    discordHiddenArtists: '',
+    discordHiddenGenres: '',
+    ...TEMPLATE_DEFAULTS,
     autoUpdateEnabled: true,
 };
 

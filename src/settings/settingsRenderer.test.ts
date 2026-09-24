@@ -34,7 +34,7 @@ async function openSettings(
             case 'get-update-state':
                 return updateState(state.siteLanguage === 'en' ? 'en' : 'ru');
             case 'get-current-track':
-                return { title: '', author: '', duration: '', elapsed: '', isPlaying: false, artwork: '' };
+                return { track: { title: '', author: '', duration: '', elapsed: '', isPlaying: false, artwork: '' }, card: null, hidden: 'idle' };
             default:
                 throw new Error(channel);
         }
@@ -160,6 +160,75 @@ it('открывается сразу на английском, если сай
     await vi.waitFor(() => expect(document.getElementById('waveExcludedTracks')?.textContent).toBe('Empty'));
     expect(document.getElementById('proxyHost')?.getAttribute('placeholder')).toBe('Host');
     expect(russianLeft()).toEqual([]);
+});
+
+it('строки карточки: метка встаёт под курсор, ввод сохраняется одной отправкой, «Как было» возвращает шаблон', async () => {
+    const { send } = await openSettings({ theme: 'dark', discordLine1: '{track} · {genre}', discordHiddenArtists: 'Art' });
+    const line1 = document.getElementById('discordLine1') as HTMLInputElement;
+    const line2 = document.getElementById('discordLine2') as HTMLInputElement;
+    const artists = document.getElementById('discordHiddenArtists') as HTMLTextAreaElement;
+    expect(line1.value).toBe('{track} · {genre}');
+    expect(line2.value).toBe('{artist}');
+    expect(artists.value).toBe('Art');
+    expect((document.getElementById('discordCoverText') as HTMLInputElement).value).toBe('');
+
+    line2.focus();
+    line2.setSelectionRange(0, 0);
+    const token = document.querySelector<HTMLElement>('[data-token="{plays}"]')!;
+    const press = new MouseEvent('mousedown', { bubbles: true, cancelable: true });
+    token.dispatchEvent(press);
+    expect(press.defaultPrevented).toBe(true);
+    token.click();
+    expect(line2.value).toBe('{plays}{artist}');
+    expect(document.activeElement).toBe(line2);
+    await vi.waitFor(() => expect(send).toHaveBeenCalledWith('setting-changed', { key: 'discordLine2', value: '{plays}{artist}' }));
+
+    for (const value of ['Art, B', 'Art, Bo', 'Art, Bob']) {
+        artists.value = value;
+        artists.dispatchEvent(new Event('input', { bubbles: true }));
+    }
+    await vi.waitFor(() => expect(send).toHaveBeenCalledWith('setting-changed', { key: 'discordHiddenArtists', value: 'Art, Bob' }));
+    expect(send.mock.calls.filter(([, change]) => (change as { key?: string })?.key === 'discordHiddenArtists')).toHaveLength(1);
+
+    document.getElementById('discordTemplateReset')?.click();
+    expect(line1.value).toBe('{track}');
+    expect(line2.value).toBe('{artist}');
+    await vi.waitFor(() => expect(send).toHaveBeenCalledWith('setting-changed', { key: 'discordLine1', value: '{track}' }));
+    expect(send).toHaveBeenCalledWith('setting-changed', { key: 'discordLine2', value: '{artist}' });
+    expect(send.mock.calls.some(([, change]) => (change as { key?: string })?.key === 'discordCoverText')).toBe(false);
+});
+
+it('предпросмотр рисует карточку из main и объясняет, почему её нет', async () => {
+    const { send, emit } = await openSettings({ theme: 'dark', discordIncognito: false });
+    const track = { title: 'Song', author: 'Art', duration: '3:00', elapsed: '0:10', isPlaying: false, artwork: '', url: 'https://soundcloud.com/art/song' };
+    emit('presence-preview-update', {
+        track,
+        card: { details: 'Song · techno', state: '1,5 млн', largeText: 'Art', image: 'soundcloud-logo', statusLine: 'Art' },
+        hidden: null,
+    });
+    const content = document.querySelector('#activitySectionPreview .activity-content-preview') as HTMLElement;
+    expect(content.querySelector('.activity-name-preview')?.textContent).toBe('Song · techno');
+    expect(content.querySelector('.activity-details-text-preview')?.textContent).toBe('1,5 млн');
+    expect(content.querySelector<HTMLElement>('.activity-image-preview')?.title).toBe('Art');
+    expect(content.querySelector('.activity-image-preview img')?.getAttribute('src')).not.toBe('');
+    expect(content.querySelector('.member-line-preview b')?.textContent).toBe('Listening to Art');
+    expect(document.getElementById('noActivityPreview')?.style.display).toBe('none');
+
+    emit('presence-preview-update', { track, card: null, hidden: 'incognito' });
+    expect(document.querySelector('.activity-content-preview')).toBeNull();
+    const empty = document.getElementById('noActivityPreview') as HTMLElement;
+    expect(empty.style.display).toBe('block');
+    expect(empty.textContent).toBe('Инкогнито: Discord не видит, что играет');
+    emit('presence-preview-update', { track, card: null, hidden: 'genre' });
+    expect(empty.textContent).toBe('Жанр в списке скрытых, Discord его не видит');
+
+    const incognito = document.getElementById('discordIncognito') as HTMLInputElement;
+    expect(incognito.checked).toBe(false);
+    incognito.click();
+    expect(send).toHaveBeenCalledWith('setting-changed', { key: 'discordIncognito', value: true });
+    // Переключили из трея или клавишей: галочка догоняет
+    emit('discord-incognito-changed', false);
+    expect(incognito.checked).toBe(false);
 });
 
 it('волна на главной включается с вкладки «Моя волна»', async () => {

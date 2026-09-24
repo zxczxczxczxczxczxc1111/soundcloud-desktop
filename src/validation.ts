@@ -1,4 +1,4 @@
-import type { TrackInfo, TrackUpdateMessage } from './types';
+import type { TrackInfo, TrackMeta, TrackUpdateMessage } from './types';
 
 export const TRACK_UPDATE_REASONS = new Set([
     'playback-state-change',
@@ -49,6 +49,35 @@ export function validateTrackInfo(data: unknown): TrackInfo | null {
         isLiked: typeof input.isLiked === 'boolean' ? input.isLiked : false,
         url: cleanTrackUrl(input.url),
         artistUrl: cleanTrackUrl(input.artistUrl),
+    };
+}
+
+// Картинки SoundCloud лежат на sndcdn.com: чужой адрес в карточку Discord не попадает
+function cleanImageUrl(value: unknown): string {
+    const url = cleanTrackUrl(value);
+    if (!url) return '';
+    const host = new URL(url).hostname;
+    return host === 'sndcdn.com' || host.endsWith('.sndcdn.com') ? url : '';
+}
+function cleanCount(value: unknown): number {
+    return typeof value === 'number' && Number.isFinite(value) && value >= 0 ? Math.floor(Math.min(value, 1e12)) : 0;
+}
+
+export function validateTrackMeta(input: unknown): TrackMeta | null {
+    if (!input || typeof input !== 'object' || Array.isArray(input)) return null;
+    const value = input as Partial<Record<keyof TrackMeta, unknown>>;
+    if (typeof value.id !== 'number' || !Number.isSafeInteger(value.id) || value.id <= 0) return null;
+    return {
+        id: value.id,
+        url: cleanTrackUrl(value.url),
+        genre: cleanTrackString(value.genre, 80),
+        tags: cleanTrackString(value.tags, 500),
+        plays: cleanCount(value.plays),
+        likes: cleanCount(value.likes),
+        artist: cleanTrackString(value.artist, 200),
+        avatar: cleanImageUrl(value.avatar),
+        artwork: cleanImageUrl(value.artwork),
+        wave: cleanTrackString(value.wave, 200),
     };
 }
 

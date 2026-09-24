@@ -498,7 +498,7 @@ async function initializeSettings() {
         document.getElementById('diagnosticsStatus').textContent = '';
         loadPlugins();
         loadWaveExclusions();
-        updatePreview(lastTrackInfo);
+        updatePreview(lastPreview);
     });
 
     // Блоки главной и волна на главной прячутся сразу, без перезагрузки
@@ -639,12 +639,12 @@ async function initializeSettings() {
 
     document.getElementById('displayGithubLink')?.addEventListener('change', (e) => {
         ipcRenderer.send('setting-changed', { key: 'displayGithubLink', value: e.target.checked });
-        updatePreview(lastTrackInfo);
+        updatePreview(lastPreview);
     });
 
     document.getElementById('displaySCSmallIcon')?.addEventListener('change', (e) => {
         ipcRenderer.send('setting-changed', { key: 'displaySCSmallIcon', value: e.target.checked });
-        updatePreview(lastTrackInfo);
+        updatePreview(lastPreview);
     });
 
     document.getElementById('adBlocker')?.addEventListener('change', (e) => {
@@ -659,20 +659,74 @@ async function initializeSettings() {
 
     document.getElementById('displayButtons')?.addEventListener('change', (e) => {
         ipcRenderer.send('setting-changed', { key: 'displayButtons', value: e.target.checked });
-        updatePreview(lastTrackInfo);
+        updatePreview(lastPreview);
     });
 
     document.getElementById('useArtistInStatusLineToggle')?.addEventListener('change', (e) => {
         const useState = e.target.checked;
         ipcRenderer.send('setting-changed', { key: 'statusDisplayType', value: useState ? 1 : 0 });
-        updatePreview(lastTrackInfo);
+    });
+
+    // Инкогнито: переключается и отсюда, и из трея, и по Ctrl+Shift+N
+    const incognito = document.getElementById('discordIncognito');
+    incognito?.addEventListener('change', (e) => {
+        ipcRenderer.send('setting-changed', { key: 'discordIncognito', value: e.target.checked });
+    });
+    ipcRenderer.on('discord-incognito-changed', (_, value) => {
+        if (incognito) incognito.checked = value === true;
+    });
+
+    // Строки карточки и стоп-листы: сохраняются на ходу, предпросмотр собирает main
+    const TEMPLATE_DEFAULTS = { discordLine1: '{track}', discordLine2: '{artist}', discordCoverText: '' };
+    const textSettings = ['discordLine1', 'discordLine2', 'discordCoverText', 'discordHiddenArtists', 'discordHiddenGenres'];
+    const textTimers = new Map();
+    const saveText = (field) => {
+        clearTimeout(textTimers.get(field.id));
+        textTimers.set(field.id, setTimeout(() => {
+            textTimers.delete(field.id);
+            ipcRenderer.send('setting-changed', { key: field.id, value: field.value });
+        }, 250));
+    };
+    for (const key of textSettings) {
+        const field = document.getElementById(key);
+        if (!field) continue;
+        const value = initial[key];
+        field.value = typeof value === 'string' ? value : TEMPLATE_DEFAULTS[key] ?? '';
+        field.addEventListener('input', () => saveText(field));
+    }
+    // Метка вставляется в последнее поле строки, где стоял курсор
+    let templateField = document.getElementById('discordLine1');
+    for (const key of Object.keys(TEMPLATE_DEFAULTS)) document.getElementById(key)?.addEventListener('focus', (e) => (templateField = e.target));
+    document.getElementById('discordTokens')?.addEventListener('mousedown', (event) => {
+        // Фокус остаётся в поле, иначе курсор потеряет место вставки
+        if (event.target.closest('[data-token]')) event.preventDefault();
+    });
+    document.getElementById('discordTokens')?.addEventListener('click', (event) => {
+        const token = event.target.closest('[data-token]')?.dataset.token;
+        if (!token || !templateField) return;
+        const start = templateField.selectionStart ?? templateField.value.length;
+        const end = templateField.selectionEnd ?? start;
+        const next = templateField.value.slice(0, start) + token + templateField.value.slice(end);
+        if (next.length > templateField.maxLength) return;
+        templateField.value = next;
+        templateField.focus();
+        templateField.setSelectionRange(start + token.length, start + token.length);
+        saveText(templateField);
+    });
+    document.getElementById('discordTemplateReset')?.addEventListener('click', () => {
+        for (const [key, value] of Object.entries(TEMPLATE_DEFAULTS)) {
+            const field = document.getElementById(key);
+            if (!field || field.value === value) continue;
+            field.value = value;
+            saveText(field);
+        }
     });
 
     // rich presence preview logic
 
     let progressInterval = null;
     // Последний трек нужен, чтобы перерисовать предпросмотр при смене опций
-    let lastTrackInfo = null;
+    let lastPreview = null;
 
     function parseTimeToMs(time) {
         if (!time) return 0;
@@ -742,22 +796,20 @@ async function initializeSettings() {
 
     }
 
-    function createPlayingPreview(trackInfo, options) {
+    // Карточку собирает main (шаблоны, стоп-листы, запасная обложка), здесь она только рисуется
+    function createPlayingPreview(trackInfo, card, options) {
         const fragment = document.createDocumentFragment();
         fragment.appendChild(createTextElement('activity-header-preview', 'Listening to SoundCloud'));
 
         const row = document.createElement('div');
-        if (options.inlineRow) {
-            row.style.display = 'flex';
-            row.style.alignItems = 'flex-start';
-            row.style.gap = '12px';
-        } else {
-            row.className = 'activity-row-preview';
-        }
+        row.style.display = 'flex';
+        row.style.alignItems = 'flex-start';
+        row.style.gap = '12px';
 
         const imageWrap = document.createElement('div');
         imageWrap.className = 'activity-image-preview';
-        const artworkUrl = safeRemoteUrl(trackInfo.artwork).replace('50x50.', '300x300.');
+        // Ключ ассета приложения Discord вместо адреса: логотип SoundCloud
+        const artworkUrl = card.image === 'soundcloud-logo' ? SOUNDCLOUD_BADGE : safeRemoteUrl(card.image);
         if (artworkUrl) {
             const img = document.createElement('img');
             img.src = artworkUrl;
@@ -767,15 +819,14 @@ async function initializeSettings() {
             });
             imageWrap.appendChild(img);
         }
+        if (card.largeText) imageWrap.title = card.largeText;
 
         appendSmallBadge(imageWrap, options);
 
         const details = document.createElement('div');
         details.className = 'activity-details-preview';
-        details.appendChild(createTextElement('activity-name-preview', safeText(trackInfo.title, tr('Без названия'))));
-        details.appendChild(
-            createTextElement('activity-details-text-preview', safeText(trackInfo.author, tr('Неизвестный артист'))),
-        );
+        if (card.details) details.appendChild(createTextElement('activity-name-preview', card.details));
+        if (card.state) details.appendChild(createTextElement('activity-details-text-preview', card.state));
 
         const progressContainer = document.createElement('div');
         progressContainer.className = 'progress-bar-container-preview';
@@ -820,51 +871,47 @@ async function initializeSettings() {
         member.className = 'member-line-preview';
         member.textContent = tr('Под ником:') + ' ';
         const memberText = document.createElement('b');
-        memberText.textContent = 'Listening to ' + (options.artistInStatus ? safeText(trackInfo.author, 'SoundCloud') : 'SoundCloud');
+        memberText.textContent = 'Listening to ' + safeText(card.statusLine, 'SoundCloud');
         member.appendChild(memberText);
         fragment.appendChild(member);
         return fragment;
     }
 
-    function updatePreview(trackInfo) {
-        lastTrackInfo = trackInfo;
+    // Почему карточки нет, если её прячет сам клиент
+    const HIDDEN_TEXT = {
+        incognito: 'Инкогнито: Discord не видит, что играет',
+        artist: 'Артист в списке скрытых, Discord его не видит',
+        genre: 'Жанр в списке скрытых, Discord его не видит',
+    };
+    function updatePreview(preview) {
+        lastPreview = preview;
         const activitySection = document.getElementById('activitySectionPreview');
         const noActivity = document.getElementById('noActivityPreview');
+        const existingContent = activitySection?.querySelector('.activity-content-preview');
+        if (existingContent) existingContent.remove();
 
-        const displaySCSmallIcon = document.getElementById('displaySCSmallIcon')?.checked || false;
-        const displayButtons = document.getElementById('displayButtons')?.checked || false;
-        const displayGithubLink = document.getElementById('displayGithubLink')?.checked || false;
-        const artistInStatus = document.getElementById('useArtistInStatusLineToggle')?.checked || false;
-
-        if (!trackInfo || !trackInfo.isPlaying) {
+        const trackInfo = preview?.track;
+        const card = preview?.card;
+        if (!trackInfo || !card) {
+            if (noActivity) noActivity.textContent = tr(HIDDEN_TEXT[preview?.hidden] ?? 'Сейчас ничего не играет');
             if (noActivity) noActivity.style.display = 'block';
-            const existingContent = activitySection?.querySelector('.activity-content-preview');
-            if (existingContent) existingContent.remove();
             clearInterval(progressInterval);
             return;
         }
-
         if (noActivity) noActivity.style.display = 'none';
-
-        const existingContent = activitySection?.querySelector('.activity-content-preview');
-        if (existingContent) existingContent.remove();
 
         const activityContent = document.createElement('div');
         activityContent.className = 'activity-content-preview';
         // Название трека это данные. «Слушать в SoundCloud» и «SoundCloud на GitHub» Discord показывает по-русски, как здесь
         activityContent.setAttribute('data-no-i18n', '');
-
         activityContent.appendChild(
-            createPlayingPreview(trackInfo, {
-                displaySCSmallIcon,
-                displayGithubLink,
-                displayButtons,
-                artistInStatus,
-                inlineRow: true,
+            createPlayingPreview(trackInfo, card, {
+                displaySCSmallIcon: document.getElementById('displaySCSmallIcon')?.checked || false,
+                displayGithubLink: document.getElementById('displayGithubLink')?.checked || false,
+                displayButtons: document.getElementById('displayButtons')?.checked || false,
             }),
         );
         startProgressUpdate(trackInfo);
-
         if (activitySection) activitySection.appendChild(activityContent);
     }
 
@@ -896,8 +943,8 @@ async function initializeSettings() {
     }
 
     // external event triggers
-    ipcRenderer.on('presence-preview-update', (_, trackInfo) => {
-        updatePreview(trackInfo);
+    ipcRenderer.on('presence-preview-update', (_, preview) => {
+        updatePreview(preview);
     });
 
     ipcRenderer.on('theme-changed', (_, isDark) => {

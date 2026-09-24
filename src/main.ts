@@ -3,7 +3,7 @@ import { monitorEventLoopDelay } from 'perf_hooks';
 import { installRendererRecovery } from './services/rendererRecovery';
 import { mediaControlsScript } from './services/mediaControls';
 import { protectContent } from './contentPolicy';
-import { validateSettingChange } from './settings/validateSetting';
+import { DISCORD_TEXT_KEYS, validateSettingChange } from './settings/validateSetting';
 import { applyPreferenceMigrations } from './settings/preferenceMigrations';
 import { isTrustedLocalSender, trustLocalFile } from './trustedViews';
 import { PlaybackController } from './services/playbackController';
@@ -15,6 +15,7 @@ import { homeBlockDefaults, homeBlocksCss, homePageScript, isHomeBlockKey } from
 import { waveScript } from './services/wave';
 import { WaveJournal } from './services/waveJournal';
 import { WaveExclusions } from './services/waveExclusions';
+import { WaveSignals } from './services/waveSignals';
 import { getSiteDictionary } from './services/siteDictionary';
 import { shouldRunGpuInProcess } from './services/gpuProcessMode';
 import { tintIcon } from './services/devIcon';
@@ -40,7 +41,7 @@ import { setupDarwinMenu } from './macos/menu';
 import { NotificationManager } from './notifications/notificationManager';
 import { SettingsManager } from './settings/settingsManager';
 import { ProxyService } from './services/proxyService';
-import { PresenceService } from './services/presenceService';
+import { PresenceService, TEMPLATE_DEFAULTS } from './services/presenceService';
 import { TranslationService } from './services/translationService';
 import { ThumbarService } from './services/thumbarService';
 import { WebhookService } from './services/webhookService';
@@ -52,7 +53,7 @@ import { PluginService } from './services/pluginService';
 import { audioMonitorScript } from './services/audioMonitorService';
 import { showHomepageConfirmDialog, updateDialogBounds } from './settings/confirmPopup';
 import type { SiteDictionary, TrackInfo } from './types';
-import { validateTrackUpdatePayload } from './validation';
+import { validateTrackMeta, validateTrackUpdatePayload } from './validation';
 import path from 'path';
 import { platform, release } from 'os';
 
@@ -111,6 +112,10 @@ const store = new Store<Record<string, unknown>>({
         discordRichPresence: true,
         displayButtons: false,
         statusDisplayType: 1,
+        discordIncognito: false,
+        discordHiddenArtists: '',
+        discordHiddenGenres: '',
+        ...TEMPLATE_DEFAULTS,
         theme: 'dark',
         minimizeToTray: false,
         navigationControlsEnabled: false,
@@ -155,6 +160,7 @@ let networkSettingsDirty = false;
 let pageReloadNeeded = false;
 let waveJournal: WaveJournal | null = null;
 let waveExclusions: WaveExclusions | null = null;
+let waveSignals: WaveSignals | null = null;
 let presenceService: PresenceService;
 let webhookService: WebhookService;
 let updateService: UpdateService | null = null;
@@ -165,6 +171,7 @@ let themeService: ThemeService;
 let shortcutService: ShortcutService;
 let pluginService: PluginService;
 let tray: Tray | null = null;
+let trayMenu: Menu | null = null;
 let isQuitting = false;
 const devMode = process.argv.includes('--dev');
 const isMac = process.platform === 'darwin';
@@ -349,6 +356,13 @@ function setupTray() {
             label: 'Сбросить тему и плагины',
             click: () => resetThemeAndPlugins(),
         },
+        {
+            id: 'discordIncognito',
+            label: 'Инкогнито в Discord',
+            type: 'checkbox',
+            checked: store.get('discordIncognito', false) === true,
+            click: (item) => setDiscordIncognito(item.checked, false),
+        },
         { type: 'separator' },
         {
             label: 'Выход',
@@ -359,8 +373,26 @@ function setupTray() {
     ]);
 
     tray.setContextMenu(contextMenu);
+    trayMenu = contextMenu;
 
     tray.on('click', () => showMainWindow());
+}
+
+// Карточка Discord для предпросмотра в F1: трек и то, что из него собрала presenceService
+function sendPresencePreview(): void {
+    if (!presenceService) return;
+    settingsManager?.getView()?.webContents.send('presence-preview-update', { track: lastTrackInfo, ...presenceService.preview() });
+}
+
+// Инкогнито прячет только карточку Discord: журнал и обучение волны работают как обычно
+function setDiscordIncognito(value: boolean, announce: boolean): void {
+    store.set('discordIncognito', value);
+    const item = trayMenu?.getMenuItemById('discordIncognito');
+    if (item) item.checked = value;
+    presenceService?.refresh();
+    sendPresencePreview();
+    settingsManager?.getView()?.webContents.send('discord-incognito-changed', value);
+    if (announce) notificationManager?.show(value ? 'Инкогнито: Discord не видит, что играет' : 'Discord снова показывает трек');
 }
 
 // browser window config
@@ -790,6 +822,22 @@ async function init() {
     ipcMain.on('soundcloud:wave-journal:add', (event, userId: unknown, ids: unknown) => {
         if (isTrustedSoundCloudSender(event)) waveJournal?.add(userId, ids);
     });
+    // Журнал сигналов: как слушается каждый трек, из него потом учится подбор
+    waveSignals?.flush();
+    waveSignals = new WaveSignals(path.join(app.getPath('userData'), 'wave'));
+    ipcMain.removeAllListeners('soundcloud:wave-signals:add');
+    ipcMain.on('soundcloud:wave-signals:add', (event, userId: unknown, signals: unknown) => {
+        if (isTrustedSoundCloudSender(event)) waveSignals?.add(userId, signals);
+    });
+    // Жанр, счётчики и волна текущего трека для карточки Discord
+    ipcMain.removeAllListeners('soundcloud:track-meta');
+    ipcMain.on('soundcloud:track-meta', (event, payload: unknown) => {
+        if (!isTrustedSoundCloudSender(event)) return;
+        const meta = validateTrackMeta(payload);
+        if (!meta) return;
+        presenceService.updateMeta(meta);
+        sendPresencePreview();
+    });
     // «Не нравится» и скрытые артисты волны: отметки ставит страница, снимает и F1
     waveExclusions = new WaveExclusions(path.join(app.getPath('userData'), 'wave'));
     for (const channel of ['soundcloud:wave-exclusions:load', 'soundcloud:wave-exclusions:set', 'get-wave-exclusions', 'remove-wave-exclusion']) ipcMain.removeHandler(channel);
@@ -911,7 +959,7 @@ async function init() {
     ipcMain.handle('get-current-track', (event) => {
             if (!isTrustedLocalSender(event)) throw new Error('Недопустимый отправитель IPC');
 
-        return lastTrackInfo;
+        return { track: lastTrackInfo, ...presenceService.preview() };
     });
 
     // Configure session
@@ -1065,12 +1113,17 @@ async function init() {
             updateService?.setEnabled(data.value);
         } else if (key === 'statusDisplayType') {
             presenceService.setStatusDisplayType(data.value as number);
+        } else if (key === 'discordIncognito') {
+            setDiscordIncognito(data.value === true, false);
+        } else if (DISCORD_TEXT_KEYS.has(key)) {
+            presenceService.refresh();
         } else if (key === 'minimizeToTray') {
             // Update tray behavior when setting changes
             if (data.value === false && tray) {
                 // If minimize to tray is disabled, destroy the tray
                 tray.destroy();
                 tray = null;
+                trayMenu = null;
             } else if (data.value === true && !tray) {
                 // If minimize to tray is enabled, create the tray
                 setupTray();
@@ -1098,6 +1151,8 @@ async function init() {
         } else if (key === 'fullShuffle') {
             void contentView.webContents.executeJavaScript(fullShuffleScript(data.value === true)).catch(console.error);
         }
+        // Предпросмотр карточки в F1 собирает main: шаблоны, стоп-листы, строка под ником, язык чисел
+        if (key.startsWith('discord') || key.startsWith('display') || key === 'statusDisplayType' || key === 'trackParserEnabled' || key === 'siteLanguage') sendPresencePreview();
     });
 
     // handle account switching
@@ -1268,6 +1323,10 @@ function initializeShortcuts() {
     if (!mainWindow || !contentView || !settingsManager) return;
 
     shortcutService.register('openSettings', 'F1', 'Open Settings', () => settingsManager.toggle());
+    // Как окно инкогнито в Chrome
+    shortcutService.register('discordIncognito', 'CommandOrControl+Shift+N', 'Discord Incognito', () =>
+        setDiscordIncognito(store.get('discordIncognito', false) !== true, true),
+    );
 
     if (devMode) {
         shortcutService.register('devTools', 'F12', 'Open Developer Tools', () => {
@@ -1350,6 +1409,7 @@ app.on('before-quit', () => {
     adblockService?.dispose();
     webhookService?.dispose();
     waveJournal?.flush();
+    waveSignals?.flush();
     updateService?.dispose();
     pluginService?.dispose();
     themeService?.dispose();
@@ -1368,6 +1428,8 @@ app.on('will-quit', () => {
     clearInterval(diagnosticTimer);
     loopDelay.disable();
     diagnostics.close();
+    // Страница при закрытии досылает последнее прослушивание уже после before-quit
+    waveSignals?.flush();
     if (tray) {
         tray.destroy();
         tray = null;
@@ -1489,9 +1551,7 @@ function setupAudioHandler() {
         void presenceService.updatePresence(result).catch(console.error);
 
         // update rich presence preview in settings
-        if (settingsManager) {
-            settingsManager.getView()?.webContents.send('presence-preview-update', result);
-        }
+        sendPresencePreview();
 
         if (thumbarService) {
             thumbarService.updateThumbarButtons(mainWindow, result.isPlaying, result.isLiked);

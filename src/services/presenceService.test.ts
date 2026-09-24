@@ -30,7 +30,8 @@ vi.mock('@xhayper/discord-rpc', () => ({
         }
     },
 }));
-import { PresenceService, PRESENCE_INTERVAL_MS, GITHUB_ICON_URL, GITHUB_REPOSITORY_URL } from './presenceService';
+import { PresenceService, PRESENCE_INTERVAL_MS, GITHUB_ICON_URL, GITHUB_REPOSITORY_URL, LOGO_ASSET, formatCount, renderTemplate } from './presenceService';
+import type { TrackMeta } from '../types';
 
 const track: TrackInfo = {
     title: 'First',
@@ -189,4 +190,96 @@ it('заголовок остаётся SoundCloud, когда в строке �
     await service.updatePresence(track);
     await vi.advanceTimersByTimeAsync(0);
     expect(mocks.setActivity).toHaveBeenLastCalledWith(expect.objectContaining({ name: 'SoundCloud', statusDisplayType: 0 }));
+});
+
+describe('шаблоны, инкогнито и стоп-листы', () => {
+    const meta: TrackMeta = {
+        id: 5,
+        url: 'https://soundcloud.com/artist/first',
+        genre: 'Witch House',
+        tags: 'dark "cold wave"',
+        plays: 120794,
+        likes: 21,
+        artist: 'Uploader',
+        avatar: 'https://i1.sndcdn.com/avatars-abc-large.jpg',
+        artwork: '',
+        wave: 'Моя волна · Похожее',
+    };
+    let settings: Map<string, unknown>;
+    let custom: PresenceService;
+    beforeEach(() => {
+        settings = new Map<string, unknown>([['discordRichPresence', true], ['displayGithubLink', false]]);
+        custom = new PresenceService({ get: (key, fallback) => (settings.has(key) ? settings.get(key) : fallback) }, new TranslationService());
+    });
+    afterEach(async () => {
+        await custom.dispose();
+    });
+    const last = () => mocks.setActivity.mock.calls[mocks.setActivity.mock.calls.length - 1][0];
+
+    it('собирает строки по шаблону из сведений страницы и убирает следы пустых полей', async () => {
+        settings.set('discordLine1', '{track} · {genre}');
+        settings.set('discordLine2', '{artist} · {plays}');
+        settings.set('discordCoverText', '{wave} · {likes}');
+        custom.updateMeta(meta);
+        await custom.updatePresence(track);
+        await vi.advanceTimersByTimeAsync(0);
+        expect(last()).toEqual(expect.objectContaining({ details: 'First · Witch House', state: 'Artist · 120,8 тыс. прослушиваний', largeImageText: 'Моя волна · Похожее · 21 лайк' }));
+        // Сведения о другом треке не подмешиваются
+        await vi.advanceTimersByTimeAsync(PRESENCE_INTERVAL_MS);
+        await custom.updatePresence({ ...track, url: 'https://soundcloud.com/artist/second', title: 'Second' });
+        await vi.advanceTimersByTimeAsync(PRESENCE_INTERVAL_MS);
+        expect(last()).toEqual(expect.objectContaining({ details: 'Second', state: 'Artist', largeImageText: undefined }));
+    });
+    it('пустой шаблон строки убирает строку из карточки', async () => {
+        settings.set('discordLine2', '');
+        await custom.updatePresence(track);
+        expect(last().state).toBeUndefined();
+        expect(last().stateUrl).toBeUndefined();
+        expect(custom.preview().card?.statusLine).toBe('SoundCloud');
+    });
+    it('вместо серой заглушки аватара ставит аватар из модели или логотип', async () => {
+        await custom.updatePresence({ ...track, artwork: 'https://a1.sndcdn.com/images/default_avatar_t500x500.png' });
+        expect(last().largeImageKey).toBe(LOGO_ASSET);
+        custom.updateMeta(meta);
+        await vi.advanceTimersByTimeAsync(PRESENCE_INTERVAL_MS);
+        expect(last().largeImageKey).toBe('https://i1.sndcdn.com/avatars-abc-t500x500.jpg');
+    });
+    it('инкогнито и стоп-листы снимают карточку и называют причину', async () => {
+        await custom.updatePresence(track);
+        expect(mocks.setActivity).toHaveBeenCalledTimes(1);
+        settings.set('discordIncognito', true);
+        custom.refresh();
+        await vi.advanceTimersByTimeAsync(PRESENCE_INTERVAL_MS);
+        expect(mocks.clearActivity).toHaveBeenCalledTimes(1);
+        expect(custom.preview()).toEqual({ card: null, hidden: 'incognito' });
+
+        settings.set('discordIncognito', false);
+        settings.set('discordHiddenArtists', 'someone, ARTIST');
+        custom.refresh();
+        expect(custom.preview().hidden).toBe('artist');
+        settings.set('discordHiddenArtists', '');
+        settings.set('discordHiddenGenres', 'techno\ncold wave');
+        custom.updateMeta(meta);
+        expect(custom.preview().hidden).toBe('genre');
+        settings.set('discordHiddenGenres', 'techno');
+        custom.refresh();
+        expect(custom.preview().hidden).toBeNull();
+    });
+});
+
+it('числа со словом: русские формы, сокращения, английский', () => {
+    expect(formatCount(1, 'plays', 'ru')).toBe('1 прослушивание');
+    expect(formatCount(3, 'likes', 'ru')).toBe('3 лайка');
+    expect(formatCount(11, 'likes', 'ru')).toBe('11 лайков');
+    expect(formatCount(1500000, 'plays', 'ru')).toBe('1,5\u00a0млн прослушиваний');
+    expect(formatCount(1, 'plays', 'en')).toBe('1 play');
+    expect(formatCount(1200, 'likes', 'en')).toBe('1.2K likes');
+    expect(formatCount(0, 'plays', 'ru')).toBe('');
+});
+
+it('шаблон без пустых полей не трогает дефисы и двоеточия внутри названий', () => {
+    expect(renderTemplate('{artist} - {track}', { artist: '', track: 'Lo-Fi: Intro' })).toBe('Lo-Fi: Intro');
+    expect(renderTemplate('{track} ({genre})', { track: 'A', genre: '' })).toBe('A');
+    expect(renderTemplate('{track} | {genre} | {plays}', { track: 'A', genre: '', plays: '5 plays' })).toBe('A | 5 plays');
+    expect(renderTemplate('{unknown} {track}', { track: 'A' })).toBe('{unknown} A');
 });
