@@ -203,6 +203,17 @@ it('без модулей сайта говорит, что волна не ра
     expect(document.querySelector<HTMLButtonElement>('#sc-wave .scw-play')?.disabled).toBe(true);
 });
 
+it('часы в блоке открывают историю, даже когда волна не работает', async () => {
+    const openHistory = vi.fn();
+    Object.assign(window, { webpackJsonp: [], soundcloudAPI: { openHistory } });
+    window.eval(waveScript());
+    await vi.advanceTimersByTimeAsync(21000);
+    const history = document.querySelector<HTMLButtonElement>('#sc-wave [data-act="history"]')!;
+    expect(history.getAttribute('aria-label')).toBe('History, Ctrl+H');
+    history.click();
+    expect(openHistory).toHaveBeenCalledOnce();
+});
+
 // Мост в main: отметки «Не нравится» и скрытых артистов
 function fakeExclusions(tracks: object[] = [], artists: object[] = []) {
     const bridge = { load: vi.fn(async () => ({ tracks, artists })), set: vi.fn(async () => true) };

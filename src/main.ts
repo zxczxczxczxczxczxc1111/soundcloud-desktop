@@ -978,6 +978,10 @@ async function init() {
     ipcMain.on('soundcloud:player-area', (event, height: unknown, viewport: unknown) => {
         if (isTrustedSoundCloudSender(event)) historyManager?.setPlayerArea(height, viewport);
     });
+    ipcMain.removeAllListeners('soundcloud:open-history');
+    ipcMain.on('soundcloud:open-history', (event) => {
+        if (isTrustedSoundCloudSender(event)) historyManager?.show();
+    });
     // Жанр, счётчики и волна текущего трека для карточки Discord
     ipcMain.removeAllListeners('soundcloud:track-meta');
     ipcMain.on('soundcloud:track-meta', (event, payload: unknown) => {

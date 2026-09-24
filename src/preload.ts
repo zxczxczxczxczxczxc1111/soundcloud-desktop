@@ -221,6 +221,10 @@ contextBridge.exposeInMainWorld('soundcloudAPI', {
     reportPlayerArea: (height: unknown, viewport: unknown) => {
         ipcRenderer.send('soundcloud:player-area', height, viewport);
     },
+    // Кнопка с часами в блоке «Моей волны»: та же история, что по Ctrl+H
+    openHistory: () => {
+        ipcRenderer.send('soundcloud:open-history');
+    },
     // Жанр, счётчики и волна текущего трека для карточки Discord
     sendTrackMeta: (meta: unknown) => {
         ipcRenderer.send('soundcloud:track-meta', meta);

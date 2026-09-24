@@ -9,7 +9,13 @@ const numbers = new Set([
 const flags = new Set(['playing', 'hasTrack', 'windowVisible', 'windowMinimized', 'settingsOpen', 'previousUnclean', 'adblock', 'proxy', 'dirty', 'discord', 'githubBadge']);
 const reasons = new Set(['clean-exit', 'abnormal-exit', 'killed', 'crashed', 'oom', 'launch-failed', 'integrity-failure', 'memory-eviction']);
 const errorTypes = new Set(['Error', 'TypeError', 'RangeError', 'ReferenceError', 'SyntaxError', 'URIError', 'AggregateError']);
-const sourceFiles = new Set(['main', 'presenceService', 'proxyService', 'adblockService', 'webhookService', 'pluginService', 'pluginProcess', 'themeService', 'settingsManager', 'notificationManager', 'rendererRecovery', 'playbackController', 'viewStyles', 'gpu', 'utility', 'process']);
+const sourceFiles = new Set([
+    'main', 'presenceService', 'proxyService', 'adblockService', 'webhookService', 'pluginService', 'pluginProcess', 'themeService', 'settingsManager', 'notificationManager', 'rendererRecovery', 'playbackController', 'viewStyles', 'gpu', 'utility', 'process',
+    'contentPolicy', 'confirmPopup', 'updateScreen', 'updateService', 'awayTracker', 'hiddenPageWatchdog', 'revealWindow', 'shortcutService', 'thumbarService',
+    'waveJournal', 'waveExclusions', 'waveSignals', 'historyIndex', 'historyManager',
+]);
+// Предупреждение самого Node (устаревший модуль, утечка слушателей) печатается через console.error с этим началом
+const NODE_WARNING = /^\([a-z]+:\d+\) /;
 type Fields = Record<string, unknown>;
 
 // В журнал попадают только перечисленные поля. Тексты ошибок, URL и настройки не сериализуются.
@@ -104,6 +110,11 @@ export class DiagnosticJournal {
         const error = console.error;
         const warn = console.warn;
         const capture = (event: string, args: unknown[]): void => {
+            // Иначе каждое такое предупреждение при запуске ложилось в журнал ошибкой без источника
+            if (typeof args[0] === 'string' && NODE_WARNING.test(args[0])) {
+                this.record('runtime.warn', { component: 'process' });
+                return;
+            }
             const problem = args.find((arg) => arg instanceof Error);
             const caller = new Error().stack ?? '';
             const match = caller.match(/[\\/]([a-zA-Z]+)\.js:(\d+):\d+/g)?.map(frame => /[\\/]([a-zA-Z]+)\.js:(\d+)/.exec(frame)).find(frame => frame && sourceFiles.has(frame[1]));

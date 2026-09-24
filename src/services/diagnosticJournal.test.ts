@@ -34,6 +34,17 @@ it('пустая волна: в журнал попадают только чи�
     expect(line.title).toBeUndefined();
     expect(line.url).toBeUndefined();
 });
+it('предупреждение Node пишется предупреждением процесса, а не ошибкой без источника', () => {
+    const { root, journal } = create();
+    const stderr = vi.spyOn(console, 'error').mockImplementation(() => undefined);
+    journal.captureConsole();
+    console.error('(node:4924) [DEP0040] DeprecationWarning: The `punycode` module is deprecated. Please use a userland alternative instead.');
+    journal.exportTo(join(root, 'export.log'));
+    const events = readFileSync(join(root, 'export.log'), 'utf8').trim().split('\n').map((line) => JSON.parse(line) as Record<string, unknown>);
+    expect(events[events.length - 1]).toMatchObject({ event: 'runtime.warn', component: 'process' });
+    expect(events.some((event) => event.event === 'runtime.error')).toBe(false);
+    expect(stderr).toHaveBeenCalledOnce();
+});
 it('rotates three files and exports them in chronological order', () => {
     const { root, journal } = create(250);
     for (let i = 0; i < 12; i++) { journal.record('performance', { updates: i }); journal.flush(); }

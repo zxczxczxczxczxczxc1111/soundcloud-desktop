@@ -57,7 +57,7 @@ export type WaveTexts = Record<
     | 'dropGenre' | 'toSimilar' | 'play' | 'pause' | 'clearGenre' | 'upFirst' | 'next' | 'like' | 'error' | 'retry' | 'unavailable'
     | 'whySeedTrack' | 'whyArtistTrack' | 'whyMood' | 'seedTrack' | 'seedArtist' | 'seedPlaylist' | 'clearSeed' | 'emptySeed'
     | 'menuWaveTrack' | 'menuWaveArtist' | 'menuWavePlaylist' | 'menuDislike' | 'menuUndislike' | 'menuHideArtist' | 'menuShowArtist'
-    | 'toastDisliked' | 'toastUndisliked' | 'toastHidden' | 'toastShown' | 'toastFailed' | 'toastNotSaved' | 'toastEmpty' | 'shake',
+    | 'toastDisliked' | 'toastUndisliked' | 'toastHidden' | 'toastShown' | 'toastFailed' | 'toastNotSaved' | 'toastEmpty' | 'shake' | 'history',
     string
 >;
 
@@ -83,7 +83,7 @@ export const WAVE_TEXTS: Record<'ru' | 'en', WaveTexts> = {
         toastDisliked: 'Трек больше не попадёт в волну', toastUndisliked: 'Трек снова может попасть в волну',
         toastHidden: 'Артист больше не попадёт в волну', toastShown: 'Артист снова может попасть в волну',
         toastFailed: 'Не получилось: SoundCloud не ответил', toastNotSaved: 'Отметка не сохранилась', toastEmpty: 'Не нашлось похожих треков',
-        shake: 'Встряхнуть',
+        shake: 'Встряхнуть', history: 'История, Ctrl+H',
     },
     en: {
         wave: 'My Wave', similar: 'Similar', fresh: 'New', anyGenre: 'Any genre', genreInput: 'Genres, comma separated', fromLikes: 'From your likes',
@@ -106,7 +106,7 @@ export const WAVE_TEXTS: Record<'ru' | 'en', WaveTexts> = {
         toastDisliked: 'This track won’t play in My Wave', toastUndisliked: 'This track can play in My Wave again',
         toastHidden: 'This artist won’t play in My Wave', toastShown: 'This artist can play in My Wave again',
         toastFailed: 'Didn’t work: SoundCloud didn’t respond', toastNotSaved: 'Couldn’t save this', toastEmpty: 'No similar tracks found',
-        shake: 'Shake up',
+        shake: 'Shake up', history: 'History, Ctrl+H',
     },
 };
 
@@ -409,6 +409,7 @@ interface WaveWindow extends Window {
         waveSignals?: { add(userId: number, signals: PlaySignal[]): void };
         reportWaveEmpty?(counts: { seen: number; artistTracks: number; moodTags: number }): void;
         sendTrackMeta?(meta: TrackMeta): void;
+        openHistory?(): void;
     };
 }
 interface WaveConfig {
@@ -1559,6 +1560,8 @@ export function installWave(config: WaveConfig): void {
         heart: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 21.35 10.55 20C5.4 15.36 2 12.28 2 8.5 2 5.42 4.42 3 7.5 3c1.74 0 3.41.81 4.5 2.09A6 6 0 0 1 16.5 3C19.58 3 22 5.42 22 8.5c0 3.78-3.4 6.86-8.55 11.54z"/></svg>',
         x: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M19 6.4 17.6 5 12 10.6 6.4 5 5 6.4l5.6 5.6L5 17.6 6.4 19l5.6-5.6 5.6 5.6 1.4-1.4-5.6-5.6z"/></svg>',
         shake: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M17.65 6.35A7.96 7.96 0 0 0 12 4a8 8 0 1 0 7.73 10h-2.08A6 6 0 1 1 12 6c1.66 0 3.14.69 4.22 1.78L13 11h7V4z"/></svg>',
+        // Те же часы, что у кнопки истории в шапке
+        history: '<svg class="scw-line" viewBox="0 0 16 16" aria-hidden="true"><path d="M2.6 8a5.4 5.4 0 1 0 1.6-3.8"/><path d="M2.4 2.6v2.5h2.5"/><path d="M8 5v3.2l2.2 1.4"/></svg>',
     };
     const CSS = [
         '#sc-wave{--scw-surface:#303030;--scw-muted:#999;--scw-faint:#757575;--scw-film:rgba(255,255,255,.06);--scw-film-strong:rgba(255,255,255,.1);--scw-btn:#fff;--scw-btn-ink:#121212;--scw-tile:rgba(255,255,255,.06);position:relative;margin:0 0 48px 16px;font-size:14px;line-height:20px}',
@@ -1581,6 +1584,7 @@ export function installWave(config: WaveConfig): void {
         '#sc-wave .scw-icon:hover{box-shadow:inset 0 0 0 32px var(--scw-film)}',
         '#sc-wave .scw-icon:disabled{opacity:.5;cursor:default;box-shadow:none}',
         '.scw-icon svg{width:16px;height:16px;fill:currentColor}',
+        '.scw-icon svg.scw-line{fill:none;stroke:currentColor;stroke-width:1.3;stroke-linecap:round;stroke-linejoin:round}',
         '.scw-genre .scw-x{width:18px;height:18px;margin-right:-4px;border-radius:3px;display:grid;place-items:center;flex:none}',
         '.scw-genre .scw-x:hover{background:rgba(127,127,127,.25)}',
         '.scw-pop{position:absolute;right:0;top:48px;z-index:30;width:280px;padding:8px;background:var(--scw-surface);border-radius:6px;box-shadow:0 8px 24px rgba(0,0,0,.45)}',
@@ -1766,12 +1770,14 @@ export function installWave(config: WaveConfig): void {
         const shakeButton = button('scw-icon', 'shake', T.shake, 'shake');
         shakeButton.title = T.shake;
         shakeButton.disabled = state === 'loading' || state === 'unavailable';
+        const historyButton = button('scw-icon', 'history', T.history, 'history');
+        historyButton.title = T.history;
         // Волна от трека, артиста или плейлиста: вместо жанра его название и крестик возврата к обычной волне
         if (seed) {
             const chip = el('div', 'scw-genre set');
             chip.title = seed.title;
             chip.append(el('span', 'scw-label', seed.title), button('scw-x', 'clear-seed', T.clearSeed, 'x'));
-            controls.append(seg, chip, shakeButton);
+            controls.append(seg, chip, shakeButton, historyButton);
             head.append(titles, controls);
             return head;
         }
@@ -1790,7 +1796,7 @@ export function installWave(config: WaveConfig): void {
             clear.insertAdjacentHTML('beforeend', ICON.x);
             genreButton.append(clear);
         } else genreButton.insertAdjacentHTML('beforeend', ICON.chev);
-        controls.append(seg, genreButton, shakeButton);
+        controls.append(seg, genreButton, shakeButton, historyButton);
         head.append(titles, controls);
         return head;
     }
@@ -2103,6 +2109,9 @@ export function installWave(config: WaveConfig): void {
                 return;
             case 'shake':
                 shake();
+                return;
+            case 'history':
+                host.soundcloudAPI?.openHistory?.();
                 return;
             case 'genre':
                 popOpen = !popOpen;
