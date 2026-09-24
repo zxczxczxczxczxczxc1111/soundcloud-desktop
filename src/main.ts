@@ -43,7 +43,7 @@ import { NotificationManager } from './notifications/notificationManager';
 import { SettingsManager } from './settings/settingsManager';
 import { ProxyService } from './services/proxyService';
 import { PresenceService, TEMPLATE_DEFAULTS } from './services/presenceService';
-import { TranslationService } from './services/translationService';
+import { TranslationService, type AppLanguage, type TranslationKeys } from './services/translationService';
 import { ThumbarService } from './services/thumbarService';
 import { WebhookService } from './services/webhookService';
 import { UpdateService, type UpdateMode } from './services/updateService';
@@ -52,7 +52,7 @@ import { ThemeService } from './services/themeService';
 import { ShortcutService } from './services/shortcutService';
 import { PluginService } from './services/pluginService';
 import { audioMonitorScript } from './services/audioMonitorService';
-import { showHomepageConfirmDialog, updateDialogBounds } from './settings/confirmPopup';
+import { showHomepageConfirmDialog, updateDialogBounds, type ConfirmTexts } from './settings/confirmPopup';
 import type { SiteDictionary, TrackInfo } from './types';
 import { validateTrackMeta, validateTrackUpdatePayload } from './validation';
 import path from 'path';
@@ -166,7 +166,9 @@ let waveSignals: WaveSignals | null = null;
 let presenceService: PresenceService;
 let webhookService: WebhookService;
 let updateService: UpdateService | null = null;
-let translationService: TranslationService;
+// Язык всего приложения это настройка «Язык» в F1; трей строится раньше остальных служб
+const appLanguage = (): AppLanguage => (store.get('siteLanguage', 'ru') === 'en' ? 'en' : 'ru');
+const translationService = new TranslationService(appLanguage);
 let thumbarService: ThumbarService;
 let playbackController: PlaybackController;
 let themeService: ThemeService;
@@ -310,7 +312,7 @@ function resetThemeAndPlugins(): void {
     for (const plugin of pluginService.getPlugins()) if (plugin.enabled) pluginService.setPluginEnabled(plugin.id, false);
     if (settingsManager?.getView()) settingsManager.toggle();
     showMainWindow();
-    notificationManager?.show('Тема и плагины отключены');
+    notificationManager?.show(translationService.translate('themeAndPluginsReset'));
 }
 
 // Два кадра анимации страницы после показа окна: к этому времени окно нарисовано и его можно проявлять
@@ -339,15 +341,43 @@ function setupTray() {
 
     tray = new Tray(trayIcon);
     tray.setToolTip(appTitle);
+    trayMenu = buildTrayMenu();
+    tray.setContextMenu(trayMenu);
 
-    // create tray menu
-    const contextMenu = Menu.buildFromTemplate([
+    tray.on('click', () => showMainWindow());
+}
+
+function headerTexts(): Record<string, string> {
+    const keys = ['headerBack', 'headerForward', 'headerRefresh', 'headerStop', 'headerTitleBar', 'headerMinimize', 'headerMaximize', 'headerRestore', 'headerClose'] as const;
+    return Object.fromEntries(keys.map((key) => [key, translationService.translate(key)]));
+}
+
+function confirmTexts(): ConfirmTexts {
+    const t = (key: TranslationKeys): string => translationService.translate(key);
+    return { title: t('pluginPageTitle'), question: t('pluginPageQuestion'), cancel: t('pluginPageCancel'), open: t('pluginPageOpen') };
+}
+
+// Смена языка в F1: всё, что main рисует сам, переводится сразу; сайт и его врезки ждут перезагрузки
+function applyAppLanguage(): void {
+    if (tray) {
+        trayMenu = buildTrayMenu();
+        tray.setContextMenu(trayMenu);
+    }
+    if (headerView && !headerView.webContents.isDestroyed()) headerView.webContents.send('header-texts', headerTexts());
+    if (mainWindow && !mainWindow.isDestroyed()) thumbarService?.restore(mainWindow);
+    presenceService?.refresh();
+}
+
+// Меню трея пересобирается при смене языка, сам значок остаётся
+function buildTrayMenu(): Menu {
+    const t = (key: TranslationKeys): string => translationService.translate(key);
+    return Menu.buildFromTemplate([
         {
             label: 'SoundCloud',
             click: () => showMainWindow(),
         },
         {
-            label: 'Настройки',
+            label: t('traySettings'),
             // Из трея настройки только открываются: окно могло быть спрятано, а панель уже открыта
             click: () => {
                 showMainWindow();
@@ -355,29 +385,24 @@ function setupTray() {
             },
         },
         {
-            label: 'Сбросить тему и плагины',
+            label: t('trayResetThemeAndPlugins'),
             click: () => resetThemeAndPlugins(),
         },
         {
             id: 'discordIncognito',
-            label: 'Инкогнито в Discord',
+            label: t('trayDiscordIncognito'),
             type: 'checkbox',
             checked: store.get('discordIncognito', false) === true,
             click: (item) => setDiscordIncognito(item.checked, false),
         },
         { type: 'separator' },
         {
-            label: 'Выход',
+            label: t('trayQuit'),
             click: () => {
                 app.quit();
             },
         },
     ]);
-
-    tray.setContextMenu(contextMenu);
-    trayMenu = contextMenu;
-
-    tray.on('click', () => showMainWindow());
 }
 
 // Карточка Discord для предпросмотра в F1: трек и то, что из него собрала presenceService
@@ -394,7 +419,7 @@ function setDiscordIncognito(value: boolean, announce: boolean): void {
     presenceService?.refresh();
     sendPresencePreview();
     settingsManager?.getView()?.webContents.send('discord-incognito-changed', value);
-    if (announce) notificationManager?.show(value ? 'Инкогнито: Discord не видит, что играет' : 'Discord снова показывает трек');
+    if (announce) notificationManager?.show(translationService.translate(value ? 'incognitoOn' : 'incognitoOff'));
 }
 
 // browser window config
@@ -605,6 +630,12 @@ function setupWindowControls() {
         applyThemeToContent(isDarkTheme);
     });
 
+    // Подсказки кнопок шапки на языке приложения
+    ipcMain.handle('get-header-texts', (event) => {
+        if (!isTrustedLocalSender(event)) throw new Error('Недопустимый отправитель IPC');
+        return headerTexts();
+    });
+
     // Handle is-maximized requests
     ipcMain.handle('is-maximized', (event) => {
             if (!isTrustedLocalSender(event)) throw new Error('Недопустимый отправитель IPC');
@@ -750,7 +781,6 @@ async function init() {
     contentView.webContents.setUserAgent(globalUserAgent);
 
     // Initialize services
-    translationService = new TranslationService();
     themeService = new ThemeService(store);
     pluginService = new PluginService(store);
     pluginService.setContentView(contentView);
@@ -763,7 +793,7 @@ async function init() {
         if (!contentView.webContents.isDestroyed()) contentView.webContents.focus();
     });
     pluginService.onPluginsChanged(() => settingsManager.getView()?.webContents.send('plugins-changed'));
-    proxyService = new ProxyService(contentView.webContents, store, queueToastNotification);
+    proxyService = new ProxyService(contentView.webContents, store, queueToastNotification, (key) => translationService.translate(key));
     adblockService = new AdblockService(contentView.webContents.session, path.join(app.getPath('userData'), 'adblock-engine.bin'));
     presenceService = new PresenceService(store, translationService);
     webhookService = new WebhookService(store);
@@ -775,7 +805,7 @@ async function init() {
         notify: queueToastNotification,
         onState: (state) => settingsManager.getView()?.webContents.send('update-state', state),
         loadUpdater: () => autoUpdater,
-        language: () => (store.get('siteLanguage', 'ru') === 'en' ? 'en' : 'ru'),
+        language: appLanguage,
     });
     updateService.start();
     ipcMain.handle('get-update-state', (event) => {
@@ -888,7 +918,7 @@ async function init() {
         const normalizedUrl = url.trim();
         if (!/^https?:\/\//i.test(normalizedUrl)) return false;
 
-        const confirmed = await showHomepageConfirmDialog(mainWindow, normalizedUrl);
+        const confirmed = await showHomepageConfirmDialog(mainWindow, normalizedUrl, confirmTexts());
         if (confirmed) {
             await shell.openExternal(normalizedUrl);
         }
@@ -903,7 +933,7 @@ async function init() {
         const normalizedUrl = url.trim();
         if (!/^https?:\/\//i.test(normalizedUrl)) return;
 
-        const confirmed = await showHomepageConfirmDialog(mainWindow, normalizedUrl);
+        const confirmed = await showHomepageConfirmDialog(mainWindow, normalizedUrl, confirmTexts());
         if (confirmed) {
             await shell.openExternal(normalizedUrl);
         }
@@ -946,9 +976,9 @@ async function init() {
     ipcMain.handle('export-diagnostics', async (event) => {
         if (!isTrustedLocalSender(event)) throw new Error('Недопустимый отправитель IPC');
         const result = await dialog.showSaveDialog(mainWindow, {
-            title: 'Сохранить диагностический журнал',
+            title: translationService.translate('saveJournalTitle'),
             defaultPath: path.join(app.getPath('downloads'), 'soundcloud-diagnostics-' + new Date().toISOString().slice(0, 10) + '.log'),
-            filters: [{ name: 'Журнал', extensions: ['log'] }],
+            filters: [{ name: translationService.translate('journalFileType'), extensions: ['log'] }],
         });
         if (result.canceled || !result.filePath) return false;
         try { diagnostics.exportTo(result.filePath); return true; }
@@ -1006,7 +1036,7 @@ async function init() {
 
     contentView.webContents.on('did-fail-load', (_event, code, _description, _url, isMainFrame) => {
         if (isMainFrame && code !== -3) diagnostics.record('page.load-failed', { errorCode: code });
-        if (isMainFrame && code !== -3) queueToastNotification('Не удалось загрузить SoundCloud. Проверьте подключение и нажмите Ctrl+R.');
+        if (isMainFrame && code !== -3) queueToastNotification(translationService.translate('pageLoadFailed'));
         if (headerView && headerView.webContents) {
             headerView.webContents.send('refresh-state-changed', false);
         }
@@ -1019,7 +1049,7 @@ async function init() {
             presenceService.clearActivity();
             lastTrackInfo = { title: '', author: '', artwork: '', elapsed: '', duration: '', isPlaying: false, isLiked: false, url: '', artistUrl: '' };
         },
-        onRepeatedCrash: () => queueToastNotification('Плеер завершился с ошибкой. Нажмите Ctrl+R для повторной загрузки.'),
+        onRepeatedCrash: () => queueToastNotification(translationService.translate('playerCrashed')),
     });
 
     // Track if this is initial load
@@ -1096,6 +1126,7 @@ async function init() {
         if (key.startsWith('proxy') || key === 'adBlocker') networkSettingsDirty = true;
         if (key === 'siteLanguage') {
             pageReloadNeeded = true;
+            applyAppLanguage();
             // F1 переключается сразу, статус обновлений тоже приходит на новом языке
             if (updateService) settingsManager.getView()?.webContents.send('update-state', updateService.getState());
         }

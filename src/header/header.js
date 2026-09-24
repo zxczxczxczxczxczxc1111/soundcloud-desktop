@@ -26,6 +26,26 @@ const SEGOE_GLYPHS = {
 };
 const forcedColorsQuery = window.matchMedia ? window.matchMedia('(forced-colors: active)') : null;
 
+// Подсказки кнопок на языке приложения; до ответа main действуют русские из разметки
+let texts = { headerRefresh: 'Обновить страницу', headerStop: 'Остановить загрузку', headerMaximize: 'Развернуть', headerRestore: 'Восстановить' };
+function applyTexts(next) {
+    if (!next || typeof next !== 'object') return;
+    texts = { ...texts, ...next };
+    const label = (selector, text, aria) => {
+        const element = document.querySelector(selector);
+        if (!element || typeof text !== 'string') return;
+        element.title = text;
+        if (aria) element.setAttribute('aria-label', text);
+    };
+    label('#back-btn', texts.headerBack);
+    label('#forward-btn', texts.headerForward);
+    label('#refresh-btn', isRefreshing ? texts.headerStop : texts.headerRefresh);
+    label('.title-bar', texts.headerTitleBar);
+    label('#minimize-btn', texts.headerMinimize, true);
+    label('#close-btn', texts.headerClose, true);
+    updateWindowControls();
+}
+
 function applyThemeColors(colors) {
     themeColors = colors;
     if (!colors) {
@@ -72,7 +92,7 @@ function updateNavigationState(state = {}) {
         isRefreshing = state.refreshing;
         if (navButtons.refresh) {
             navButtons.refresh.classList.toggle('refreshing', isRefreshing);
-            navButtons.refresh.title = isRefreshing ? 'Остановить загрузку' : 'Обновить страницу';
+            navButtons.refresh.title = isRefreshing ? texts.headerStop : texts.headerRefresh;
         }
     }
 
@@ -91,8 +111,8 @@ function updateWindowControls() {
         setIconGlyph(maximizeGlyphEl, isMaximized ? SEGOE_GLYPHS.restore : SEGOE_GLYPHS.maximize);
 
         // Update the button title
-        document.getElementById('maximize-btn').title = isMaximized ? 'Восстановить' : 'Развернуть';
-        document.getElementById('maximize-btn').setAttribute('aria-label', isMaximized ? 'Восстановить' : 'Развернуть');
+        document.getElementById('maximize-btn').title = isMaximized ? texts.headerRestore : texts.headerMaximize;
+        document.getElementById('maximize-btn').setAttribute('aria-label', isMaximized ? texts.headerRestore : texts.headerMaximize);
     }
 }
 
@@ -255,7 +275,10 @@ document.addEventListener('DOMContentLoaded', () => {
 
     // Начальное состояние окна; дальше его присылает главный процесс
     ipcRenderer.invoke('is-maximized').then(setMaximized).catch((error) => console.error('Не удалось узнать состояние окна:', error));
+    ipcRenderer.invoke('get-header-texts').then(applyTexts).catch((error) => console.error('Не удалось получить подписи шапки:', error));
 });
+
+ipcRenderer.on('header-texts', (_, next) => applyTexts(next));
 
 function setMaximized(maximized) {
     if (isMaximized === maximized) return;

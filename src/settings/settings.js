@@ -191,7 +191,8 @@ async function initializeSettings() {
             data.accounts.forEach((acc) => {
                 const option = document.createElement('option');
                 option.value = acc.id;
-                option.textContent = acc.name;
+                // Имена по умолчанию хранятся по-русски и переводятся при показе; ник с сайта остаётся как есть
+                option.textContent = tr(acc.name);
                 selector.appendChild(option);
             });
             selector.value = data.currentAccountId || 'default';
@@ -499,6 +500,7 @@ async function initializeSettings() {
         language = e.target.value === 'en' ? 'en' : 'ru';
         applyLanguage();
         document.getElementById('diagnosticsStatus').textContent = '';
+        loadAccounts();
         loadPlugins();
         loadWaveExclusions();
         updatePreview(lastPreview);
@@ -782,7 +784,7 @@ async function initializeSettings() {
                 : SOUNDCLOUD_BADGE;
             icon.alt = options.displayGithubLink ? 'GitHub' : 'SoundCloud';
             if (options.displayGithubLink) {
-                smallIcon.title = 'SoundCloud на GitHub';
+                smallIcon.title = tr('SoundCloud на GitHub');
                 smallIcon.style.cursor = 'pointer';
                 smallIcon.setAttribute('role', 'link');
                 smallIcon.tabIndex = 0;
@@ -860,7 +862,7 @@ async function initializeSettings() {
             buttons.className = 'activity-buttons-preview';
             const button = document.createElement('button');
             button.className = 'activity-button-preview';
-            button.textContent = 'Слушать в SoundCloud';
+            button.textContent = tr('Слушать в SoundCloud');
             button.addEventListener('click', () => shell.openExternal(trackUrl));
             buttons.appendChild(button);
             details.appendChild(buttons);
@@ -905,7 +907,7 @@ async function initializeSettings() {
 
         const activityContent = document.createElement('div');
         activityContent.className = 'activity-content-preview';
-        // Название трека это данные. «Слушать в SoundCloud» и «SoundCloud на GitHub» Discord показывает по-русски, как здесь
+        // Название трека это данные. «Слушать в SoundCloud» и «SoundCloud на GitHub» Discord получает на языке приложения, как здесь
         activityContent.setAttribute('data-no-i18n', '');
         activityContent.appendChild(
             createPlayingPreview(trackInfo, card, {
@@ -995,6 +997,9 @@ async function initializeSettings() {
 }
 initializeSettings().catch((error) => {
     console.error('Settings initialization failed:', error);
-    document.body.textContent = 'Не удалось загрузить настройки. Закройте и откройте панель повторно.';
+    // Язык панели applyLanguage ставит в lang, до него остаётся русский из разметки
+    document.body.textContent = document.documentElement.lang === 'en'
+        ? 'Settings failed to load. Close the panel and open it again.'
+        : 'Не удалось загрузить настройки. Закройте и откройте панель повторно.';
     document.body.style.opacity = '1';
 });

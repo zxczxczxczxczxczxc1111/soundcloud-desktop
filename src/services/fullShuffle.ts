@@ -22,14 +22,40 @@ interface WebpackRequire {
 type ChunkList = { push(chunk: unknown): unknown };
 interface ShuffleWindow extends Window {
     __disposeFullShuffle?: () => void;
+    __scSiteTranslation?: { language?: string };
 }
+
+export interface ShuffleTexts {
+    tooMany: string;
+    stalled: string;
+    loading: string;
+    unsupported: string;
+}
+
+// Подсказки стоят на странице сайта и говорят на его языке, как «Моя волна»
+export const SHUFFLE_TEXTS: Record<'ru' | 'en', ShuffleTexts> = {
+    ru: {
+        tooMany: 'В очереди больше {max} треков, перемешаны первые {count}',
+        stalled: 'Сайт перестал отдавать треки, перемешаны загруженные: {count}',
+        loading: 'Загружаю очередь для перемешивания: {count}',
+        unsupported: 'Перемешивание всей очереди не работает с этой версией SoundCloud',
+    },
+    en: {
+        tooMany: 'The queue has more than {max} tracks, the first {count} are shuffled',
+        stalled: 'The site stopped sending tracks, shuffled the loaded ones: {count}',
+        loading: 'Loading the queue to shuffle: {count}',
+        unsupported: 'Whole-queue shuffle doesn’t work with this SoundCloud version',
+    },
+};
 
 // SoundCloud перемешивает только загруженную часть очереди, а остальное берёт из буфера на сто треков вперёд.
 // Здесь очередь догружается целиком и всё, что после текущего трека, перемешивается заново.
-export function installFullShuffle(enabled: boolean): void {
+export function installFullShuffle(enabled: boolean, texts: Record<'ru' | 'en', ShuffleTexts>): void {
     const host = window as unknown as ShuffleWindow & Record<string, unknown>;
     host.__disposeFullShuffle?.();
     if (!enabled) return;
+    const T = texts[host.__scSiteTranslation?.language === 'ru' ? 'ru' : 'en'];
+    const fill = (template: string, values: Record<string, number>): string => template.replace(/\{(\w+)\}/g, (_, name: string) => String(values[name] ?? ''));
 
     const PULL_SIZE = 250;
     const MAX_TRACKS = 10000;
@@ -137,7 +163,7 @@ export function installFullShuffle(enabled: boolean): void {
         let failure = '';
         while (current === run && !disposed && shouldLoad(player)) {
             if (queue.length >= MAX_TRACKS) {
-                failure = 'В очереди больше ' + MAX_TRACKS + ' треков, перемешаны первые ' + queue.length;
+                failure = fill(T.tooMany, { max: MAX_TRACKS, count: queue.length });
                 break;
             }
             player.pullNext(PULL_SIZE);
@@ -146,10 +172,10 @@ export function installFullShuffle(enabled: boolean): void {
                 last = queue.length;
                 grewAt = Date.now();
             } else if (Date.now() - grewAt > STALL_MS) {
-                failure = 'Сайт перестал отдавать треки, перемешаны загруженные: ' + queue.length;
+                failure = fill(T.stalled, { count: queue.length });
                 break;
             }
-            if (Date.now() - started > 1000) showStatus('Загружаю очередь для перемешивания: ' + queue.length);
+            if (Date.now() - started > 1000) showStatus(fill(T.loading, { count: queue.length }));
         }
         if (current !== run || disposed) return;
         if (!player.getState('shuffle')) {
@@ -176,7 +202,7 @@ export function installFullShuffle(enabled: boolean): void {
     };
     const onMissingClick = (event: MouseEvent): void => {
         if (event.target instanceof Element && event.target.closest('.shuffleControl'))
-            showStatus('Перемешивание всей очереди не работает с этой версией SoundCloud', 6000);
+            showStatus(T.unsupported, 6000);
     };
 
     let attempts = 0;
@@ -215,5 +241,5 @@ export function installFullShuffle(enabled: boolean): void {
 }
 
 export function fullShuffleScript(enabled: boolean): string {
-    return '(' + installFullShuffle.toString() + ')(' + JSON.stringify(enabled) + ');';
+    return '(' + installFullShuffle.toString() + ')(' + JSON.stringify(enabled) + ',' + JSON.stringify(SHUFFLE_TEXTS) + ');';
 }

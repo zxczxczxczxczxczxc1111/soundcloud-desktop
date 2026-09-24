@@ -6,6 +6,10 @@ import {
     type LoginAuthenticationResponseDetails,
 } from 'electron';
 
+import type { TranslationKeys } from './translationService';
+
+type ProxyTextKey = Extract<TranslationKeys, 'proxyPasswordUnreadable' | 'proxyAddressInvalid' | 'proxyStorageUnavailable'>;
+
 interface Settings {
     get(key: string, fallback?: unknown): unknown;
     set(key: string, value: unknown): void;
@@ -39,7 +43,7 @@ export class ProxyService {
             callback(String(this.store.get('proxyUsername', '')), password);
         } catch (error) {
             console.error('Не удалось расшифровать пароль прокси:', error);
-            this.notify('Не удалось прочитать пароль прокси. Введите его заново.');
+            this.notify(this.text('proxyPasswordUnreadable'));
             callback();
         }
     };
@@ -47,6 +51,8 @@ export class ProxyService {
         private contents: WebContents,
         private store: Settings,
         private notify: (message: string) => void,
+        // Сообщения пользователю на языке приложения
+        private text: (key: ProxyTextKey) => string,
     ) {
         contents.on('login', this.login);
     }
@@ -64,7 +70,7 @@ export class ProxyService {
                         port < 1 ||
                         port > 65535
                     )
-                        throw new Error('Некорректные адрес или порт прокси');
+                        throw new Error(this.text('proxyAddressInvalid'));
                     await session.setProxy({ mode: 'fixed_servers', proxyRules: 'http://' + host + ':' + port });
                 } else await session.setProxy({ mode: 'direct' });
                 await session.clearAuthCache();
@@ -77,7 +83,7 @@ export class ProxyService {
             this.store.delete('proxyPasswordEncrypted');
             return;
         }
-        if (!safeStorage.isEncryptionAvailable()) throw new Error('Защищённое хранение пароля недоступно');
+        if (!safeStorage.isEncryptionAvailable()) throw new Error(this.text('proxyStorageUnavailable'));
         this.store.set('proxyPasswordEncrypted', safeStorage.encryptString(password).toString('base64'));
     }
     public dispose(): void {

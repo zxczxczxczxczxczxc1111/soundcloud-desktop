@@ -23,13 +23,27 @@ function updateHomepageConfirmBounds(mainWindow: BrowserWindow): void {
     confirmPopupView.setBounds({ x: 0, y: 0, width, height });
 }
 
-export async function showHomepageConfirmDialog(mainWindow: BrowserWindow, url: string): Promise<boolean> {
+// Подписи окна на языке приложения, их даёт main
+export interface ConfirmTexts {
+    title: string;
+    question: string;
+    cancel: string;
+    open: string;
+}
+
+export async function showHomepageConfirmDialog(mainWindow: BrowserWindow, url: string, texts: ConfirmTexts): Promise<boolean> {
     if (!mainWindow) return false;
 
     finishPending?.();
 
     const requestId = `homepage-confirm-${Date.now()}-${Math.random().toString(36).slice(2)}`;
     const safeUrl = escapeHtml(url);
+    const label = {
+        title: escapeHtml(texts.title),
+        question: escapeHtml(texts.question),
+        cancel: escapeHtml(texts.cancel),
+        open: escapeHtml(texts.open),
+    };
 
     confirmPopupView = new WebContentsView({
         webPreferences: {
@@ -145,13 +159,13 @@ export async function showHomepageConfirmDialog(mainWindow: BrowserWindow, url: 
             }
         </style>
         <body>
-            <div class="dialog" role="dialog" aria-modal="true" aria-label="Страница плагина">
-                <div class="title">Страница плагина</div>
-                <div class="subtitle">Открыть этот адрес в браузере?</div>
+            <div class="dialog" role="dialog" aria-modal="true" aria-label="${label.title}">
+                <div class="title">${label.title}</div>
+                <div class="subtitle">${label.question}</div>
                 <div class="url">${safeUrl}</div>
                 <div class="actions">
-                    <button id="cancelBtn" type="button">Отмена</button>
-                    <button id="confirmBtn" class="confirm" type="button">Открыть в браузере</button>
+                    <button id="cancelBtn" type="button">${label.cancel}</button>
+                    <button id="confirmBtn" class="confirm" type="button">${label.open}</button>
                 </div>
             </div>
             <script nonce="${nonce}">

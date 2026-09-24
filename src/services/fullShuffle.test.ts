@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 import { afterEach, beforeEach, expect, it, vi } from 'vitest';
-import { installFullShuffle } from './fullShuffle';
+import { installFullShuffle, SHUFFLE_TEXTS } from './fullShuffle';
 
 interface Item { id: number; explicit?: boolean }
 type Listener = (value?: unknown) => void;
@@ -61,7 +61,7 @@ const ids = (items: Item[]) => items.map((item) => item.id);
 it('догружает всю очередь и перемешивает всё после текущего трека, ручные треки не трогает', async () => {
     fake.start(21);
     fake.items[1].explicit = true;
-    installFullShuffle(true);
+    installFullShuffle(true, SHUFFLE_TEXTS);
     fake.player.toggleShuffle();
     await vi.advanceTimersByTimeAsync(2000);
     expect(fake.items).toHaveLength(600);
@@ -71,22 +71,28 @@ it('догружает всю очередь и перемешивает всё 
     expect(rest).not.toEqual([...rest].sort((a, b) => a - b));
 });
 
-it('если сайт перестал отдавать треки, говорит об этом и перемешивает загруженное', async () => {
-    fake = fakePlayer(600, 300);
-    provide(fake.player);
-    fake.start(21);
-    installFullShuffle(true);
-    fake.player.toggleShuffle();
-    await vi.advanceTimersByTimeAsync(20000);
-    expect(fake.items).toHaveLength(300);
-    expect(document.querySelector('[role="status"]')?.textContent).toBe('Сайт перестал отдавать треки, перемешаны загруженные: 300');
+it('если сайт перестал отдавать треки, говорит об этом на языке сайта и перемешивает загруженное', async () => {
+    for (const [language, text] of [['ru', 'Сайт перестал отдавать треки, перемешаны загруженные: 300'], ['en', 'The site stopped sending tracks, shuffled the loaded ones: 300']]) {
+        fake = fakePlayer(600, 300);
+        provide(fake.player);
+        fake.start(21);
+        // Русский сайт помечает перевод сам (preload), у английского пометки нет
+        if (language === 'ru') Object.assign(window, { __scSiteTranslation: { language: 'ru' } });
+        else Reflect.deleteProperty(window, '__scSiteTranslation');
+        installFullShuffle(true, SHUFFLE_TEXTS);
+        fake.player.toggleShuffle();
+        await vi.advanceTimersByTimeAsync(20000);
+        expect(fake.items).toHaveLength(300);
+        expect(document.querySelector('[role="status"]')?.textContent).toBe(text);
+    }
+    Reflect.deleteProperty(window, '__scSiteTranslation');
 });
 
 it('новая очередь при включённом перемешивании тоже догружается целиком', async () => {
     fake = fakePlayer(21);
     provide(fake.player);
     fake.start(21);
-    installFullShuffle(true);
+    installFullShuffle(true, SHUFFLE_TEXTS);
     fake.player.toggleShuffle();
     fake.newSource(21, 500);
     await vi.advanceTimersByTimeAsync(2000);
@@ -94,9 +100,9 @@ it('новая очередь при включённом перемешиван
 });
 
 it('выключение снимает подписки', () => {
-    installFullShuffle(true);
+    installFullShuffle(true, SHUFFLE_TEXTS);
     expect(fake.listeners.get('state:shuffle')?.size).toBe(1);
-    installFullShuffle(false);
+    installFullShuffle(false, SHUFFLE_TEXTS);
     expect([...fake.listeners.values()].every((set) => set.size === 0)).toBe(true);
     expect(vi.getTimerCount()).toBe(0);
 });

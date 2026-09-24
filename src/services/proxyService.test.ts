@@ -7,6 +7,7 @@ const storage = vi.hoisted(() => ({
 }));
 vi.mock('electron', () => ({ safeStorage: storage }));
 import { ProxyService } from './proxyService';
+import { TranslationService } from './translationService';
 
 type Login = (
     event: Event,
@@ -44,6 +45,7 @@ beforeEach(() => {
             },
         },
         vi.fn(),
+        (key) => new TranslationService(() => 'ru').translate(key),
     );
 });
 it('использует переданную сессию и отключает прокси', async () => {

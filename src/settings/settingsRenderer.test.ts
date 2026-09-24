@@ -30,7 +30,7 @@ async function openSettings(
             case 'get-current-custom-theme':
                 return 'none';
             case 'get-accounts':
-                return { accounts: [], currentAccountId: 'default' };
+                return { accounts: [{ id: 'default', name: 'Основной аккаунт' }, { id: 'acc_1', name: 'nick_1' }], currentAccountId: 'default' };
             case 'get-update-state':
                 return updateState(state.siteLanguage === 'en' ? 'en' : 'ru');
             case 'get-current-track':
@@ -74,11 +74,16 @@ it('блоки главной переключаются сразу, язык с
 
     const language = document.getElementById('siteLanguage') as HTMLSelectElement;
     expect(language.value).toBe('en');
+    expect(language.closest('section')?.id).toBe('general');
     expect(document.querySelector('#siteLanguageList')).not.toBeNull();
     expect(document.getElementById('networkNotice')?.hidden).toBe(true);
+    // Имя аккаунта по умолчанию переводится, ник с сайта нет
+    const accountNames = (): string[] => [...document.querySelectorAll('#accountSelector option')].map((option) => option.textContent ?? '');
+    await vi.waitFor(() => expect(accountNames()).toEqual(['Main account', 'nick_1']));
     language.value = 'ru';
     language.dispatchEvent(new Event('change', { bubbles: true }));
     expect(send).toHaveBeenCalledWith('setting-changed', { key: 'siteLanguage', value: 'ru' });
+    await vi.waitFor(() => expect(accountNames()).toEqual(['Основной аккаунт', 'nick_1']));
     expect(document.getElementById('networkNotice')?.hidden).toBe(false);
     document.getElementById('applyNetwork')?.click();
     expect(send).toHaveBeenCalledWith('apply-changes');

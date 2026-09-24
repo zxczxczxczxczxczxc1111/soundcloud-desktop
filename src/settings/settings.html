@@ -41,6 +41,13 @@
                 <div class="dialog-body">
                     <section class="section active" id="general">
                         <h2>Основное</h2>
+                        <div class="row">
+                            <span class="text">Язык</span>
+                            <select id="siteLanguage" class="input" aria-label="Язык">
+                                <option value="ru" data-no-i18n>Русский</option>
+                                <option value="en">English</option>
+                            </select>
+                        </div>
                         <label class="row"><span class="text">Тёмная тема</span><span class="toggle"><input type="checkbox" id="darkMode" /><span class="slider"></span></span></label>
                         <label class="row"><span class="text">Сворачивать в трей</span><span class="toggle"><input type="checkbox" id="minimizeToTray" /><span class="slider"></span></span></label>
                         <label class="row"><span class="text">Кнопки навигации в шапке</span><span class="toggle"><input type="checkbox" id="navigationControlsEnabled" /><span class="slider"></span></span></label>
@@ -49,13 +56,6 @@
 
                     <section class="section" id="soundcloud" hidden>
                         <h2>SoundCloud</h2>
-                        <div class="row">
-                            <span class="text">Язык</span>
-                            <select id="siteLanguage" class="input" aria-label="Язык">
-                                <option value="ru" data-no-i18n>Русский</option>
-                                <option value="en">English</option>
-                            </select>
-                        </div>
                         <label class="row"><span class="text">Блокировать рекламу</span><span class="toggle"><input type="checkbox" id="adBlocker" /><span class="slider"></span></span></label>
                         <label class="row"><span class="text">Скрывать рекламные блоки</span><span class="toggle"><input type="checkbox" id="hidePromotions" /><span class="slider"></span></span></label>
                         <label class="row"><span class="text">Скрывать концерты поблизости</span><span class="toggle"><input type="checkbox" id="hideEventsNearYou" /><span class="slider"></span></span></label>

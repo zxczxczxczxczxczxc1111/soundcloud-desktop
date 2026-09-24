@@ -154,7 +154,7 @@ export class PresenceService {
     }
     private smallBadge(): Pick<SetActivity, 'smallImageKey' | 'smallImageText' | 'smallImageUrl'> {
         if (this.store.get('displayGithubLink', true) === true) {
-            return { smallImageKey: GITHUB_ICON_URL, smallImageText: 'SoundCloud на GitHub', smallImageUrl: GITHUB_REPOSITORY_URL };
+            return { smallImageKey: GITHUB_ICON_URL, smallImageText: this.translationService.translate('githubBadge'), smallImageUrl: GITHUB_REPOSITORY_URL };
         }
         return { smallImageKey: this.displaySCSmallIcon ? LOGO_ASSET : undefined, smallImageText: this.displaySCSmallIcon ? 'SoundCloud' : undefined };
     }

@@ -81,6 +81,8 @@ window.SETTINGS_EN = {
     'Так статус видят в Discord': 'How your status looks in Discord',
     'Сейчас ничего не играет': 'Nothing is playing',
     'Обложка трека': 'Track artwork',
+    'Слушать в SoundCloud': 'Listen on SoundCloud',
+    'SoundCloud на GitHub': 'SoundCloud on GitHub',
     'Без названия': 'Untitled',
     'Неизвестный артист': 'Unknown artist',
     'Под ником:': 'Under your name:',
@@ -97,6 +99,9 @@ window.SETTINGS_EN = {
     'Автор:': 'Author:',
 
     'Текущий аккаунт': 'Current account',
+    // Имена аккаунтов по умолчанию, остальные имена это ники с сайта
+    'Основной аккаунт': 'Main account',
+    'Новый аккаунт': 'New account',
     'Добавить аккаунт': 'Add account',
     'Выйти': 'Log out',
     'Смена аккаунта перезапускает клиент': 'Switching accounts restarts the client',

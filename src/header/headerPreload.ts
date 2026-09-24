@@ -11,9 +11,10 @@ const SEND_CHANNELS = new Set([
     'title-bar-double-click',
 ]);
 
-const INVOKE_CHANNELS = new Set(['get-navigation-controls-enabled', 'get-theme-colors', 'is-maximized']);
+const INVOKE_CHANNELS = new Set(['get-header-texts', 'get-navigation-controls-enabled', 'get-theme-colors', 'is-maximized']);
 
 const ON_CHANNELS = new Set([
+    'header-texts',
     'navigation-controls-toggle',
     'navigation-state-changed',
     'refresh-state-changed',
