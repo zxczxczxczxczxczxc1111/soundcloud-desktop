@@ -16,8 +16,10 @@ export interface UpdateState {
     hint: string;
     status: string;
     releaseUrl: string;
+    /** Скачанную версию можно поставить сейчас, с перезапуском */
+    canInstall: boolean;
 }
-type Updater = Pick<AppUpdater, 'autoDownload' | 'autoInstallOnAppQuit' | 'checkForUpdates' | 'on'>;
+type Updater = Pick<AppUpdater, 'autoDownload' | 'autoInstallOnAppQuit' | 'checkForUpdates' | 'on' | 'quitAndInstall'>;
 interface Settings {
     get(key: string, fallback?: unknown): unknown;
 }
@@ -32,6 +34,8 @@ export interface UpdateServiceOptions {
     fetch?: typeof fetch;
     /** Язык подписей в F1 и уведомлениях; по умолчанию русский */
     language?: () => UpdateLanguage;
+    /** Каждая смена статуса ключом: по нему main решает, показывать ли экран обновления */
+    onStatus?(status: UpdateStatus): void;
 }
 
 // Сравнение x.y.z без предрелизных суффиксов: GitHub releases/latest их и так не отдаёт.
@@ -47,12 +51,17 @@ export function isNewerVersion(candidate: string, current: string): boolean {
     return false;
 }
 
-type StatusKey = 'checking' | 'latest' | 'downloading' | 'progress' | 'downloaded' | 'failedCheck' | 'failedUpdate' | 'failedDownload' | 'released';
+export type StatusKey = 'checking' | 'latest' | 'downloading' | 'progress' | 'downloaded' | 'failedCheck' | 'failedUpdate' | 'failedDownload' | 'released';
+export interface UpdateStatus {
+    key: StatusKey;
+    version?: string;
+    percent?: number;
+}
 type TextKey = UpdateMode | StatusKey | 'disabled' | 'notifyDownloaded' | 'notifyReleased';
 // Статус хранится ключом, а не строкой: при смене языка F1 получает его заново уже на новом языке
 const TEXTS: Record<UpdateLanguage, Record<TextKey, string>> = {
     ru: {
-        installer: 'Новая версия скачивается в фоне и ставится, когда вы закрываете приложение.',
+        installer: 'Новая версия ставится сама: при запуске с перезапуском или при закрытии приложения.',
         portable: 'Портативная версия сама не обновляется: приложение проверит новую версию и сообщит о ней.',
         dev: 'В режиме разработки обновления не проверяются.',
         disabled: 'Автообновление выключено.',
@@ -69,7 +78,7 @@ const TEXTS: Record<UpdateLanguage, Record<TextKey, string>> = {
         notifyReleased: 'Вышла версия {v}. Ссылка на неё в настройках, клавиша F1.',
     },
     en: {
-        installer: 'New versions download in the background and install when you close the app.',
+        installer: 'New versions install on their own: at launch with a restart, or when you quit the app.',
         portable: 'The portable version doesn’t update itself: the app checks for a new version and tells you about it.',
         dev: 'Updates aren’t checked in development mode.',
         disabled: 'Auto-update is off.',
@@ -93,10 +102,11 @@ export class UpdateService {
     private interval: ReturnType<typeof setInterval> | null = null;
     private checking = false;
     private disposed = false;
-    private status: { key: StatusKey; version?: string; percent?: number } | null = null;
+    private status: UpdateStatus | null = null;
     private releaseUrl = RELEASES_URL;
     private notifiedVersion = '';
     private downloading = '';
+    private installing = false;
     private readonly fetchRelease: typeof fetch;
 
     constructor(private options: UpdateServiceOptions) {
@@ -114,20 +124,24 @@ export class UpdateService {
         let status = this.status ? this.text(this.status.key, this.status.version, this.status.percent) : '';
         if (mode === 'dev') status = this.text('dev');
         else if (!this.enabled) status = this.text('disabled');
-        return { mode, version, enabled: this.enabled, hint: this.text(mode), status, releaseUrl: this.releaseUrl };
+        const canInstall = mode === 'installer' && this.enabled && this.status?.key === 'downloaded';
+        return { mode, version, enabled: this.enabled, hint: this.text(mode), status, releaseUrl: this.releaseUrl, canInstall };
     }
     private setStatus(key: StatusKey, version?: string, percent?: number): void {
         this.status = { key, version, percent };
-        if (!this.disposed) this.options.onState(this.getState());
+        if (this.disposed) return;
+        this.options.onState(this.getState());
+        this.options.onStatus?.({ ...this.status });
     }
     public start(): void {
         if (this.options.mode === 'dev' || this.disposed) return;
         this.stopTimers();
         if (!this.enabled) return;
+        // Установщик проверяет сразу: новая версия, найденная при запуске, ставится с перезапуском
         this.firstTimer = setTimeout(() => {
             this.firstTimer = null;
             void this.check();
-        }, FIRST_CHECK_DELAY_MS);
+        }, this.options.mode === 'installer' ? 0 : FIRST_CHECK_DELAY_MS);
         this.firstTimer.unref?.();
         this.interval = setInterval(() => void this.check(), CHECK_INTERVAL_MS);
         this.interval.unref?.();
@@ -167,7 +181,8 @@ export class UpdateService {
         });
         updater.on('update-downloaded', (info) => {
             this.setStatus('downloaded', info.version);
-            if (this.notifiedVersion === info.version) return;
+            // Версию уже ставят с перезапуском: «установится при закрытии» было бы неправдой
+            if (this.installing || this.notifiedVersion === info.version) return;
             this.notifiedVersion = info.version;
             this.options.notify(this.text('notifyDownloaded', info.version));
         });
@@ -212,6 +227,13 @@ export class UpdateService {
         if (this.interval) clearInterval(this.interval);
         this.firstTimer = null;
         this.interval = null;
+    }
+    /** Поставить скачанную версию сейчас: тихий установщик закрывает приложение и запускает новую версию */
+    public installNow(): boolean {
+        if (this.disposed || this.installing || !this.updater || !this.getState().canInstall) return false;
+        this.installing = true;
+        this.updater.quitAndInstall(true, true);
+        return true;
     }
     public dispose(): void {
         this.disposed = true;

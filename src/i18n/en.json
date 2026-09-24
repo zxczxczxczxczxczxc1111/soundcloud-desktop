@@ -80,5 +80,9 @@
     "pluginPageTitle": "Plugin page",
     "pluginPageQuestion": "Open this address in the browser?",
     "pluginPageCancel": "Cancel",
-    "pluginPageOpen": "Open in browser"
+    "pluginPageOpen": "Open in browser",
+    "updateScreenTitle": "Updating to version {v}",
+    "updateScreenDownloading": "Downloading: {p}%",
+    "updateScreenInstalling": "Installing and restarting",
+    "updateScreenLater": "Later"
 }

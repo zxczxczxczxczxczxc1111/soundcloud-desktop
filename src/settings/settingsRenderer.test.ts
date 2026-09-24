@@ -33,6 +33,8 @@ async function openSettings(
                 return { accounts: [{ id: 'default', name: 'Основной аккаунт' }, { id: 'acc_1', name: 'nick_1' }], currentAccountId: 'default' };
             case 'get-update-state':
                 return updateState(state.siteLanguage === 'en' ? 'en' : 'ru');
+            case 'install-update-now':
+                return true;
             case 'get-current-track':
                 return { track: { title: '', author: '', duration: '', elapsed: '', isPlaying: false, artwork: '' }, card: null, hidden: 'idle' };
             default:
@@ -235,6 +237,21 @@ it('предпросмотр рисует карточку из main и объя
     // Переключили из трея или клавишей: галочка догоняет
     emit('discord-incognito-changed', false);
     expect(incognito.checked).toBe(false);
+});
+
+it('скачанное обновление можно поставить из F1 с перезапуском', async () => {
+    const { invoke, emit } = await openSettings({ theme: 'dark' });
+    const install = document.getElementById('installUpdate') as HTMLButtonElement;
+    await vi.waitFor(() => expect(document.getElementById('updateStatus')?.textContent).toBe('Установлена последняя версия.'));
+    expect(install.hidden).toBe(true);
+    emit('update-state', { ...updateState('ru'), mode: 'installer', status: 'Версия 0.2.0 скачана.', canInstall: true });
+    expect(install.hidden).toBe(false);
+    expect(install.textContent).toBe('Установить и перезапустить');
+    install.click();
+    expect(install.disabled).toBe(true);
+    await vi.waitFor(() => expect(invoke).toHaveBeenCalledWith('install-update-now'));
+    emit('update-state', { ...updateState('ru'), mode: 'installer', canInstall: false });
+    expect(install.hidden).toBe(true);
 });
 
 it('волна на главной включается с вкладки «Моя волна»', async () => {

@@ -31,6 +31,7 @@ const INVOKE_CHANNELS = new Set([
     'get-update-state',
     'open-release-page',
     'check-updates',
+    'install-update-now',
     'open-data-folder',
     'get-wave-exclusions',
     'remove-wave-exclusion',

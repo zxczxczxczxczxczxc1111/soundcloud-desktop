@@ -46,7 +46,8 @@ import { PresenceService, TEMPLATE_DEFAULTS } from './services/presenceService';
 import { TranslationService, type AppLanguage, type TranslationKeys } from './services/translationService';
 import { ThumbarService } from './services/thumbarService';
 import { WebhookService } from './services/webhookService';
-import { UpdateService, type UpdateMode } from './services/updateService';
+import { UpdateService, type UpdateMode, type UpdateStatus } from './services/updateService';
+import { UpdateScreen } from './update/updateScreen';
 import { autoUpdater } from 'electron-updater';
 import { ThemeService } from './services/themeService';
 import { ShortcutService } from './services/shortcutService';
@@ -166,6 +167,11 @@ let waveSignals: WaveSignals | null = null;
 let presenceService: PresenceService;
 let webhookService: WebhookService;
 let updateService: UpdateService | null = null;
+// Версия, найденная в первые секунды после запуска, ставится с перезапуском через экран обновления
+const UPDATE_SCREEN_WINDOW_MS = 20_000;
+const launchedAt = Date.now();
+let updateScreen: UpdateScreen | null = null;
+let updateScreenDismissed = false;
 // Язык всего приложения это настройка «Язык» в F1; трей строится раньше остальных служб
 const appLanguage = (): AppLanguage => (store.get('siteLanguage', 'ru') === 'en' ? 'en' : 'ru');
 const translationService = new TranslationService(appLanguage);
@@ -505,6 +511,7 @@ function adjustContentViews() {
         height: height - HEADER_HEIGHT,
     });
 
+    updateScreen?.layout();
     updateDialogBounds(mainWindow);
 }
 
@@ -663,6 +670,38 @@ function setupWindowControls() {
 let headerView: BrowserView | null;
 let contentView: BrowserView;
 
+function closeUpdateScreen(): void {
+    updateScreen?.close();
+    updateScreen = null;
+}
+
+function handleUpdateStatus(status: UpdateStatus): void {
+    if (status.key === 'failedCheck' || status.key === 'failedUpdate' || status.key === 'failedDownload') {
+        closeUpdateScreen();
+        return;
+    }
+    if (status.key !== 'downloading' && status.key !== 'progress' && status.key !== 'downloaded') return;
+    if (!updateScreen) {
+        // Позже первых секунд или под играющую музыку экран не открывается: версия поставится при выходе
+        if (updateScreenDismissed || Date.now() - launchedAt > UPDATE_SCREEN_WINDOW_MS || lastTrackInfo.isPlaying) return;
+        if (!mainWindow || mainWindow.isDestroyed()) return;
+        updateScreen = new UpdateScreen(mainWindow, HEADER_HEIGHT);
+    }
+    const installing = status.key === 'downloaded';
+    const percent = installing ? 100 : (status.percent ?? 0);
+    updateScreen.show({
+        title: translationService.translate('updateScreenTitle').replace('{v}', status.version ?? ''),
+        status: installing
+            ? translationService.translate('updateScreenInstalling')
+            : translationService.translate('updateScreenDownloading').replace('{p}', String(percent)),
+        percent,
+        later: translationService.translate('updateScreenLater'),
+        installing,
+        dark: isDarkTheme,
+    });
+    if (installing && !updateService?.installNow()) closeUpdateScreen();
+}
+
 // Main initialization
 async function init() {
     loopDelay.enable();
@@ -806,6 +845,16 @@ async function init() {
         onState: (state) => settingsManager.getView()?.webContents.send('update-state', state),
         loadUpdater: () => autoUpdater,
         language: appLanguage,
+        onStatus: handleUpdateStatus,
+    });
+    ipcMain.on('update-screen-later', (event) => {
+        if (!updateScreen?.owns(event.sender) || !isTrustedLocalSender(event)) return;
+        updateScreenDismissed = true;
+        closeUpdateScreen();
+    });
+    ipcMain.handle('install-update-now', (event) => {
+        if (!isTrustedLocalSender(event)) throw new Error('Недопустимый отправитель IPC');
+        return updateService?.installNow() ?? false;
     });
     updateService.start();
     ipcMain.handle('get-update-state', (event) => {

@@ -134,6 +134,7 @@ window.SETTINGS_EN = {
 
     'Проверять обновления': 'Check for updates',
     'Проверить сейчас': 'Check now',
+    'Установить и перезапустить': 'Install and restart',
     'Страница релиза': 'Release page',
     'Версия': 'Version',
 };

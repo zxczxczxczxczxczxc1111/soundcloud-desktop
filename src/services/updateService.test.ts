@@ -9,6 +9,7 @@ class FakeUpdater extends EventEmitter {
     autoDownload = false;
     autoInstallOnAppQuit = false;
     checkForUpdates = vi.fn(async () => null);
+    quitAndInstall = vi.fn();
 }
 
 function release(tag: string, url = 'https://github.com/zxczxczxczxczxczxc1111/soundcloud-desktop/releases/tag/' + tag): Response {
@@ -79,11 +80,10 @@ it('ошибка GitHub не роняет проверку и не шлёт ув
     expect(service.getState().status).toContain('Не удалось проверить обновления');
 });
 
-it('установщик проверяет после задержки, качает сам и ставит при выходе', async () => {
+it('установщик проверяет сразу при запуске, качает сам и ставит при выходе', async () => {
     const { service, updater, notify } = create('installer');
     service.start();
-    expect(updater.checkForUpdates).not.toHaveBeenCalled();
-    await vi.advanceTimersByTimeAsync(FIRST_CHECK_DELAY_MS);
+    await vi.advanceTimersByTimeAsync(0);
     expect(updater.checkForUpdates).toHaveBeenCalledTimes(1);
     expect(updater.autoDownload).toBe(true);
     expect(updater.autoInstallOnAppQuit).toBe(true);
@@ -93,7 +93,57 @@ it('установщик проверяет после задержки, кач�
     updater.emit('update-downloaded', { version: '0.2.0' });
     expect(notify).toHaveBeenCalledTimes(1);
     expect(service.getState().status).toContain('установится при выходе');
+    expect(service.getState().canInstall).toBe(true);
+    expect(updater.quitAndInstall).not.toHaveBeenCalled();
     service.dispose();
+});
+
+it('portable первую проверку по-прежнему откладывает', async () => {
+    const fetch = vi.fn(async () => release('v0.1.0'));
+    const { service } = create('portable', { fetch });
+    service.start();
+    await vi.advanceTimersByTimeAsync(0);
+    expect(fetch).not.toHaveBeenCalled();
+    await vi.advanceTimersByTimeAsync(FIRST_CHECK_DELAY_MS);
+    expect(fetch).toHaveBeenCalledTimes(1);
+    service.dispose();
+});
+
+it('скачанную версию ставит сейчас с перезапуском и не обещает поставить её при выходе', async () => {
+    const statuses: string[] = [];
+    let service: UpdateService | null = null;
+    const created = create('installer', {
+        onStatus: (status) => {
+            statuses.push(status.key + (status.percent === undefined ? '' : ':' + status.percent));
+            // Так делает main: версия, найденная при запуске, ставится сразу
+            if (status.key === 'downloaded') expect(service?.installNow()).toBe(true);
+        },
+    });
+    service = created.service;
+    const { updater, notify } = created;
+    expect(service.installNow()).toBe(false);
+    await service.check();
+    updater.emit('update-available', { version: '0.2.0' });
+    updater.emit('download-progress', { percent: 99.9 });
+    expect(service.getState().canInstall).toBe(false);
+    updater.emit('update-downloaded', { version: '0.2.0' });
+    expect(statuses).toEqual(['downloading', 'progress:99', 'downloaded']);
+    expect(updater.quitAndInstall).toHaveBeenCalledTimes(1);
+    expect(updater.quitAndInstall).toHaveBeenCalledWith(true, true);
+    expect(notify).not.toHaveBeenCalled();
+    // Второй раз установщик не запускается
+    expect(service.installNow()).toBe(false);
+    expect(updater.quitAndInstall).toHaveBeenCalledTimes(1);
+});
+
+it('без автообновления поставить сейчас нельзя', async () => {
+    const { service, updater } = create('installer');
+    await service.check();
+    updater.emit('update-downloaded', { version: '0.2.0' });
+    values.set('autoUpdateEnabled', false);
+    expect(service.getState().canInstall).toBe(false);
+    expect(service.installNow()).toBe(false);
+    expect(updater.quitAndInstall).not.toHaveBeenCalled();
 });
 
 it('выключенная настройка не проверяет и снимает установку при выходе', async () => {

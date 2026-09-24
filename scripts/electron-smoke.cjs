@@ -115,6 +115,30 @@ app.whenReady().then(async () => {
         assert.equal(win.listenerCount('closed'), closedListeners);
     }
     console.log('PASS: dialogs');
+    const { UpdateScreen } = require('../tsc/update/updateScreen');
+    const updateScreen = new UpdateScreen(win, 32);
+    const updateView = win.contentView.children.at(-1);
+    const screenState = { title: 'Обновление до версии 9.9.9', status: 'Загружаю: 42%', percent: 42, later: 'Позже', installing: false, dark: true };
+    updateScreen.show(screenState);
+    await new Promise(resolve => updateView.webContents.once('did-finish-load', resolve));
+    const readScreen = () => updateView.webContents.executeJavaScript(
+        "({ title: document.getElementById('title').textContent, status: document.getElementById('status').textContent, width: document.getElementById('fill').style.width, later: document.getElementById('later').hidden, now: document.querySelector('[role=progressbar]').getAttribute('aria-valuenow') })",
+    );
+    await new Promise(resolve => setTimeout(resolve, 100));
+    assert.deepEqual(await readScreen(), { title: 'Обновление до версии 9.9.9', status: 'Загружаю: 42%', width: '42%', later: false, now: '42' });
+    assert.equal(updateScreen.owns(updateView.webContents), true);
+    assert.equal(updateView.getBounds().y, 32);
+    const laterPressed = new Promise(resolve => ipcMain.once('update-screen-later', event => resolve(isTrustedLocalSender(event))));
+    await updateView.webContents.executeJavaScript("document.getElementById('later').click()");
+    assert.equal(await laterPressed, true);
+    updateScreen.show({ ...screenState, status: 'Устанавливаю и перезапускаю', percent: 100, installing: true });
+    await new Promise(resolve => setTimeout(resolve, 100));
+    assert.equal((await readScreen()).later, true);
+    const screenClosed = new Promise(resolve => updateView.webContents.once('destroyed', resolve));
+    updateScreen.close();
+    await screenClosed;
+    assert.equal(win.contentView.children.includes(updateView), false);
+    console.log('PASS: update screen');
     const { NotificationManager } = require('../tsc/notifications/notificationManager');
     const notifications = new NotificationManager(win);
     notifications.show('<img src=x onerror="globalThis.injected=true">');

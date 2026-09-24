@@ -229,7 +229,19 @@ async function initializeSettings() {
         const hint = state.hint !== state.status ? state.hint : '';
         document.getElementById('updateHint').textContent = [tr('Версия') + ' ' + state.version + '.', hint].filter(Boolean).join(' ');
         document.getElementById('updateStatus').textContent = state.status;
+        document.getElementById('installUpdate').hidden = state.canInstall !== true;
     }
+
+    const installUpdate = document.getElementById('installUpdate');
+    installUpdate.addEventListener('click', () => {
+        installUpdate.disabled = true;
+        ipcRenderer.invoke('install-update-now').then((started) => {
+            if (!started) installUpdate.disabled = false;
+        }).catch((error) => {
+            installUpdate.disabled = false;
+            console.error('Не удалось поставить обновление:', error);
+        });
+    });
 
     document.getElementById('checkUpdates').addEventListener('click', () => {
         ipcRenderer.invoke('check-updates').catch((error) => console.error('Не удалось проверить обновления:', error));

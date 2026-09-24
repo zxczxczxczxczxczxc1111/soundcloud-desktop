@@ -80,5 +80,9 @@
     "pluginPageTitle": "Страница плагина",
     "pluginPageQuestion": "Открыть этот адрес в браузере?",
     "pluginPageCancel": "Отмена",
-    "pluginPageOpen": "Открыть в браузере"
+    "pluginPageOpen": "Открыть в браузере",
+    "updateScreenTitle": "Обновление до версии {v}",
+    "updateScreenDownloading": "Загружаю: {p}%",
+    "updateScreenInstalling": "Устанавливаю и перезапускаю",
+    "updateScreenLater": "Позже"
 }
