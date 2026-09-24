@@ -91,6 +91,9 @@
         },
         "portable": {
             "artifactName": "soundcloud-desktop-${version}-portable-${arch}.${ext}"
+        },
+        "nsis": {
+            "include": "build-resources/installer.nsh"
         }
     },
     "devDependencies": {

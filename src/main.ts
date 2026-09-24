@@ -18,6 +18,7 @@ import { WaveJournal } from './services/waveJournal';
 import { WaveExclusions } from './services/waveExclusions';
 import { WaveSignals } from './services/waveSignals';
 import { AwayTracker } from './services/awayTracker';
+import { OPEN_PROTOCOL, parseOpenLink } from './services/openLink';
 import { getSiteDictionary } from './services/siteDictionary';
 import { shouldRunGpuInProcess } from './services/gpuProcessMode';
 import { tintIcon } from './services/devIcon';
@@ -709,6 +710,11 @@ function handleUpdateStatus(status: UpdateStatus): void {
 // Main initialization
 async function init() {
     loopDelay.enable();
+    // Протокол ссылок «открыть в клиенте» регистрирует только установленная версия: dev, тестовая и portable не перехватывают его у неё.
+    // -- перед адресом: остаток командной строки Chromium не разбирает как ключи
+    if (process.platform === 'win32' && app.isPackaged && buildInfo.channel === 'release' && !portableDirectory) {
+        if (!app.setAsDefaultProtocolClient(OPEN_PROTOCOL, process.execPath, ['--'])) console.warn('Протокол ссылок на треки не зарегистрирован');
+    }
     diagnosticTimer = setInterval(() => {
         const metrics = app.getAppMetrics();
         diagnostics.record('performance', {
@@ -1353,7 +1359,9 @@ async function init() {
     }
     await adblockService.setEnabled(store.get('adBlocker') === true).catch((error: unknown) => queueToastNotification(String(error)));
     await contentView.webContents.loadURL('https://soundcloud.com/discover').catch((error: unknown) => console.error('Не удалось загрузить SoundCloud:', error));
-
+    // Клиент запущен ссылкой из Discord: трек откроется, когда сайт будет готов
+    const startLink = parseOpenLink(process.argv);
+    if (startLink) openTrackLink(startLink);
 }
 
 
@@ -1554,8 +1562,32 @@ app.on('will-quit', () => {
     }
 });
 
+// Ссылка «открыть в клиенте» из карточки Discord: страница сайта включает трек, когда её модули найдены.
+// До этого __scOpenTrack отвечает false или его ещё нет, тогда повтор раз в секунду, не дольше 30 секунд
+let openLinkTimer: ReturnType<typeof setTimeout> | undefined;
+function openTrackLink(trackPath: string, attempt = 0): void {
+    clearTimeout(openLinkTimer);
+    const retry = (): void => {
+        if (attempt < 30) openLinkTimer = setTimeout(() => openTrackLink(trackPath, attempt + 1), 1000);
+        else console.warn('Ссылка на трек: сайт не готов за 30 секунд');
+    };
+    const view = contentView as BrowserView | undefined;
+    if (!view || view.webContents.isDestroyed() || view.webContents.isLoading()) {
+        retry();
+        return;
+    }
+    // userGesture: воспроизведение по ссылке запускает пользователь, политика автовоспроизведения его не держит
+    const script = 'window.__scOpenTrack ? window.__scOpenTrack(' + JSON.stringify(trackPath) + ') : false';
+    (view.webContents.executeJavaScript(script, true) as Promise<unknown>).then(
+        (done) => { if (done !== true) retry(); },
+        (error: unknown) => { console.warn('Ссылка на трек не открыта:', error); retry(); },
+    );
+}
+
 // focus window when second instance opened
-app.on('second-instance', () => {
+app.on('second-instance', (_event, argv) => {
+    const trackPath = parseOpenLink(argv);
+    if (trackPath) openTrackLink(trackPath);
     if (!mainWindow) {
         return;
     }

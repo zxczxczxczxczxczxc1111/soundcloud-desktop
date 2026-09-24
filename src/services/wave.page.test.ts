@@ -459,6 +459,29 @@ it('волна от трека, к которому нечего подобра�
     expect(document.querySelector('#sc-wave .scw-hint')?.textContent).toBe('Similar to what you play and like');
 });
 
+it('ссылка из Discord: трек открывается и сразу играет, мусор и неготовый сайт не ломают', async () => {
+    type Host = { __scOpenTrack: (path: string) => Promise<boolean> };
+    Object.assign(window, { webpackJsonp: [] });
+    window.eval(waveScript());
+    // Модули сайта ещё не найдены: main спросит позже
+    expect(await (window as unknown as Host).__scOpenTrack('/art/song')).toBe(false);
+    window.dispatchEvent(new Event('pagehide'));
+
+    const site = fakeSite(relatedTracks, siteExtra);
+    fakeExclusions();
+    window.eval(waveScript());
+    await vi.advanceTimersByTimeAsync(100);
+    const open = (window as unknown as Host).__scOpenTrack;
+    expect(await open('/../evil')).toBe(true);
+    expect(site.player.replaceQueue).not.toHaveBeenCalled();
+    expect(await open('/art/song')).toBe(true);
+    expect(site.api.callEndpoint).toHaveBeenCalledWith('resolve', {}, { url: 'https://soundcloud.com/art/song' });
+    const queued = site.player.replaceQueue.mock.calls[0][0] as FakeItem[];
+    expect(queued.map((item) => item.sound.id)).toEqual([555]);
+    expect(queued[0].sourceInfo?.type).toBe('single');
+    expect(site.player.playCurrent).toHaveBeenCalled();
+});
+
 it('исчерпанная подборка перед последним треком возвращает автоплей сайта', async () => {
     const few = (seed: number): WaveTrack[] => [0, 1].map((i) => ({ id: seed * 1000 + i, kind: 'track', user_id: seed * 10 + i, duration: 200000, title: 'Few ' + seed + '-' + i }));
     const site = fakeSite(few);

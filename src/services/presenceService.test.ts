@@ -177,6 +177,23 @@ it('не отправляет ссылки не на SoundCloud', async () => {
     expect(activity.largeImageUrl).toBeUndefined();
 });
 
+it('кнопка ведёт на страницу-переходник, у приватного трека нет ни кнопки, ни ссылок на трек', async () => {
+    service.updateDisplaySettings(true, true);
+    await service.updatePresence(track);
+    await vi.advanceTimersByTimeAsync(0);
+    let activity = mocks.setActivity.mock.calls[mocks.setActivity.mock.calls.length - 1][0];
+    expect(activity.buttons).toEqual([{ label: 'Слушать в SoundCloud', url: 'https://zxczxczxczxczxczxc1111.github.io/soundcloud-desktop/open/?t=artist/first' }]);
+
+    await service.updatePresence({ ...track, url: 'https://soundcloud.com/artist/first/s-SeCrEt', title: 'Private' });
+    await vi.advanceTimersByTimeAsync(20000);
+    activity = mocks.setActivity.mock.calls[mocks.setActivity.mock.calls.length - 1][0];
+    expect(JSON.stringify(activity)).not.toContain('s-SeCrEt');
+    expect(activity.buttons).toBeUndefined();
+    expect(activity.detailsUrl).toBeUndefined();
+    expect(activity.largeImageUrl).toBeUndefined();
+    expect(activity.stateUrl).toBe('https://soundcloud.com/artist');
+});
+
 it('на паузе убирает статус', async () => {
     await service.updatePresence(track);
     await vi.advanceTimersByTimeAsync(PRESENCE_INTERVAL_MS);

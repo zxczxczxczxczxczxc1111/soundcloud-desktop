@@ -395,6 +395,7 @@ interface WaveWindow extends Window {
     __disposeWave?: () => void;
     __scWaveExclusionsChanged?: () => void;
     __scWaveTakeSignals?: () => { userId: number; signals: PlaySignal[] };
+    __scOpenTrack?: (path: string) => Promise<boolean>;
     // Кэш средних цветов обложек из плавности сайта (pageMotion), ключ это путь трека
     __scmCoverColor?: (key: string) => string | undefined;
     __scmLearnCover?: (key: string, url: string) => void;
@@ -1407,6 +1408,36 @@ export function installWave(config: WaveConfig): void {
             showToast(T.toastFailed);
         }
     }
+    // Ссылка «открыть в клиенте» из Discord: переход на страницу трека внутри сайта без перезагрузки и сразу воспроизведение.
+    // false значит «сайт ещё не готов, спроси позже», true значит «сделано или повторять бессмысленно»
+    async function openTrack(path: string): Promise<boolean> {
+        if (!player || !SoundModel || !api) return false;
+        if (!/^\/[a-z0-9_-]{1,100}\/[a-z0-9_-]{1,255}$/.test(path)) return true;
+        if (location.pathname !== path) {
+            const link = document.createElement('a');
+            link.href = path;
+            document.body.append(link);
+            link.click();
+            link.remove();
+        }
+        let track: WaveTrack | null;
+        try {
+            track = asTrack(await resolveUrl('https://soundcloud.com' + path));
+        } catch (error) {
+            console.warn('Волна: трек по ссылке не найден', error);
+            return true;
+        }
+        const Item = player.getQueue().model;
+        if (!track || (track.kind && track.kind !== 'track') || !Item) return true;
+        const sound = new SoundModel(track, { parse: true });
+        if ((sound.isPlayable && !sound.isPlayable()) || sound.isBlocked?.()) return true;
+        const item = new Item({}, { sound, originalModel: sound, queryPosition: 0, sourceInfo: { type: 'single' }, index: 0 });
+        item.release?.();
+        player.replaceQueue([item], 0);
+        player.playCurrent({ userInitiated: true });
+        return true;
+    }
+    host.__scOpenTrack = openTrack;
     function clearSeed(): void {
         seedRequest++;
         seed = null;
@@ -2477,6 +2508,7 @@ export function installWave(config: WaveConfig): void {
         document.getElementById('sc-wave-style')?.remove();
         delete host.__disposeWave;
         delete host.__scWaveTakeSignals;
+        delete host.__scOpenTrack;
     };
     host.__disposeWave = dispose;
     // Выход из приложения: main забирает недописанное вместе с текущим прослушиванием,

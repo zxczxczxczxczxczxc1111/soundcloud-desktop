@@ -3,6 +3,7 @@ import { Client as DiscordClient, type SetActivity } from '@xhayper/discord-rpc'
 import type { TranslationService } from './translationService';
 import { normalizeTrackInfo } from '../utils/trackParser';
 import { genreKeys, normalizeTag, trackMatchesGenre } from './wave';
+import { openPageUrl, publicTrackPath } from './openLink';
 import type { TrackInfo, TrackMeta } from '../types';
 
 interface Settings {
@@ -217,7 +218,9 @@ export class PresenceService {
         const state = label(card.state);
         card.statusLine = (this.statusDisplayType === 1 ? state : this.statusDisplayType === 2 ? details : undefined)?.trim() || 'SoundCloud';
         const startTimestamp = observedAt - elapsed * 1000;
-        const trackUrl = soundcloudLink(track.url);
+        // Приватный трек: его адрес с секретной ссылкой не уходит ни в кнопку, ни в ссылки карточки
+        const trackUrl = publicTrackPath(track.url) ? soundcloudLink(track.url) : undefined;
+        const openUrl = openPageUrl(track.url);
         const activity: SetActivity = {
             type: ActivityType.Listening,
             // Заголовок карточки всегда «Listening to SoundCloud», строку под ником выбирает statusDisplayType.
@@ -233,9 +236,10 @@ export class PresenceService {
             endTimestamp: startTimestamp + duration * 1000,
             ...this.smallBadge(),
             statusDisplayType: this.statusDisplayType,
+            // Кнопка ведёт на страницу-переходник: у кого есть клиент, трек откроется в нём, у остальных на soundcloud.com
             buttons:
-                this.displayButtons && track.url
-                    ? [{ label: this.translationService.translate('listenOnSoundcloud'), url: track.url }]
+                this.displayButtons && openUrl
+                    ? [{ label: this.translationService.translate('listenOnSoundcloud'), url: openUrl }]
                     : undefined,
         };
         return { activity, card, hidden: null };
