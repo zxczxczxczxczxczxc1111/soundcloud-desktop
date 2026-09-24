@@ -396,6 +396,7 @@ interface WaveWindow extends Window {
         waveJournal?: WaveJournalApi;
         waveExclusions?: WaveExclusionsApi;
         waveSignals?: { add(userId: number, signals: PlaySignal[]): void };
+        reportWaveEmpty?(counts: { seen: number; artistTracks: number; moodTags: number }): void;
         sendTrackMeta?(meta: TrackMeta): void;
     };
 }
@@ -484,6 +485,9 @@ export function installWave(config: WaveConfig): void {
     // теги настроения считаются один раз, их страницы листаются дальше
     let artistFallbackDone = false;
     let fallbackMood: string[] | null = null;
+    // Для журнала диагностики, если волна от трека окажется пустой: сколько пришло из похожих и станции, сколько треков у артиста
+    let seenCount = 0;
+    let artistCount = 0;
     let seedRequest = 0;
     // Копия отметок «Не нравится» и скрытых артистов из main
     interface Excluded { id: number; title: string; artist: string; url: string }
@@ -795,13 +799,16 @@ export function installWave(config: WaveConfig): void {
         }
         // Похожие и станция почти ничего не дали (трек без похожих или всё отсеяно):
         // другие треки артиста зерна, потом свежее и популярное в настроении зерна
+        seenCount += observed.length;
         if (seed && found.length < 3) {
             const first = seed.tracks[0];
             if (seed.kind === 'track' && first && !artistFallbackDone) {
                 artistFallbackDone = true;
                 try {
                     const artist = trackArtist(first);
-                    if (artist) for (const track of await artistOwnTracks(artist)) accept(found, { track, reason: { kind: 'artistTrack', artist: artistName(first) || seed.title } }, filter);
+                    const own = artist ? await artistOwnTracks(artist) : [];
+                    artistCount = own.length;
+                    for (const track of own) accept(found, { track, reason: { kind: 'artistTrack', artist: artistName(first) || seed.title } }, filter);
                 } catch (error) {
                     console.warn('Волна: треки артиста не загружены', error);
                 }
@@ -856,6 +863,8 @@ export function installWave(config: WaveConfig): void {
         ownAdded = false;
         artistFallbackDone = false;
         fallbackMood = null;
+        seenCount = 0;
+        artistCount = 0;
         usedSeeds.clear();
         usedStations.clear();
         cursors.clear();
@@ -1370,6 +1379,13 @@ export function installWave(config: WaveConfig): void {
             if (first && keep) known.set(first.id, { track: first, reason: { kind: 'seedTrack' } });
             const started = await start(first && !keep ? { track: first, reason: { kind: 'seedTrack' } } : undefined, keep);
             if (started || request !== seedRequest) return;
+            if (state === 'empty') {
+                try {
+                    host.soundcloudAPI?.reportWaveEmpty?.({ seen: seenCount, artistTracks: artistCount, moodTags: fallbackMood?.length ?? 0 });
+                } catch (error) {
+                    console.warn('Волна: пустая волна не записана в диагностику', error);
+                }
+            }
             showToast(state === 'error' ? T.toastFailed : T.toastEmpty);
             clearSeed();
         } catch (error) {

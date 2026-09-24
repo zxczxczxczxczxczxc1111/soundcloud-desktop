@@ -910,6 +910,13 @@ async function init() {
     ipcMain.on('soundcloud:wave-signals:add', (event, userId: unknown, signals: unknown) => {
         if (isTrustedSoundCloudSender(event)) waveSignals?.add(userId, signals);
     });
+    ipcMain.removeAllListeners('soundcloud:wave-empty');
+    ipcMain.on('soundcloud:wave-empty', (event, counts: unknown) => {
+        if (!isTrustedSoundCloudSender(event) || !counts || typeof counts !== 'object') return;
+        const value = counts as Record<string, unknown>;
+        const count = (input: unknown): number => (typeof input === 'number' && Number.isSafeInteger(input) && input >= 0 ? Math.min(input, 10000) : 0);
+        diagnostics.record('wave.empty', { waveSeen: count(value.seen), waveArtistTracks: count(value.artistTracks), waveMoodTags: count(value.moodTags) });
+    });
     // Жанр, счётчики и волна текущего трека для карточки Discord
     ipcMain.removeAllListeners('soundcloud:track-meta');
     ipcMain.on('soundcloud:track-meta', (event, payload: unknown) => {

@@ -445,6 +445,8 @@ it('трек без жанра, все похожие отсеяны: волна
 it('волна от трека, к которому нечего подобрать, не играет его одного и говорит об этом', async () => {
     const site = fakeSite((seed) => (seed === 555 ? [] : relatedTracks(seed)), (name, path, query) => (name === 'userToptracks' ? { collection: [] } : siteExtra(name, path, query)));
     fakeExclusions();
+    const report = vi.fn();
+    Object.assign((window as unknown as { soundcloudAPI: object }).soundcloudAPI, { reportWaveEmpty: report });
     const row = listRow();
     window.eval(waveScript());
     await vi.advanceTimersByTimeAsync(100);
@@ -453,6 +455,7 @@ it('волна от трека, к которому нечего подобра�
     await vi.advanceTimersByTimeAsync(100);
     expect(site.player.replaceQueue).not.toHaveBeenCalled();
     expect(document.querySelector('.scw-toast')?.textContent).toBe('No similar tracks found');
+    expect(report).toHaveBeenCalledWith({ seen: 0, artistTracks: 0, moodTags: 0 });
     expect(document.querySelector('#sc-wave .scw-hint')?.textContent).toBe('Similar to what you play and like');
 });
 

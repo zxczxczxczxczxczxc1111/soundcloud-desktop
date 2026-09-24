@@ -25,6 +25,15 @@ it('allows diagnostics but drops secrets, URLs and arbitrary strings', () => {
     expect(text).toContain('TypeError');
     expect(stderr).toHaveBeenCalled();
 });
+it('пустая волна: в журнал попадают только числа по источникам', () => {
+    const { root, journal } = create();
+    journal.record('wave.empty', { waveSeen: 12, waveArtistTracks: 0, waveMoodTags: 2, title: 'кровью', url: 'https://soundcloud.com/a/b' });
+    journal.exportTo(join(root, 'export.log'));
+    const line = JSON.parse(readFileSync(join(root, 'export.log'), 'utf8').trim().split('\n').pop() ?? '{}') as Record<string, unknown>;
+    expect(line).toMatchObject({ event: 'wave.empty', waveSeen: 12, waveArtistTracks: 0, waveMoodTags: 2 });
+    expect(line.title).toBeUndefined();
+    expect(line.url).toBeUndefined();
+});
 it('rotates three files and exports them in chronological order', () => {
     const { root, journal } = create(250);
     for (let i = 0; i < 12; i++) { journal.record('performance', { updates: i }); journal.flush(); }

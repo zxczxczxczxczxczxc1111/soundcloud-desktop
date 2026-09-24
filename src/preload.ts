@@ -213,6 +213,10 @@ contextBridge.exposeInMainWorld('soundcloudAPI', {
             ipcRenderer.send('soundcloud:wave-signals:add', userId, signals);
         },
     },
+    // Волна от трека осталась пустой: числа по источникам в журнал диагностики, проверяет main
+    reportWaveEmpty: (counts: unknown) => {
+        ipcRenderer.send('soundcloud:wave-empty', counts);
+    },
     // Жанр, счётчики и волна текущего трека для карточки Discord
     sendTrackMeta: (meta: unknown) => {
         ipcRenderer.send('soundcloud:track-meta', meta);
