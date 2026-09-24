@@ -784,29 +784,66 @@ it('полка из снимка дня: находки играют первы�
     expect(cards).toHaveLength(2);
     expect(cards[0].querySelector('.scw-t1')?.textContent).toBe('Daily finds');
     expect(cards[0].querySelector('.scw-t2')?.textContent).toBe('12 tracks');
-    expect(cards[0].querySelectorAll('.scw-mix > span')).toHaveLength(4);
+    expect(cards[0].querySelectorAll('.scw-quad > span')).toHaveLength(4);
     expect(cards[1].querySelector('.scw-t2')?.textContent).toBe('A, B');
     expect(section.querySelector('.scw-seg')).not.toBeNull();
 
-    cards[0].click();
+    section.querySelector<HTMLButtonElement>('[data-act="shelf-play"][data-card="0"]')!.click();
     await vi.advanceTimersByTimeAsync(100);
     const queued = site.player.replaceQueue.mock.calls[site.player.replaceQueue.mock.calls.length - 1][0] as FakeItem[];
     expect(queued.map((item) => item.sound.id)).toEqual(finds.slice(0, 10).map((track) => track.id));
     expect(section.querySelector('.scw-hint')?.textContent).toBe('Daily finds: artists new to you, until midnight');
     expect(section.querySelector('.scw-why')?.textContent).toBe('Daily find: an artist new to you');
-    expect(section.querySelector('.scw-card[data-card="0"]')?.getAttribute('aria-pressed')).toBe('true');
+    expect(section.querySelector('[data-act="shelf-play"][data-card="0"]')?.getAttribute('aria-pressed')).toBe('true');
     expect(section.querySelector('.scw-seg')).toBeNull();
     expect(shelf.save).not.toHaveBeenCalled();
 
     // Вкус: свои лайки через один с похожими на них
-    section.querySelector<HTMLButtonElement>('.scw-card[data-card="1"]')!.click();
+    section.querySelector<HTMLButtonElement>('[data-act="shelf-play"][data-card="1"]')!.click();
     await vi.advanceTimersByTimeAsync(100);
     const mixed = (site.player.replaceQueue.mock.calls[site.player.replaceQueue.mock.calls.length - 1][0] as FakeItem[]).map((item) => item.sound.id);
     expect([mixed[0], mixed[2]].sort()).toEqual([5101, 5102]);
     expect(mixed[1]).toBeGreaterThan(5000000);
     expect(section.querySelector('.scw-hint')?.textContent).toBe('Your taste: Techno and Industrial');
-    expect(section.querySelector('.scw-card[data-card="1"]')?.getAttribute('aria-pressed')).toBe('true');
-    expect(section.querySelector('.scw-card[data-card="0"]')?.getAttribute('aria-pressed')).toBe('false');
+    expect(section.querySelector('[data-act="shelf-play"][data-card="1"]')?.getAttribute('aria-pressed')).toBe('true');
+    expect(section.querySelector('[data-act="shelf-play"][data-card="0"]')?.getAttribute('aria-pressed')).toBe('false');
+});
+
+it('раскрытая подборка: треки списком, трек из списка играет первым, дальше подборка по порядку, Esc сворачивает', async () => {
+    const finds = Array.from({ length: 12 }, (_, i): WaveTrack => ({
+        id: 5001 + i, kind: 'track', user_id: 600 + i, duration: 200000, title: 'Find ' + i, user: { id: 600 + i, username: 'Artist ' + i },
+    }));
+    const site = fakeSite(relatedTracks, (name, _path, query) => (name === 'trackBatch' ? batchOf(finds)(query) : undefined));
+    const snapshot = { day: localDay(Date.now()), cards: [{ kind: 'daily', title: '', sub: '', ids: finds.map((track) => track.id), seeds: [1], keys: [], art: [] }] };
+    Object.assign(window, { soundcloudAPI: { waveShelf: { load: vi.fn(async () => ({ snapshot, recent: [] })), save: vi.fn(async () => true) } } });
+    window.eval(waveScript());
+    await vi.advanceTimersByTimeAsync(100);
+    const section = document.getElementById('sc-wave')!;
+    section.querySelector<HTMLButtonElement>('[data-act="shelf-open"][data-card="0"]')!.click();
+    await vi.advanceTimersByTimeAsync(100);
+    const rows = section.querySelectorAll<HTMLButtonElement>('.scw-mix .scw-row[data-track]');
+    expect(rows).toHaveLength(12);
+    expect(rows[0].querySelector('.scw-row-t b')?.textContent).toBe('Find 0');
+    expect(rows[0].querySelector('.scw-row-t span')?.textContent).toBe('Artist 0');
+    expect(rows[0].querySelector('.scw-row-d')?.textContent).toBe('3:20');
+    expect(section.querySelector('[data-act="shelf-open"][data-card="0"]')?.getAttribute('aria-expanded')).toBe('true');
+    expect(site.player.replaceQueue).not.toHaveBeenCalled();
+
+    rows[3].click();
+    await vi.advanceTimersByTimeAsync(100);
+    const queued = (site.player.replaceQueue.mock.calls[site.player.replaceQueue.mock.calls.length - 1][0] as FakeItem[]).map((item) => item.sound.id);
+    expect(queued.slice(0, 4)).toEqual([5004, 5005, 5006, 5007]);
+    expect(section.querySelector('.scw-row[aria-current="true"]')?.getAttribute('data-track')).toBe('5004');
+    // Трек уже в очереди этой подборки: переход к нему без новой очереди
+    const calls = site.player.replaceQueue.mock.calls.length;
+    section.querySelector<HTMLButtonElement>('.scw-row[data-track="5006"]')!.click();
+    await vi.advanceTimersByTimeAsync(200);
+    expect(site.player.replaceQueue.mock.calls.length).toBe(calls);
+    expect(site.player.getCurrentSound()?.id).toBe(5006);
+
+    section.querySelector('.scw-mix')!.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
+    expect(section.querySelector('.scw-mix')).toBeNull();
+    expect(document.activeElement?.getAttribute('data-act')).toBe('shelf-open');
 });
 
 it('без снимка собирает полку из лайков: находки, давно не слушал, два вкуса, и сохраняет её', async () => {

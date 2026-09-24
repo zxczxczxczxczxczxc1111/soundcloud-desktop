@@ -67,7 +67,7 @@ export type WaveTexts = Record<
     | 'toastLaterArtist' | 'toastUnlater'
     | 'lang' | 'shelf' | 'shelfDaily' | 'shelfForgotten' | 'shelfEmpty' | 'tracksCount' | 'groupAnd' | 'whyDaily' | 'whyForgotten' | 'whyGroup'
     | 'seedDaily' | 'seedForgotten' | 'seedGroup' | 'seedTracks' | 'menuPick' | 'menuUnpick' | 'toastPicked' | 'toastUnpicked' | 'toastPickFull'
-    | 'pickStart' | 'pickClear',
+    | 'pickStart' | 'pickClear' | 'mixPlay' | 'mixClose' | 'mixLoading' | 'mixFailed' | 'mixEmpty',
     string
 >;
 
@@ -105,6 +105,8 @@ export const WAVE_TEXTS: Record<'ru' | 'en', WaveTexts> = {
         seedGroup: 'Твой вкус: {seed}', seedTracks: 'Волна по подборке: {seed}',
         menuPick: 'Добавить в подборку', menuUnpick: 'Убрать из подборки', toastPicked: 'В подборке {count}', toastUnpicked: 'Трек убран из подборки',
         toastPickFull: 'В подборке уже {count}', pickStart: 'Включить волну по подборке', pickClear: 'Очистить подборку',
+        mixPlay: 'Слушать подборку', mixClose: 'Свернуть', mixLoading: 'Загружаю треки', mixFailed: 'Треки не загрузились, нажми на карточку ещё раз',
+        mixEmpty: 'Все треки подборки ты убрал из волны',
     },
     en: {
         wave: 'My Wave', similar: 'Similar', fresh: 'New', anyGenre: 'Any genre', genreInput: 'Genres, comma separated', fromLikes: 'From your likes',
@@ -140,6 +142,8 @@ export const WAVE_TEXTS: Record<'ru' | 'en', WaveTexts> = {
         seedGroup: 'Your taste: {seed}', seedTracks: 'Wave from picks: {seed}',
         menuPick: 'Add to picks', menuUnpick: 'Remove from picks', toastPicked: 'Picks: {count}', toastUnpicked: 'Removed from picks',
         toastPickFull: 'Picks are full: {count}', pickStart: 'Play wave from picks', pickClear: 'Clear picks',
+        mixPlay: 'Play mix', mixClose: 'Collapse', mixLoading: 'Loading tracks', mixFailed: 'Couldn’t load tracks, click the card again',
+        mixEmpty: 'You removed every track of this mix from My Wave',
     },
 };
 
@@ -1856,6 +1860,9 @@ export function installWave(config: WaveConfig): void {
     const shelfTracks = new Map<number, WaveTrack>();
     const picks: WaveTrack[] = [];
     const PICKS_MAX = 5;
+    // Раскрытая под полкой подборка и её треки по номеру карточки
+    let openCard: number | null = null;
+    const mixLists = new Map<number, WaveTrack[] | 'loading' | 'failed'>();
     const isId = (value: unknown): value is number => typeof value === 'number' && Number.isSafeInteger(value) && value > 0;
 
     // Снимок из main уже проверен там; здесь только форма, чтобы не упасть на чужом
@@ -1951,6 +1958,8 @@ export function installWave(config: WaveConfig): void {
         const replace = (next: Shelf): void => {
             if (shelf && seed) seed.card = undefined;
             shelf = next;
+            openCard = null;
+            mixLists.clear();
         };
         shelfPromise = (async () => {
             const id = await ensureUser();
@@ -1976,8 +1985,31 @@ export function installWave(config: WaveConfig): void {
         });
         render();
     }
-    // Волна от карточки: подборка впереди (находки, давно не слушал) или вперемешку с похожими (вкус)
-    async function startShelf(index: number): Promise<void> {
+    // Треки карточки для раскрытого списка; неудача не кешируется, повторное раскрытие спросит снова
+    function toggleMix(index: number): void {
+        if (openCard === index) {
+            openCard = null;
+            render();
+            return;
+        }
+        openCard = index;
+        const card = shelf?.cards[index];
+        const loaded = mixLists.get(index);
+        if (card && !Array.isArray(loaded) && loaded !== 'loading') {
+            const day = shelf?.day;
+            mixLists.set(index, 'loading');
+            void tracksByIds(card.ids).then((tracks) => {
+                if (shelf?.day === day) mixLists.set(index, tracks.filter(isWaveEligible));
+            }, (error: unknown) => {
+                console.warn('Волна: треки подборки не загружены', error);
+                if (shelf?.day === day) mixLists.set(index, 'failed');
+            }).finally(render);
+        }
+        render();
+    }
+    // Волна от карточки: подборка впереди (находки, давно не слушал) или вперемешку с похожими (вкус).
+    // fromId: трек из раскрытого списка играет первым, подборка по порядку идёт дальше за ним
+    async function startShelf(index: number, fromId = 0): Promise<void> {
         const card = shelf?.cards[index];
         if (!card) return;
         const request = ++seedRequest;
@@ -1986,17 +2018,22 @@ export function installWave(config: WaveConfig): void {
             const tracks = await tracksByIds([...card.ids, ...card.seeds]);
             if (request !== seedRequest || disposed) return;
             const byId = new Map(tracks.map((track) => [track.id, track]));
-            const own = card.ids.map((id) => byId.get(id)).filter((track): track is WaveTrack => !!track && isWaveEligible(track));
+            let own = card.ids.map((id) => byId.get(id)).filter((track): track is WaveTrack => !!track && isWaveEligible(track));
             const roots = card.seeds.map((id) => byId.get(id)).filter((track): track is WaveTrack => !!track);
             if (!own.length) {
                 showToast(T.toastEmpty);
                 return;
             }
-            const title = card.kind === 'daily' ? T.shelfDaily : card.kind === 'forgotten' ? T.shelfForgotten : card.title;
+            const at = fromId ? own.findIndex((track) => track.id === fromId) : -1;
+            const first = at >= 0 ? own[at] : null;
+            if (at >= 0) own = [...own.slice(at + 1), ...own.slice(0, at)];
+            const title = cardTitle(card);
+            // «Давно не слушал» без выбранного трека каждый раз в новом порядке, вкус тасуется всегда
+            const ordered = card.kind === 'group' || (card.kind === 'forgotten' && !first) ? shuffleInPlace(own.slice()) : own;
             const next: Seed = card.kind === 'daily'
-                ? { kind: 'daily', title, own, tracks: shuffleInPlace([...roots, ...own]), order: 'fixed', mode: 'fresh', card: index }
-                : { kind: card.kind, title, own: shuffleInPlace(own.slice()), tracks: shuffleInPlace(own.slice()), order: card.kind === 'forgotten' ? 'fixed' : 'blend', mode: 'similar', card: index };
-            await beginSeed(request, { seed: next, first: null });
+                ? { kind: 'daily', title, own: ordered, tracks: shuffleInPlace([...roots, ...own]), order: 'fixed', mode: 'fresh', card: index }
+                : { kind: card.kind, title, own: ordered, tracks: shuffleInPlace(own.slice()), order: card.kind === 'forgotten' ? 'fixed' : 'blend', mode: 'similar', card: index };
+            await beginSeed(request, { seed: next, first });
         } catch (error) {
             if (request !== seedRequest) return;
             console.warn('Волна: подборка не запустилась', error);
@@ -2285,8 +2322,9 @@ export function installWave(config: WaveConfig): void {
         // Картинка проявляется поверх подложки со средним цветом обложки
         '.scw-img{position:absolute;inset:0;background:center/cover;opacity:0;transition:opacity .2s cubic-bezier(.2,0,0,1)}',
         '.scw-img.on{opacity:1}',
-        '.scw-up-h{color:var(--scw-muted);margin:32px 0 12px}',
-        '.scw-tiles{display:grid;grid-template-columns:repeat(5,minmax(0,1fr));gap:28px}',
+        // Очередь волны это часть блока, а не отдельная полка: мелкая подпись и компактные строки
+        '.scw-up-h{color:var(--scw-muted);font-size:12px;line-height:16px;margin:24px 0 8px}',
+        '.scw-tiles{display:grid;grid-template-columns:repeat(5,minmax(0,1fr));gap:16px}',
         // Ожидание: заготовки той же формы, полосы поверх строк, высота плиток не меняется
         '.scw-tiles.wait{pointer-events:none;animation:scw-fade .2s cubic-bezier(.2,0,0,1) var(--scw-wait-delay,150ms) backwards}',
         '.scw-tiles.wait.held{animation:none}',
@@ -2296,21 +2334,51 @@ export function installWave(config: WaveConfig): void {
         '.scw-tiles.wait .scw-t1::after{width:70%}',
         '.scw-tiles.wait .scw-t2::after{width:45%}',
         '.scw-tiles.wait .scw-t3::after{width:60%}',
-        '.scw-tile{min-width:0;cursor:pointer}',
         '.scw-art{position:relative;aspect-ratio:1;background:var(--scw-tile);margin-bottom:8px}',
         '.scw-t1{font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}',
         '.scw-t2{color:var(--scw-muted);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}',
         '.scw-t3{font-size:12px;line-height:16px;color:var(--scw-faint);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;margin-top:2px}',
-        '.scw-shelf-h{color:var(--scw-muted);margin:32px 0 12px}',
+        '.scw-tile{min-width:0;cursor:pointer;display:grid;grid-template-columns:56px minmax(0,1fr);column-gap:10px;align-content:center;padding:4px;margin:-4px;border-radius:4px}',
+        '.scw-tile[data-track]:hover{background:var(--scw-film)}',
+        '.scw-tile>.scw-art{grid-row:1/4;width:56px;margin:0}',
+        '.scw-tile>.scw-t1,.scw-tile>.scw-t2,.scw-tile>.scw-t3{grid-column:2;margin:0}',
+        // Подборки это отдельный раздел со своим заголовком, а не продолжение волны
+        '.scw-shelf-h{font-size:20px;line-height:26px;font-weight:600;margin:48px 0 16px}',
         '.scw-tiles.scw-shelf{grid-template-columns:repeat(6,minmax(0,1fr));gap:20px}',
-        '#sc-wave .scw-card{display:block;width:100%;min-width:0;text-align:left}',
-        '.scw-art.scw-mix{display:grid;grid-template-columns:1fr 1fr;grid-template-rows:1fr 1fr}',
-        '.scw-art.scw-mix>span{position:relative;background:var(--scw-tile)}',
+        '.scw-card{position:relative;min-width:0}',
+        '#sc-wave .scw-card-open{display:block;width:100%;min-width:0;text-align:left}',
+        // Кнопка «слушать» лежит поверх обложки: слой того же размера, что обложка, пропускает клики мимо кнопки
+        '.scw-card-over{position:absolute;z-index:2;left:0;top:0;width:100%;aspect-ratio:1;pointer-events:none}',
+        '#sc-wave .scw-card-play{position:absolute;right:8px;bottom:8px;width:36px;height:36px;border-radius:50%;background:var(--scw-btn);display:grid;place-items:center;pointer-events:auto;opacity:0;transition:opacity .15s cubic-bezier(.2,0,0,1)}',
+        '.scw-card-play svg{width:18px;height:18px;fill:var(--scw-btn-ink)}',
+        '#sc-wave .scw-card:hover .scw-card-play,#sc-wave .scw-card:focus-within .scw-card-play,#sc-wave .scw-card.on .scw-card-play{opacity:1}',
+        '.scw-art.scw-quad{display:grid;grid-template-columns:1fr 1fr;grid-template-rows:1fr 1fr}',
+        '.scw-art.scw-quad>span{position:relative;background:var(--scw-tile)}',
         // Наведение плёнкой поверх обложки, играющая подборка кромкой 3 px снизу
         '.scw-card .scw-art::before,.scw-card .scw-art::after{content:"";position:absolute;z-index:1;left:0;right:0;opacity:0;transition:opacity .15s cubic-bezier(.2,0,0,1)}',
         '.scw-card .scw-art::before{top:0;bottom:0;background:var(--scw-film-strong)}',
         '.scw-card .scw-art::after{bottom:0;height:3px;background:#ff5500}',
-        '.scw-card:hover .scw-art::before,.scw-card[aria-pressed="true"] .scw-art::after{opacity:1}',
+        '.scw-card:hover .scw-art::before,.scw-card.open .scw-art::before,.scw-card.on .scw-art::after{opacity:1}',
+        // Раскрытая подборка: плашка под полкой с уголком под своей карточкой (6 колонок, промежуток 20 px)
+        '.scw-mix{position:relative;margin-top:16px;padding:16px 16px 8px;border-radius:6px;background:var(--scw-film)}',
+        '.scw-mix::before{content:"";position:absolute;top:-8px;left:calc((100% - 100px) / 6 * (var(--scw-at) + .5) + 20px * var(--scw-at) - 8px);border:8px solid transparent;border-top:0;border-bottom-color:var(--scw-film)}',
+        '.scw-mix-head{display:flex;align-items:center;gap:12px;margin-bottom:8px}',
+        '#sc-wave .scw-mix-play{width:40px;height:40px;border-radius:50%;background:var(--scw-btn);display:grid;place-items:center;flex:none}',
+        '.scw-mix-play svg{width:18px;height:18px;fill:var(--scw-btn-ink)}',
+        '.scw-mix-title{flex:1;min-width:0}',
+        '.scw-mix-title b{display:block;font-size:16px;line-height:22px;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}',
+        '.scw-mix-title span{color:var(--scw-muted)}',
+        '.scw-mix .scw-hint{padding:8px 0 12px}',
+        '.scw-mix-rows{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));column-gap:16px;max-height:432px;overflow-y:auto;margin:0 -8px;padding-bottom:8px;scrollbar-width:thin;scrollbar-color:rgba(255,255,255,.2) transparent}',
+        '#sc-wave .scw-row{display:grid;grid-template-columns:40px minmax(0,1fr) auto;align-items:center;gap:12px;height:48px;padding:4px 8px;border-radius:4px;text-align:left;min-width:0}',
+        '#sc-wave .scw-row:hover{background:var(--scw-film)}',
+        '.scw-row .scw-art{width:40px;height:40px;margin:0}',
+        '.scw-row-t{min-width:0}',
+        '.scw-row-t b,.scw-row-t span{display:block;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}',
+        '.scw-row-t b{font-weight:600}',
+        '.scw-row-t span{color:var(--scw-muted);font-size:12px;line-height:16px}',
+        '.scw-row-d{color:var(--scw-faint);font-size:12px;font-variant-numeric:tabular-nums}',
+        '.scw-row[aria-current="true"] .scw-row-t b{color:#ff5500}',
         '.scw-genre .scw-go{display:flex;align-items:center;gap:6px;min-width:0;font-weight:600}',
         '.scw-tip{position:fixed;z-index:2147483000;max-width:300px;padding:6px 8px;border-radius:4px;background:#303030;color:#fff;box-shadow:0 4px 12px rgba(0,0,0,.45);font-size:12px;line-height:16px;pointer-events:none;opacity:0;transition:opacity .12s}',
         '.scw-tip.on{opacity:1}',
@@ -2327,7 +2395,7 @@ export function installWave(config: WaveConfig): void {
         '.scw-menu .scw-mi:focus-visible{outline:2px solid currentColor;outline-offset:-2px}',
         '.scw-toast{position:fixed;left:50%;bottom:72px;z-index:2147483000;transform:translateX(-50%);max-width:420px;padding:8px 12px;border-radius:4px;background:#303030;color:#fff;box-shadow:0 4px 12px rgba(0,0,0,.45);font-size:14px;line-height:20px;pointer-events:none;opacity:0;transition:opacity .15s}',
         '.scw-toast.on{opacity:1}',
-        '@media (prefers-reduced-motion:reduce){.scw-tip,.scw-toast,.scw-card .scw-art::before,.scw-card .scw-art::after{transition:none}.scw-menu{animation:none}}',
+        '@media (prefers-reduced-motion:reduce){.scw-tip,.scw-toast,.scw-card .scw-art::before,.scw-card .scw-art::after,#sc-wave .scw-card-play{transition:none}.scw-menu{animation:none}}',
         // «Меньше анимаций» в F1: без масштаба меню, растворения остаются
         'html.scm-reduce .scw-menu{animation:none}',
     ].join('\n');
@@ -2559,7 +2627,9 @@ export function installWave(config: WaveConfig): void {
         }
         return [el('div', 'scw-up-h', active ? T.next : T.upFirst), tiles];
     }
-    // Полка подборок: коллаж обложек, название, число треков или главные артисты; играющая карточка с оранжевой кромкой
+    const cardTitle = (card: ShelfCard): string => (card.kind === 'daily' ? T.shelfDaily : card.kind === 'forgotten' ? T.shelfForgotten : card.title);
+    // Полка подборок: коллаж обложек, название, число треков или главные артисты; играющая карточка с оранжевой кромкой.
+    // Нажатие на карточку раскрывает её треки под полкой, кнопка на обложке сразу включает волну подборки
     function renderShelf(): HTMLElement[] {
         if (!host.soundcloudAPI?.waveShelf || state === 'unavailable') return [];
         const current = shelf;
@@ -2569,40 +2639,100 @@ export function installWave(config: WaveConfig): void {
         const grid = el('div', 'scw-tiles scw-shelf' + (current ? '' : ' wait held'));
         const cards = current?.cards ?? Array.from({ length: 4 }, (): ShelfCard | null => null);
         cards.forEach((card, index) => {
-            const node = el(card ? 'button' : 'div', 'scw-card');
+            const node = el('div', 'scw-card');
             const cover = el('div', 'scw-art');
-            node.append(cover);
             if (!card) {
-                node.append(el('div', 'scw-t1', ' '), el('div', 'scw-t2', ' '));
+                node.append(cover, el('div', 'scw-t1', ' '), el('div', 'scw-t2', ' '));
                 grid.append(node);
                 return;
             }
-            if (node instanceof HTMLButtonElement) node.type = 'button';
-            node.dataset.act = 'shelf';
-            node.dataset.card = String(index);
             const playing = !!seed && seed.card === index && active;
-            node.setAttribute('aria-pressed', String(playing));
+            const shown = playing && !!player?.isPlaying();
+            node.dataset.card = String(index);
+            node.classList.toggle('on', playing);
+            node.classList.toggle('open', openCard === index);
+            const open = el('button', 'scw-card-open');
+            open.type = 'button';
+            open.dataset.act = 'shelf-open';
+            open.dataset.card = String(index);
+            open.setAttribute('aria-expanded', String(openCard === index));
             if (card.art.length >= 4) {
-                cover.classList.add('scw-mix');
+                cover.classList.add('scw-quad');
                 for (const url of card.art.slice(0, 4)) {
                     const cell = el('span', '');
                     paintArt(cell, url, '');
                     cover.append(cell);
                 }
             } else if (card.art[0]) paintArt(cover, card.art[0], '');
-            const title = card.kind === 'daily' ? T.shelfDaily : card.kind === 'forgotten' ? T.shelfForgotten : card.title;
-            node.append(el('div', 'scw-t1', title), el('div', 'scw-t2', card.kind === 'group' && card.sub ? card.sub : countText(card.ids.length, T.tracksCount, T.lang)));
+            open.append(cover, el('div', 'scw-t1', cardTitle(card)), el('div', 'scw-t2', card.kind === 'group' && card.sub ? card.sub : countText(card.ids.length, T.tracksCount, T.lang)));
+            const over = el('div', 'scw-card-over');
+            const play = button('scw-card-play', 'shelf-play', shown ? T.pause : T.mixPlay, shown ? 'pause' : 'play');
+            play.dataset.card = String(index);
+            play.setAttribute('aria-pressed', String(playing));
+            over.append(play);
+            node.append(open, over);
             grid.append(node);
         });
-        return [headline, grid];
+        const list = current && openCard !== null ? renderMix(openCard) : null;
+        return list ? [headline, grid, list] : [headline, grid];
+    }
+    // Треки раскрытой подборки: обложка, название, артист, длительность; играющий трек выделен
+    function renderMix(index: number): HTMLElement | null {
+        const card = shelf?.cards[index];
+        if (!card) return null;
+        const box = el('div', 'scw-mix');
+        box.setAttribute('role', 'region');
+        box.setAttribute('aria-label', cardTitle(card));
+        box.style.setProperty('--scw-at', String(index));
+        const head = el('div', 'scw-mix-head');
+        const playing = !!seed && seed.card === index && active && !!player?.isPlaying();
+        const play = button('scw-mix-play', 'mix-play', playing ? T.pause : T.mixPlay, playing ? 'pause' : 'play');
+        play.title = playing ? T.pause : T.mixPlay;
+        const titles = el('div', 'scw-mix-title');
+        const loaded = mixLists.get(index);
+        const tracks = Array.isArray(loaded) ? loaded.filter((track) => !isExcluded(track)) : [];
+        titles.append(el('b', '', cardTitle(card)), el('span', '', countText(Array.isArray(loaded) ? tracks.length : card.ids.length, T.tracksCount, T.lang)));
+        const close = button('scw-icon', 'mix-close', T.mixClose, 'x');
+        close.title = T.mixClose;
+        head.append(play, titles, close);
+        box.append(head);
+        if (!Array.isArray(loaded)) {
+            const line = el('div', 'scw-hint', loaded === 'failed' ? T.mixFailed : T.mixLoading);
+            line.setAttribute('role', 'status');
+            box.append(line);
+            return box;
+        }
+        if (!tracks.length) {
+            box.append(el('div', 'scw-hint', T.mixEmpty));
+            return box;
+        }
+        const rows = el('div', 'scw-mix-rows');
+        const now = active ? player?.getCurrentSound()?.id ?? 0 : 0;
+        for (const track of tracks) {
+            const row = el('button', 'scw-row');
+            row.type = 'button';
+            row.dataset.track = String(track.id);
+            if (track.id === now) row.setAttribute('aria-current', 'true');
+            const cover = el('div', 'scw-art');
+            art(cover, track, 't300x300');
+            const text = el('div', 'scw-row-t');
+            text.append(el('b', '', (track.title ?? '').trim() || '…'), el('span', '', artistName(track)));
+            row.append(cover, text, el('div', 'scw-row-d', formatTime(track.full_duration || track.duration || 0)));
+            rows.append(row);
+        }
+        box.append(rows);
+        return box;
     }
     function render(): void {
         if (!section) return;
         hideTip();
         const focusedNode = document.activeElement instanceof HTMLElement && section.contains(document.activeElement) ? document.activeElement : null;
         const focused = focusedNode ? focusedNode.dataset.act ?? focusedNode.dataset.mode ?? focusedNode.dataset.role ?? '' : '';
-        // У карточек полки одно действие на всех: фокус возвращается по номеру карточки
+        // У карточек полки одни действия на всех: фокус возвращается по номеру карточки, в списке подборки по треку
         const focusedCard = focusedNode?.dataset.card;
+        const focusedTrack = focusedNode?.classList.contains('scw-row') ? focusedNode.dataset.track : undefined;
+        // Пересборка секции не должна сбрасывать прокрутку списка подборки
+        const rowsScroll = section.querySelector('.scw-mix-rows')?.scrollTop ?? 0;
         section.textContent = '';
         section.setAttribute('aria-label', T.wave);
         section.append(renderHead());
@@ -2653,9 +2783,12 @@ export function installWave(config: WaveConfig): void {
         }
         body.append(info, cover);
         section.append(body, ...renderTiles(), ...renderShelf());
-        if (focused) {
+        const rowsBox = section.querySelector('.scw-mix-rows');
+        if (rowsBox) rowsBox.scrollTop = rowsScroll;
+        if (focusedTrack) section.querySelector<HTMLElement>('.scw-row[data-track="' + focusedTrack + '"]')?.focus({ preventScroll: true });
+        else if (focused) {
             const again = focusedCard !== undefined
-                ? section.querySelector<HTMLElement>('[data-card="' + focusedCard + '"]')
+                ? section.querySelector<HTMLElement>('[data-act="' + focused + '"][data-card="' + focusedCard + '"]')
                 : section.querySelector<HTMLElement>('[data-act="' + focused + '"],[data-mode="' + focused + '"],[data-role="' + focused + '"]');
             again?.focus();
             if (again instanceof HTMLInputElement) again.setSelectionRange(again.value.length, again.value.length);
@@ -2780,22 +2913,23 @@ export function installWave(config: WaveConfig): void {
         tip.classList.remove('on');
     }
     function onOver(event: MouseEvent): void {
-        const target = event.target instanceof Element ? event.target.closest('.scw-tile, .scw-card, .scw-track, .scw-artist, .scw-why') : null;
+        const target = event.target instanceof Element ? event.target.closest('.scw-tile, .scw-card, .scw-row, .scw-track, .scw-artist, .scw-why') : null;
         if (target === tipFor) return;
         hideTip();
         if (!target) return;
         const card = target.classList.contains('scw-tile') || target.classList.contains('scw-card');
-        const lines = card ? [...target.querySelectorAll('.scw-t1, .scw-t2, .scw-t3')] : [target];
+        const lines = card || target.classList.contains('scw-row') ? [...target.querySelectorAll('.scw-t1, .scw-t2, .scw-t3, .scw-row-t b, .scw-row-t span')] : [target];
         if (!lines.some(cut)) return;
         tipFor = target;
         tipTimer = setTimeout(() => {
             tip.textContent = '';
             lines.forEach((line, index) => tip.append(el(index ? 'span' : 'b', '', line.textContent ?? '')));
             if (!tip.isConnected) document.body.append(tip);
-            const anchor = card ? target.querySelector('.scw-art') ?? target : target;
+            // У карточки полки подсказка над обложкой (низ занят кнопкой «слушать»), у остального над самим элементом
+            const anchor = target.classList.contains('scw-card') ? target.querySelector('.scw-art') ?? target : target;
             const rect = anchor.getBoundingClientRect();
             const left = Math.min(Math.max(8, rect.left + rect.width / 2 - tip.offsetWidth / 2), window.innerWidth - tip.offsetWidth - 8);
-            const top = card ? rect.bottom - tip.offsetHeight - 8 : rect.top - tip.offsetHeight - 6;
+            const top = rect.top - tip.offsetHeight - 6;
             tip.style.left = left + 'px';
             tip.style.top = Math.max(52, top) + 'px';
             tip.classList.add('on');
@@ -2824,6 +2958,19 @@ export function installWave(config: WaveConfig): void {
             }
             return;
         }
+        // Трек раскрытой подборки: уже в очереди этой подборки, значит переход к нему; иначе подборка с него
+        const row = target.closest<HTMLElement>('.scw-row[data-track]');
+        if (row && openCard !== null) {
+            const id = Number(row.dataset.track);
+            const item = active && player && seed?.card === openCard ? player.getQueue().slice().find((entry) => ours.has(entry) && entry.sound?.id === id) : undefined;
+            if (item && player) {
+                jumped = true;
+                player.setCurrentItem(item, {});
+                if (!player.isPlaying()) player.playCurrent({ userInitiated: true });
+                setTimeout(render, 150);
+            } else void startShelf(openCard, id);
+            return;
+        }
         const control = target.closest<HTMLElement>('[data-act], [data-mode], [data-genre]');
         if (!control) {
             if (popOpen && !target.closest('.scw-pop')) { popOpen = false; render(); }
@@ -2846,14 +2993,23 @@ export function installWave(config: WaveConfig): void {
             case 'clear-seed':
                 clearSeed();
                 return;
-            case 'shelf': {
-                const index = Number(control.dataset.card);
+            case 'shelf-open':
+                toggleMix(Number(control.dataset.card));
+                return;
+            case 'mix-close':
+                openCard = null;
+                render();
+                section.querySelector<HTMLElement>('[data-act="shelf-open"][aria-expanded="true"]')?.focus();
+                return;
+            case 'shelf-play':
+            case 'mix-play': {
+                const index = control.dataset.act === 'mix-play' ? openCard ?? -1 : Number(control.dataset.card);
                 // Играющая подборка: нажатие ставит на паузу и продолжает, как большая кнопка
                 if (seed?.card === index && active && player) {
                     if (player.isPlaying()) player.pauseCurrent({ userInitiated: true });
                     else player.playCurrent({ userInitiated: true });
                     setTimeout(render, 150);
-                } else void startShelf(index);
+                } else if (index >= 0) void startShelf(index);
                 return;
             }
             case 'pick-start':
@@ -2918,6 +3074,13 @@ export function installWave(config: WaveConfig): void {
             popOpen = false;
             render();
             section?.querySelector<HTMLElement>('[data-act="genre"]')?.focus();
+        } else if (event.key === 'Escape' && openCard !== null) {
+            // Esc сворачивает подборку, фокус возвращается на её карточку
+            event.stopPropagation();
+            const index = openCard;
+            openCard = null;
+            render();
+            section?.querySelector<HTMLElement>('[data-act="shelf-open"][data-card="' + index + '"]')?.focus();
         } else if (event.key === 'Enter' && event.target instanceof HTMLInputElement && event.target.dataset.role === 'genre-input' && parseGenres(popQuery).length) {
             applySettings(mode, popQuery);
         }
@@ -2965,10 +3128,12 @@ export function installWave(config: WaveConfig): void {
         if (node.closest('input, textarea, select, [contenteditable="true"], [contenteditable=""]')) return null;
         const inWave = node.closest('#sc-wave');
         if (inWave) {
-            const tile = node.closest<HTMLElement>('.scw-tile[data-track]');
+            const tile = node.closest<HTMLElement>('.scw-tile[data-track], .scw-row[data-track]');
             const id = tile ? Number(tile.dataset.track) : 0;
-            const candidate = id ? known.get(id) ?? preview.find((item) => item.track.id === id) : node.closest('.scw-body') ? currentCandidate() : null;
-            return candidate ? fromTrack(candidate.track) : null;
+            const track = id
+                ? known.get(id)?.track ?? preview.find((item) => item.track.id === id)?.track ?? shelfTracks.get(id)
+                : node.closest('.scw-body') ? currentCandidate()?.track : undefined;
+            return track ? fromTrack(track) : null;
         }
         const item = node.closest(ITEM_SELECTOR);
         const anchor = node.closest<HTMLAnchorElement>('a[href]');
