@@ -16,7 +16,7 @@ window.SETTINGS_EN = {
     'Тёмная тема': 'Dark theme',
     'Сворачивать в трей': 'Minimize to tray',
     'Кнопки навигации в шапке': 'Navigation buttons in the title bar',
-    'Меньше движения': 'Reduce motion',
+    'Меньше анимаций': 'Reduce motion',
 
     'Язык': 'Language',
     'Блокировать рекламу': 'Block ads',

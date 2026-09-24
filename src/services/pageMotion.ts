@@ -366,7 +366,7 @@ export function pageMotionCss(): string {
         'html .slide-down-outer,html .slide-up-outer{transition-timing-function:var(--scm-ease)}',
         'html .tileGallery.m-transitionsEnabled .tileGallery__sliderPanel{transition-duration:.3s;transition-timing-function:var(--scm-ease)}',
         'html .tileGallery .tileGallery__sliderPeekContainer{animation:none}',
-        // Меньше движения: сдвигов нет, растворение остаётся
+        // Меньше анимаций: сдвигов нет, растворение остаётся
         'html.scm-reduce #content>div,html.scm-reduce body.crossfade-iframe-active iframe.webiIframe{animation-name:scm-fade}',
         '@media (prefers-reduced-motion:reduce){#content>div,body.crossfade-iframe-active iframe.webiIframe{animation-name:scm-fade}}',
     ].join('\n');

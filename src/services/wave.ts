@@ -1460,7 +1460,7 @@ export function installWave(config: WaveConfig): void {
         'html.theme-light .scw-toast{background:#fff;color:#121212;box-shadow:0 4px 12px rgba(0,0,0,.18)}',
         '.scw-toast.on{opacity:1}',
         '@media (prefers-reduced-motion:reduce){.scw-tip,.scw-toast{transition:none}.scw-menu{animation:none}}',
-        // «Меньше движения» в F1: без масштаба меню, растворения остаются
+        // «Меньше анимаций» в F1: без масштаба меню, растворения остаются
         'html.scm-reduce .scw-menu{animation:none}',
     ].join('\n');
     const MENU_ICON: Record<string, string> = {

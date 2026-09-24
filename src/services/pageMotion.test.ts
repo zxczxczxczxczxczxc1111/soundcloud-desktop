@@ -184,7 +184,7 @@ it('спиннер списка становится заготовкой, пр�
     expect(row.classList.contains('scm-in')).toBe(true);
 });
 
-it('«Меньше движения», повторная вставка и снятие', async () => {
+it('«Меньше анимаций», повторная вставка и снятие', async () => {
     install(true);
     expect(document.documentElement.classList.contains('scm-reduce')).toBe(true);
     install(false);
