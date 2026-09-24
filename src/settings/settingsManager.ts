@@ -2,7 +2,7 @@ import { trustLocalFile } from '../trustedViews';
 import { ViewStyles } from '../services/viewStyles';
 import { homeBlockDefaults } from '../services/homeBlocks';
 import { TEMPLATE_DEFAULTS } from '../services/presenceService';
-import { WebContentsView, BrowserWindow, ipcMain, type IpcMainInvokeEvent } from 'electron';
+import { WebContentsView, BrowserWindow, ipcMain, type IpcMainInvokeEvent, type WebContents } from 'electron';
 import type ElectronStore from 'electron-store';
 import type { ThemeColors } from '../utils/colorExtractor';
 import { join } from 'path';
@@ -65,6 +65,8 @@ export class SettingsManager {
         private parentWindow: BrowserWindow,
         private store: ElectronStore,
         private restoreFocus: () => void = () => parentWindow.webContents.focus(),
+        /** Горячие клавиши клиента внутри панели: Ctrl+H и другие работают и при открытых настройках */
+        private attach: (contents: WebContents) => void = () => undefined,
     ) {
         this.parentWindow.on('resize', this.resize);
         this.parentWindow.once('closed', () => this.dispose());
@@ -101,6 +103,7 @@ export class SettingsManager {
         this.view.setVisible(false);
         this.view.setBackgroundColor('#00000000');
         trustLocalFile(this.view.webContents, join(__dirname, 'settings.html'));
+        this.attach(this.view.webContents);
         this.parentWindow.contentView.addChildView(this.view);
         this.updateBounds();
         void this.view.webContents

@@ -1,4 +1,3 @@
-import fetch from 'cross-fetch';
 import { normalizeTrackInfo } from '../utils/trackParser';
 import type { WebhookTrackData, TrackUpdateReason } from '../types';
 interface Settings {

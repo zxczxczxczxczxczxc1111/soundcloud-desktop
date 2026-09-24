@@ -42,15 +42,11 @@ function withTimeout<T>(work: Promise<T>, ms: number, label: string): Promise<T>
 export class HistoryManager {
     private view: WebContentsView | null = null;
     private userId = 0;
-    private playerHeight = 0;
-    private measuredAt = 0;
+    // Место плеера сайта в точках страницы и высота страницы в тех же точках: так масштаб сайта учитывается сам
+    private player = { height: 0, viewport: 0 };
     private filling = false;
     private disposed = false;
-    private timers = new Set<ReturnType<typeof setTimeout>>();
-    private resize = (): void => {
-        this.updateBounds();
-        void this.measurePlayer();
-    };
+    private resize = (): void => this.updateBounds();
     private ready = (event: IpcMainEvent): void => {
         if (!this.owns(event)) return;
         const view = this.view!;
@@ -84,7 +80,6 @@ export class HistoryManager {
                 }
                 void this.fill(this.userId);
             }
-            void this.measurePlayer();
             return { language: this.host.language(), dark: this.host.dark(), signedIn: this.userId > 0 };
         });
         ipcMain.handle('history:overview', (event, from: unknown, to: unknown) => {
@@ -108,8 +103,6 @@ export class HistoryManager {
             if (!track || !site) return false;
             // userGesture: трек включает пользователь, политика автовоспроизведения его не держит
             const done = await (site.executeJavaScript('window.__scOpenTrack ? window.__scOpenTrack(' + JSON.stringify(track) + ', false) : false', true) as Promise<unknown>);
-            // Плеер сайта выезжает при первом треке: окно истории поднимается над ним
-            for (const delay of [400, 1200]) this.later(() => void this.measurePlayer(), delay);
             return done === true;
         });
         ipcMain.on('history:ready', this.ready);
@@ -125,13 +118,6 @@ export class HistoryManager {
     private site(): WebContents | null {
         const site = this.host.site();
         return site && !site.isDestroyed() ? site : null;
-    }
-    private later(work: () => void, delay: number): void {
-        const timer = setTimeout(() => {
-            this.timers.delete(timer);
-            if (!this.disposed) work();
-        }, delay);
-        this.timers.add(timer);
     }
     private async user(): Promise<number> {
         const site = this.site();
@@ -169,33 +155,21 @@ export class HistoryManager {
             this.filling = false;
         }
     }
-    // Высота плеера сайта в точках окна: пока трека не было, плеер спрятан и окно истории идёт до низа
-    private async measurePlayer(): Promise<void> {
-        const site = this.site();
-        if (!site || !this.view) return;
-        try {
-            const value = await site.executeJavaScript(
-                "(() => { const node = document.querySelector('.playControls'); if (!node) return 0; const box = node.getBoundingClientRect(); return box.height > 0 && box.top < innerHeight ? Math.ceil(innerHeight - box.top) : 0; })()",
-            );
-            const height = typeof value === 'number' && Number.isFinite(value) ? Math.min(240, Math.max(0, Math.round(value * site.getZoomFactor()))) : 0;
-            if (height === this.playerHeight) return;
-            this.playerHeight = height;
-            this.updateBounds();
-        } catch (error) {
-            console.warn('История: высота плеера не измерена', error);
-        }
-    }
     private updateBounds(): void {
         if (!this.view || this.parentWindow.isDestroyed()) return;
         const bounds = this.parentWindow.getContentBounds();
-        this.view.setBounds({ x: 0, y: HEADER, width: bounds.width, height: Math.max(0, bounds.height - HEADER - this.playerHeight) });
+        const page = Math.max(0, bounds.height - HEADER);
+        // Страница сайта занимает всё под шапкой: точки страницы переводятся в точки окна через её высоту
+        const player = this.player.viewport > 0 ? Math.round((this.player.height * page) / this.player.viewport) : 0;
+        this.view.setBounds({ x: 0, y: HEADER, width: bounds.width, height: Math.max(0, page - player) });
     }
 
-    /** Сайт сообщил о треке: плеер мог выехать или спрятаться */
-    public refreshPlayer(): void {
-        if (!this.view || Date.now() - this.measuredAt < 1000) return;
-        this.measuredAt = Date.now();
-        void this.measurePlayer();
+    /** Сайт сообщил, сколько места снизу занимает плеер с тем, что из него выехало: громкость, очередь */
+    public setPlayerArea(height: unknown, viewport: unknown): void {
+        const valid = (value: unknown): value is number => typeof value === 'number' && Number.isFinite(value) && value >= 0 && value <= 20000;
+        if (!valid(height) || !valid(viewport) || height > viewport) return;
+        this.player = { height, viewport };
+        this.updateBounds();
     }
     public isOpen(): boolean {
         return this.view !== null;
@@ -259,8 +233,6 @@ export class HistoryManager {
     public dispose(): void {
         if (this.disposed) return;
         this.disposed = true;
-        for (const timer of this.timers) clearTimeout(timer);
-        this.timers.clear();
         this.hide();
         this.parentWindow.removeListener('resize', this.resize);
         for (const channel of INVOKE) ipcMain.removeHandler(channel);

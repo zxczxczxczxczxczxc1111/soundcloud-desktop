@@ -1,7 +1,6 @@
 import { afterEach, beforeEach, expect, it, vi } from 'vitest';
 import type { WebhookTrackData } from '../types';
-const send = vi.hoisted(() => vi.fn());
-vi.mock('cross-fetch', () => ({ default: send }));
+const send = vi.fn();
 import { WebhookService } from './webhookService';
 const track: WebhookTrackData = {
     title: 'Track',
@@ -17,6 +16,7 @@ beforeEach(() => {
     vi.useFakeTimers();
     vi.setSystemTime(100000);
     send.mockReset();
+    vi.stubGlobal('fetch', send);
     send.mockResolvedValue({ ok: true });
     settings.clear();
     settings.set('webhookEnabled', true);
@@ -35,6 +35,7 @@ afterEach(() => {
     service.dispose();
     vi.useRealTimers();
     vi.restoreAllMocks();
+    vi.unstubAllGlobals();
 });
 it('учитывает только воспроизведение, исключая паузу', async () => {
     await service.updateTrackInfo(track, true);

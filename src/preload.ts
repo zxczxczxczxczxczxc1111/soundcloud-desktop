@@ -217,6 +217,10 @@ contextBridge.exposeInMainWorld('soundcloudAPI', {
     reportWaveEmpty: (counts: unknown) => {
         ipcRenderer.send('soundcloud:wave-empty', counts);
     },
+    // Место плеера сайта снизу страницы: окно истории кончается выше него, числа проверяет main
+    reportPlayerArea: (height: unknown, viewport: unknown) => {
+        ipcRenderer.send('soundcloud:player-area', height, viewport);
+    },
     // Жанр, счётчики и волна текущего трека для карточки Discord
     sendTrackMeta: (meta: unknown) => {
         ipcRenderer.send('soundcloud:track-meta', meta);

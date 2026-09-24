@@ -14,6 +14,7 @@ import { fullShuffleScript } from './services/fullShuffle';
 import { homeBlockDefaults, homeBlocksCss, homePageScript, isHomeBlockKey } from './services/homeBlocks';
 import { waveScript } from './services/wave';
 import { pageMotionScript } from './services/pageMotion';
+import { playerAreaScript } from './services/playerArea';
 import { WaveJournal } from './services/waveJournal';
 import { WaveExclusions } from './services/waveExclusions';
 import { WaveSignals } from './services/waveSignals';
@@ -345,6 +346,17 @@ function focusTopView(): void {
     if (historyManager?.focused() || pages.some((contents) => contents && !contents.isDestroyed() && contents.isFocused())) return;
     if (settings && !settings.isDestroyed()) settings.focus();
     else if (!historyManager?.focus() && contentView && !contentView.webContents.isDestroyed()) contentView.webContents.focus();
+}
+
+// История под открытыми настройками не видна: оттуда Ctrl+H и кнопка показывают её, а не прячут
+function toggleHistory(): void {
+    if (!historyManager) return;
+    if (settingsManager?.getView()) {
+        settingsManager.toggle();
+        if (!historyManager.isOpen()) historyManager.show();
+        return;
+    }
+    historyManager.toggle();
 }
 
 function showMainWindow(): void {
@@ -838,6 +850,10 @@ async function init() {
     });
 
     mainWindow.addBrowserView(contentView);
+    // Каждый вызов executeJavaScript, пока сайт грузится, Electron держит одноразовым ожиданием did-stop-loading.
+    // При запуске их набирается 10-11 (блокировщик рекламы на каждый фрейм, тема, скрипты страницы), это не утечка:
+    // все снимаются с окончанием загрузки. Запас до 30, чтобы предупреждение осталось сигналом настоящей утечки
+    contentView.webContents.setMaxListeners(30);
     watchHiddenPage(mainWindow, () =>
         contentView.webContents.isDestroyed() ? Promise.resolve('gone') : contentView.webContents.executeJavaScript('document.visibilityState'),
     );
@@ -861,11 +877,16 @@ async function init() {
         applyThemeToContent(isDarkTheme);
     });
     notificationManager = new NotificationManager(mainWindow, focusTopView);
-    settingsManager = new SettingsManager(mainWindow, store, () => {
-        // Настройки открывались поверх истории: фокус возвращается в неё
-        if (historyManager?.focus()) return;
-        if (!contentView.webContents.isDestroyed()) contentView.webContents.focus();
-    });
+    settingsManager = new SettingsManager(
+        mainWindow,
+        store,
+        () => {
+            // Настройки открывались поверх истории: фокус возвращается в неё
+            if (historyManager?.focus()) return;
+            if (!contentView.webContents.isDestroyed()) contentView.webContents.focus();
+        },
+        (contents) => shortcutService.attachToWebContents(contents),
+    );
     pluginService.onPluginsChanged(() => settingsManager.getView()?.webContents.send('plugins-changed'));
     proxyService = new ProxyService(contentView.webContents, store, queueToastNotification, (key) => translationService.translate(key));
     adblockService = new AdblockService(contentView.webContents.session, path.join(app.getPath('userData'), 'adblock-engine.bin'));
@@ -952,6 +973,11 @@ async function init() {
         const count = (input: unknown): number => (typeof input === 'number' && Number.isSafeInteger(input) && input >= 0 ? Math.min(input, 10000) : 0);
         diagnostics.record('wave.empty', { waveSeen: count(value.seen), waveArtistTracks: count(value.artistTracks), waveMoodTags: count(value.moodTags) });
     });
+    // Место плеера сайта: окно истории не накрывает громкость и очередь
+    ipcMain.removeAllListeners('soundcloud:player-area');
+    ipcMain.on('soundcloud:player-area', (event, height: unknown, viewport: unknown) => {
+        if (isTrustedSoundCloudSender(event)) historyManager?.setPlayerArea(height, viewport);
+    });
     // Жанр, счётчики и волна текущего трека для карточки Discord
     ipcMain.removeAllListeners('soundcloud:track-meta');
     ipcMain.on('soundcloud:track-meta', (event, payload: unknown) => {
@@ -1021,7 +1047,7 @@ async function init() {
     });
     ipcMain.removeAllListeners('toggle-history');
     ipcMain.on('toggle-history', (event) => {
-        if (isTrustedLocalSender(event)) historyManager?.toggle();
+        if (isTrustedLocalSender(event)) toggleHistory();
     });
 
     ipcMain.handle('confirm-open-homepage', async (_event, url: string) => {
@@ -1211,6 +1237,7 @@ async function init() {
             await contentView.webContents.executeJavaScript(pageMotionScript(store.get('reduceMotion', false) === true));
             await contentView.webContents.executeJavaScript(homePageScript());
             await contentView.webContents.executeJavaScript(waveScript());
+            await contentView.webContents.executeJavaScript(playerAreaScript());
 
             // Re-inject all enabled plugin content scripts
             if (pluginService) {
@@ -1467,9 +1494,12 @@ function applyThemeToContent(isDark: boolean) {
         store.get('hideArtistUpsells', true) ? '.creatorSubscriptionsButton.header__creatorUpsell,.artistConnectItem.m-upsellNextPro,.dropdownMenu [href*="checkout.soundcloud.com"],.spotlight:has(.spotlight__upsellBanner),.spotlight__upsellBanner,.spotlight__upsellCTA,.sidebarContent:has(.velvetCakeIframe),.artistConnectContainer .tileGallery__sliderPeekForward,.artistConnectContainer .tileGallery__sliderPeekBackward,.MuiBox-root:has(a[href*="getstarted/fan-support"]){display:none!important}' : '',
         sections.all, sections.content,
     ].join('\n');
-    void viewStyles.apply(contentView.webContents, css).catch(console.error);
-    void contentView.webContents.executeJavaScript('document.documentElement.classList.toggle("theme-light",' + JSON.stringify(!isDark) + ');document.documentElement.classList.toggle("theme-dark",' + JSON.stringify(isDark) + ');document.body.classList.toggle("theme-light",' + JSON.stringify(!isDark) + ');document.body.classList.toggle("theme-dark",' + JSON.stringify(isDark) + ');').catch(console.error);
-    void contentView.webContents.executeJavaScript(pageFeaturesScript(store.get('hideArtistUpsells', true) === true)).catch(console.error);
+    // До первой загрузки сайта страницы нет: стили и скрипты всё равно пропали бы, их ставит did-finish-load
+    if (contentView.webContents.getURL()) {
+        void viewStyles.apply(contentView.webContents, css).catch(console.error);
+        void contentView.webContents.executeJavaScript('document.documentElement.classList.toggle("theme-light",' + JSON.stringify(!isDark) + ');document.documentElement.classList.toggle("theme-dark",' + JSON.stringify(isDark) + ');document.body.classList.toggle("theme-light",' + JSON.stringify(!isDark) + ');document.body.classList.toggle("theme-dark",' + JSON.stringify(isDark) + ');').catch(console.error);
+        void contentView.webContents.executeJavaScript(pageFeaturesScript(store.get('hideArtistUpsells', true) === true)).catch(console.error);
+    }
     if (headerView) void viewStyles.apply(headerView.webContents, sections.all + '\n' + sections.header).catch(console.error);
     settingsManager?.setCustomCSS(sections.all + '\n' + sections.settings);
 }
@@ -1478,7 +1508,7 @@ function initializeShortcuts() {
     if (!mainWindow || !contentView || !settingsManager) return;
 
     shortcutService.register('openSettings', 'F1', 'Open Settings', () => settingsManager.toggle());
-    shortcutService.register('openHistory', 'CommandOrControl+H', 'Listening History', () => historyManager?.toggle());
+    shortcutService.register('openHistory', 'CommandOrControl+H', 'Listening History', () => toggleHistory());
     // Как окно инкогнито в Chrome
     shortcutService.register('discordIncognito', 'CommandOrControl+Shift+N', 'Discord Incognito', () =>
         setDiscordIncognito(store.get('discordIncognito', false) !== true, true),
@@ -1739,7 +1769,6 @@ function setupAudioHandler() {
             void contentView.webContents.executeJavaScript(mediaControlsScript).catch(console.error);
         }
         lastTrackInfo = result;
-        historyManager?.refreshPlayer();
 
         if (pluginService) {
             pluginService.notifyTrackChange(result as unknown as Record<string, unknown>);

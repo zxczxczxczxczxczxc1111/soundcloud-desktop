@@ -5,7 +5,6 @@ interface BlockingEngine {
 }
 import { mkdir, readFile, writeFile } from 'fs/promises';
 import { dirname } from 'path';
-import fetch from 'cross-fetch';
 
 export class AdblockService {
     private blocker: BlockingEngine | null = null;
