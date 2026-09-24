@@ -988,12 +988,14 @@ export function installWave(config: WaveConfig): void {
     function shake(): void {
         if (state === 'loading' || state === 'unavailable') return;
         for (const id of usedSeeds) staleSeeds.add(id);
-        const shown = preview.map((item) => item.track.id);
+        const shown = preview.map((item) => item.track);
         const pages = new Map(cursors);
         popOpen = false;
         resetGeneration();
         for (const [key, cursor] of pages) cursors.set(key, cursor);
-        for (const id of shown) taken.add(id);
+        for (const track of shown) taken.add(track.id);
+        // Показанное и сыгранное не возвращается и другой версией того же трека
+        for (const track of [...shown, ...[...known.values()].map((candidate) => candidate.track)]) signatures.add(trackSignature(track));
         if (active) void restartAhead();
         else void preparePreview();
     }

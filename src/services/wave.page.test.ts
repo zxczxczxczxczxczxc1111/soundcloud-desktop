@@ -503,3 +503,24 @@ it('«Встряхнуть»: впереди другие треки, играю
     expect(after.filter((id) => before.includes(id))).toEqual([]);
     expect(site.player.replaceQueue).toHaveBeenCalledTimes(1);
 });
+
+it('«Встряхнуть» не возвращает другую версию показанного или сыгранного трека', async () => {
+    // Четыре мелодии приходят от каждого зерна своей версией, остальные похожие у зёрен разные
+    const versions = (seed: number): WaveTrack[] => Array.from({ length: 8 }, (_, i) => i < 4
+        ? { id: seed * 1000 + i, kind: 'track', user_id: 200 + i, duration: 200000, title: 'Tune ' + i + ' (' + seed + ' mix)' }
+        : { id: seed * 1000 + i, kind: 'track', user_id: seed * 10 + i, duration: 200000, title: 'Rel ' + seed + '-' + i });
+    const site = fakeSite(versions);
+    window.eval(waveScript());
+    await vi.advanceTimersByTimeAsync(100);
+    const section = document.getElementById('sc-wave')!;
+    section.querySelector<HTMLButtonElement>('.scw-play')!.click();
+    await vi.advanceTimersByTimeAsync(1100);
+    const tune = (item: FakeItem): string => ((item.sound as unknown as { attributes: WaveTrack }).attributes.title ?? '').replace(/ \(.*\)$/, '');
+    // Играющий и вся очередь впереди: всё это пользователь уже видел
+    const heard = site.player.getQueue().slice().map(tune);
+    section.querySelector<HTMLButtonElement>('[data-act="shake"]')!.click();
+    await vi.advanceTimersByTimeAsync(1100);
+    const after = site.player.getQueue().slice(site.player.getQueueState().currentIndex + 1).map(tune);
+    expect(after.length).toBeGreaterThan(0);
+    expect(after.filter((title) => title.startsWith('Tune') && heard.includes(title))).toEqual([]);
+});
