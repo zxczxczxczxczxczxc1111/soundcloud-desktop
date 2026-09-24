@@ -358,6 +358,7 @@ interface WaveExclusionsApi {
 interface WaveWindow extends Window {
     __disposeWave?: () => void;
     __scWaveExclusionsChanged?: () => void;
+    __scWaveTakeSignals?: () => { userId: number; signals: PlaySignal[] };
     __scSiteTranslation?: { language?: string };
     soundcloudAPI?: {
         waveJournal?: WaveJournalApi;
@@ -2289,8 +2290,17 @@ export function installWave(config: WaveConfig): void {
         section?.remove();
         document.getElementById('sc-wave-style')?.remove();
         delete host.__disposeWave;
+        delete host.__scWaveTakeSignals;
     };
     host.__disposeWave = dispose;
+    // Выход из приложения: main забирает недописанное вместе с текущим прослушиванием,
+    // pagehide при закрытии окна приходит, когда main уже дописал журнал
+    host.__scWaveTakeSignals = () => {
+        finishPlay('stop');
+        if (signalsTimer !== undefined) clearTimeout(signalsTimer);
+        signalsTimer = undefined;
+        return { userId, signals: userId ? pendingSignals.splice(0) : [] };
+    };
     // F1 вернул трек или артиста в волну: перечитать отметки
     host.__scWaveExclusionsChanged = () => {
         exclusionsPromise = null;

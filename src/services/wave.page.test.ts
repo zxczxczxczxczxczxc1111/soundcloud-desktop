@@ -468,6 +468,24 @@ it('журнал сигналов: где ушёл, сколько прозву�
     expect(later.find((signal: { id: number }) => signal.id === 5)).toEqual(expect.objectContaining({ end: 'done', source: 'site:playlist', why: '' }));
 });
 
+it('выход из приложения: main забирает текущее прослушивание, закрытие страницы его не дублирует', async () => {
+    const site = fakeSite(relatedTracks);
+    const bridge = fakeBridge();
+    window.eval(waveScript());
+    await vi.advanceTimersByTimeAsync(100);
+    document.querySelector<HTMLButtonElement>('#sc-wave .scw-play')!.click();
+    await vi.advanceTimersByTimeAsync(1000);
+    await playFor(30000);
+    const take = (window as unknown as { __scWaveTakeSignals: () => { userId: number; signals: Array<{ id: number; end: string; heard: number }> } }).__scWaveTakeSignals;
+    const out = take();
+    expect(out.userId).toBe(77);
+    expect(out.signals).toEqual([expect.objectContaining({ id: site.player.getCurrentSound()?.id, end: 'stop' })]);
+    expect(out.signals[0].heard).toBeGreaterThanOrEqual(29000);
+    window.dispatchEvent(new Event('pagehide'));
+    await vi.advanceTimersByTimeAsync(6000);
+    expect(bridge.waveSignals.add).not.toHaveBeenCalled();
+});
+
 it('сведения о треке для Discord: жанр, счётчики и подпись волны', async () => {
     const tracks = (seed: number): WaveTrack[] => relatedTracks(seed).map((track) => ({ ...track, genre: 'Techno', playback_count: 1500, likes_count: 3 } as WaveTrack));
     fakeSite(tracks);

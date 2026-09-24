@@ -1401,7 +1401,22 @@ app.on('activate', function () {
     }
 });
 
-app.on('before-quit', () => {
+let waveSignalsTaken = false;
+app.on('before-quit', (event) => {
+    // Последнее прослушивание страница отдаёт до закрытия окон: её pagehide приходит уже после записи журнала
+    if (!waveSignalsTaken && waveSignals && contentView && !contentView.webContents.isDestroyed()) {
+        waveSignalsTaken = true;
+        event.preventDefault();
+        const taken = contentView.webContents.executeJavaScript('window.__scWaveTakeSignals ? window.__scWaveTakeSignals() : null') as Promise<unknown>;
+        const late = new Promise<null>((resolve) => setTimeout(() => resolve(null), 700));
+        void Promise.race([taken, late])
+            .then((result) => {
+                const out = result as { userId?: unknown; signals?: unknown } | null;
+                if (out) waveSignals?.add(out.userId, out.signals);
+            }, (error: unknown) => console.warn('Журнал сигналов: последнее прослушивание не получено', error))
+            .finally(() => app.quit());
+        return;
+    }
     clearInterval(diagnosticTimer);
     isQuitting = true;
     if (presenceService) void presenceService.dispose();
@@ -1428,7 +1443,7 @@ app.on('will-quit', () => {
     clearInterval(diagnosticTimer);
     loopDelay.disable();
     diagnostics.close();
-    // Страница при закрытии досылает последнее прослушивание уже после before-quit
+    // Сигналы, которые страница успела дослать после before-quit
     waveSignals?.flush();
     if (tray) {
         tray.destroy();
