@@ -583,6 +583,7 @@ it('журнал сигналов: где ушёл, сколько прозву�
     const signals = bridge.waveSignals.add.mock.calls.flatMap(([userId, list]) => (userId === 77 ? list : []));
     expect(signals[0]).toEqual(expect.objectContaining({
         id: queued[0].sound.id, end: 'skip', source: 'wave:similar', why: 'similar', dur: 200000, liked: false, disliked: false,
+        v: 2, tz: -new Date().getTimezoneOffset(), title: expect.stringMatching(/^Rel /), path: '',
     }));
     expect(signals[0].heard).toBeGreaterThanOrEqual(39000);
     expect(signals[0].heard).toBeLessThanOrEqual(41000);

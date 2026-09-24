@@ -73,6 +73,17 @@ export interface PlaySignal {
     hiddenArtist: boolean;
     genre: string;
     tags: string;
+    /** Версия записи: 1 до 0.5.2, 2 с названием, адресом, обложкой и поясом */
+    v?: 1 | 2;
+    /** Смещение местного времени от UTC на начало прослушивания, минуты */
+    tz?: number;
+    title?: string;
+    artistName?: string;
+    /** Путь трека /user/track; у приватного трека пустой, секретная ссылка в журнал не пишется */
+    path?: string;
+    artwork?: string;
+    /** Больше половины прослушивания экран был заблокирован или система простаивала: ставит main */
+    away?: boolean;
 }
 
 /**

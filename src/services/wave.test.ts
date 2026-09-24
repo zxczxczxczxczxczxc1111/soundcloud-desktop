@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import {
     WAVE_TEXTS, acceptCandidate, artworkUrl, canonicalUrl, classifyLink, formatGenres, genreKeys, genreKeysFor, isWaveEligible,
-    moodTags, normalizeTag, parseGenres, pickSpaced, reasonText, shapeSamples, topGenres, trackMatchesGenre, trackSignature,
+    moodTags, normalizeTag, trackPath, parseGenres, pickSpaced, reasonText, shapeSamples, topGenres, trackMatchesGenre, trackSignature,
     type WaveCandidate, type WaveFilter, type WaveTrack,
 } from './wave';
 
@@ -36,6 +36,12 @@ describe('жанр', () => {
         ];
         expect(moodTags([track(1, {})], around, 2)).toEqual(['phonk', 'drift']);
         expect(moodTags([track(1, {})], [], 2)).toEqual([]);
+    });
+    it('путь трека для журнала: только /user/track, секретная ссылка приватного трека не проходит', () => {
+        expect(trackPath('https://soundcloud.com/Mighty_Mason/krovyu-1?in=x')).toBe('/mighty_mason/krovyu-1');
+        expect(trackPath('https://soundcloud.com/user/track/s-AbCdEf')).toBe('');
+        expect(trackPath('https://evil.test/user/track')).toBe('');
+        expect(trackPath(undefined)).toBe('');
     });
     it('понимает несколько жанров через запятую и слэш, drum & bass остаётся целым', () => {
         expect(parseGenres(' Techno / dark  techno, industrial;techno ')).toEqual(['techno', 'dark techno', 'industrial']);

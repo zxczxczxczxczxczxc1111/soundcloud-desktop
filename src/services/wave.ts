@@ -184,6 +184,13 @@ export function canonicalUrl(value: string | undefined): string {
     }
 }
 
+// Путь трека /user/track для журнала; у приватного трека в адресе третьим сегментом секретная ссылка, такой путь не пишется
+export function trackPath(value: unknown): string {
+    const url = canonicalUrl(typeof value === 'string' ? value : undefined);
+    const path = url ? new URL(url).pathname : '';
+    return /^\/[a-z0-9_-]+\/[a-z0-9_-]+$/.test(path) ? path : '';
+}
+
 export function trackMatchesGenre(track: WaveTrack, keys: string[]): boolean {
     if (!keys.length) return true;
     const parts: string[] = [];
@@ -1170,6 +1177,12 @@ export function installWave(config: WaveConfig): void {
                 hiddenArtist: false,
                 genre: textOf(attrs.genre, 80),
                 tags: textOf(attrs.tag_list, 300),
+                v: 2,
+                tz: -new Date().getTimezoneOffset(),
+                title: textOf(attrs.title, 300),
+                artistName: textOf((attrs.user as { username?: unknown } | undefined)?.username, 200),
+                path: trackPath(attrs.permalink_url),
+                artwork: textOf(attrs.artwork_url, 400),
             },
             lastPosition: positionOf(sound),
             likedAtStart: currentLiked,
@@ -2498,7 +2511,7 @@ export function installWave(config: WaveConfig): void {
 const pageHelpers = [
     normalizeTag, genreKeys, parseGenres, formatGenres, genreKeysFor, classifyLink, canonicalUrl, trackMatchesGenre, trackArtist,
     isWaveEligible, acceptCandidate, trackSignature, pickSpaced, shuffleInPlace, topGenres, fillText, reasonText, shapeSamples,
-    artworkUrl, formatTime, playEnd, siteSource, moodTags,
+    artworkUrl, formatTime, playEnd, siteSource, moodTags, trackPath,
 ];
 
 export function waveScript(): string {

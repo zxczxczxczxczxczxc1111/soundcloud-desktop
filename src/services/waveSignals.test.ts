@@ -73,3 +73,30 @@ it('проверка события: тип очереди сайта и при�
     expect(validateSignal(signal({ source: 'wave:artist' }))?.source).toBe('wave:artist');
     expect(validateSignal(signal({ why: 'drop table' }))?.why).toBe('');
 });
+
+it('запись v2: название, артист, адрес, обложка и пояс; мусор в них отбрасывается, запись остаётся', () => {
+    const v2 = validateSignal(signal({
+        v: 2, tz: 180, title: 'кровью', artistName: 'mightymason', path: '/mighty_mason/krovyu-1',
+        artwork: 'https://i1.sndcdn.com/artworks-abc-large.jpg',
+    }));
+    expect(v2).toEqual(expect.objectContaining({ v: 2, tz: 180, title: 'кровью', artistName: 'mightymason', path: '/mighty_mason/krovyu-1', artwork: 'https://i1.sndcdn.com/artworks-abc-large.jpg' }));
+    const junk = validateSignal(signal({ v: 2, tz: 5000, path: '/user/track/s-SECRET', artwork: 'https://evil.test/x.jpg', title: 'x'.repeat(400) }));
+    expect(junk).not.toBeNull();
+    expect(junk?.tz).toBeUndefined();
+    expect(junk?.path).toBe('');
+    expect(junk?.artwork).toBe('');
+    expect(junk?.title?.length).toBe(300);
+    // Запись до v2 читается как раньше
+    expect(validateSignal(signal())).toEqual(expect.objectContaining({ v: 1, title: '', path: '' }));
+});
+
+it('«не у компьютера» решает main, признак со страницы не принимается', () => {
+    const directory = dir();
+    const away = vi.fn((from: number) => from === Date.UTC(2026, 7, 20, 10));
+    const journal = new WaveSignals(directory, 3000, away);
+    journal.add(42, [signal({ away: false }), signal({ id: 12, at: Date.UTC(2026, 7, 20, 12), away: true })]);
+    journal.flush();
+    const loaded = new WaveSignals(directory).load(42);
+    expect(loaded.map((item) => [item.id, item.away])).toEqual([[11, true], [12, false]]);
+    expect(away).toHaveBeenCalledWith(Date.UTC(2026, 7, 20, 10), Date.UTC(2026, 7, 20, 10) + 185000);
+});

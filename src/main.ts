@@ -17,6 +17,7 @@ import { pageMotionScript } from './services/pageMotion';
 import { WaveJournal } from './services/waveJournal';
 import { WaveExclusions } from './services/waveExclusions';
 import { WaveSignals } from './services/waveSignals';
+import { AwayTracker } from './services/awayTracker';
 import { getSiteDictionary } from './services/siteDictionary';
 import { shouldRunGpuInProcess } from './services/gpuProcessMode';
 import { tintIcon } from './services/devIcon';
@@ -252,6 +253,9 @@ process.on('uncaughtExceptionMonitor', (error) => {
     diagnostics.flush();
 });
 let diagnosticTimer: ReturnType<typeof setInterval> | undefined;
+// Пользователь не у компьютера (экран заблокирован, простой дольше 10 минут): журнал сигналов помечает такие прослушивания
+const awayTracker = new AwayTracker(() => powerMonitor.getSystemIdleTime());
+let awayTimer: ReturnType<typeof setInterval> | undefined;
 const loopDelay = monitorEventLoopDelay({ resolution: 20 });
 let trackUpdates = 0;
 let trackChanges = 0;
@@ -726,6 +730,11 @@ async function init() {
     diagnosticTimer.unref();
     powerMonitor.on('suspend', () => { diagnostics.record('system.suspend'); diagnostics.flush(); });
     powerMonitor.on('resume', () => diagnostics.record('system.resume'));
+    powerMonitor.on('lock-screen', () => awayTracker.lock());
+    powerMonitor.on('unlock-screen', () => awayTracker.unlock());
+    clearInterval(awayTimer);
+    awayTimer = setInterval(() => awayTracker.poll(), 60000);
+    awayTimer.unref();
 
     // Wait for Widevine CDM to be ready
     try {
@@ -905,7 +914,7 @@ async function init() {
     });
     // Журнал сигналов: как слушается каждый трек, из него потом учится подбор
     waveSignals?.flush();
-    waveSignals = new WaveSignals(path.join(app.getPath('userData'), 'wave'));
+    waveSignals = new WaveSignals(path.join(app.getPath('userData'), 'wave'), 3000, (from, to) => awayTracker.away(from, to));
     ipcMain.removeAllListeners('soundcloud:wave-signals:add');
     ipcMain.on('soundcloud:wave-signals:add', (event, userId: unknown, signals: unknown) => {
         if (isTrustedSoundCloudSender(event)) waveSignals?.add(userId, signals);
@@ -1511,6 +1520,7 @@ app.on('before-quit', (event) => {
         return;
     }
     clearInterval(diagnosticTimer);
+    clearInterval(awayTimer);
     isQuitting = true;
     if (presenceService) void presenceService.dispose();
     proxyService?.dispose();

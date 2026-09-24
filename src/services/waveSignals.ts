@@ -41,6 +41,14 @@ export function validateSignal(input: unknown, now = Date.now()): PlaySignal | n
         hiddenArtist: value.hiddenArtist === true,
         genre: text(value.genre, 80),
         tags: text(value.tags, 300),
+        // Поля v2 необязательные: запись без них остаётся записью v1, кривое поле пустеет, а не губит строку
+        v: value.v === 2 ? 2 : 1,
+        tz: typeof value.tz === 'number' && Number.isInteger(value.tz) && Math.abs(value.tz) <= 840 ? value.tz : undefined,
+        title: text(value.title, 300),
+        artistName: text(value.artistName, 200),
+        path: typeof value.path === 'string' && /^\/[a-z0-9_-]{1,100}\/[a-z0-9_-]{1,255}$/i.test(value.path) ? value.path : '',
+        artwork: typeof value.artwork === 'string' && value.artwork.length <= 400 && /^https:\/\/[a-z0-9-]+\.sndcdn\.com\/[\w./-]+$/i.test(value.artwork) ? value.artwork : '',
+        away: value.away === true,
     };
 }
 
@@ -50,7 +58,8 @@ export class WaveSignals {
     private pending = new Map<number, PlaySignal[]>();
     private timer: ReturnType<typeof setTimeout> | undefined;
 
-    constructor(private directory: string, private delay = 3000) {}
+    /** isAway: был ли пользователь не у компьютера большую часть окна [from, to]; страница этого не знает */
+    constructor(private directory: string, private delay = 3000, private isAway?: (from: number, to: number) => boolean) {}
 
     private file(userId: number, at: number): string {
         const date = new Date(at);
@@ -63,6 +72,7 @@ export class WaveSignals {
         for (const item of input.slice(0, 1000)) {
             const signal = validateSignal(item);
             if (!signal) continue;
+            signal.away = this.isAway?.(signal.at, signal.at + Math.max(signal.heard, 1000)) ?? false;
             list.push(signal);
             added++;
         }
