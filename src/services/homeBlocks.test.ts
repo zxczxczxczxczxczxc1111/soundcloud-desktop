@@ -15,9 +15,9 @@ afterEach(() => {
     history.replaceState(null, '', '/');
 });
 
-it('по умолчанию скрыты полки и подсказки, выбранные для волны', () => {
-    const hidden = HOME_BLOCK_KEYS.filter((key) => !homeBlockDefaults[key]);
-    expect(hidden).toEqual(['homeMore', 'homeMixed', 'homeStations', 'homeNewTracks', 'homeFollow', 'homeMobile']);
+it('по умолчанию на главной только волна и лайки справа', () => {
+    const shown = HOME_BLOCK_KEYS.filter((key) => homeBlockDefaults[key]);
+    expect(shown).toEqual(['homeWave', 'homeLikes']);
     expect(isHomeBlockKey('homeWave')).toBe(true);
     expect(isHomeBlockKey('hidePromotions')).toBe(false);
     expect(isHomeBlockKey('__proto__')).toBe(false);

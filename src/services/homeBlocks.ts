@@ -19,23 +19,24 @@ export const HOME_BLOCK_KEYS = [
 ] as const;
 export type HomeBlockKey = (typeof HOME_BLOCK_KEYS)[number];
 
-// Полки слева метит скрипт страницы по заголовку, блоки справа узнаются по классу
+// Полки слева метит скрипт страницы по заголовку, блоки справа узнаются по классу.
+// По умолчанию главная это волна и лайки справа: волна с подборками заменяет полки сайта
 const HOME_BLOCK_TARGETS: Record<HomeBlockKey, { shown: boolean; selectors: string[] }> = {
     homeWave: { shown: true, selectors: ['#sc-wave'] },
     homeMore: { shown: false, selectors: ['[data-sc-shelf="more"]'] },
-    homeRecent: { shown: true, selectors: ['[data-sc-shelf="recent"]'] },
+    homeRecent: { shown: false, selectors: ['[data-sc-shelf="recent"]'] },
     homeMixed: { shown: false, selectors: ['[data-sc-shelf="mixed"]'] },
     homeStations: { shown: false, selectors: ['[data-sc-shelf="stations"]'] },
-    homeTrending: { shown: true, selectors: ['[data-sc-shelf="trending"]'] },
-    homeMade: { shown: true, selectors: ['[data-sc-shelf="made"]'] },
-    homeCurated: { shown: true, selectors: ['[data-sc-shelf="curated"]'] },
-    homeAlbums: { shown: true, selectors: ['[data-sc-shelf="albums"]'] },
-    homeLiked: { shown: true, selectors: ['[data-sc-shelf="liked"]'] },
-    homeBuzzing: { shown: true, selectors: ['[data-sc-shelf="buzzing"]'] },
+    homeTrending: { shown: false, selectors: ['[data-sc-shelf="trending"]'] },
+    homeMade: { shown: false, selectors: ['[data-sc-shelf="made"]'] },
+    homeCurated: { shown: false, selectors: ['[data-sc-shelf="curated"]'] },
+    homeAlbums: { shown: false, selectors: ['[data-sc-shelf="albums"]'] },
+    homeLiked: { shown: false, selectors: ['[data-sc-shelf="liked"]'] },
+    homeBuzzing: { shown: false, selectors: ['[data-sc-shelf="buzzing"]'] },
     homeNewTracks: { shown: false, selectors: ['.l-sidebar-right .artistShortcutsModule'] },
     homeFollow: { shown: false, selectors: ['.l-sidebar-right .whoToFollowModule'] },
     homeLikes: { shown: true, selectors: ['.l-sidebar-right .likesModule'] },
-    homeHistory: { shown: true, selectors: ['.l-sidebar-right .historyModule'] },
+    homeHistory: { shown: false, selectors: ['.l-sidebar-right .historyModule'] },
     homeMobile: { shown: false, selectors: ['.l-sidebar-right .mobileApps', '.l-sidebar-right .l-footer'] },
 };
 
