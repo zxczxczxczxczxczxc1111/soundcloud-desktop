@@ -1518,6 +1518,8 @@ export function installWave(config: WaveConfig): void {
         node.append(image);
         if (loadedArt.has(url)) {
             image.classList.add('on');
+            // При старте сайт грузит десятки обложек и очередь обучения бывает занята: пробуем снова
+            if (key) host.__scmLearnCover?.(key, url);
             return;
         }
         const probe = new Image();

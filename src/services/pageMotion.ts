@@ -58,9 +58,16 @@ export function imageBase(url: string): string {
     return url.split('?')[0].replace(/-[a-z0-9]+\.(jpe?g|png|webp)$/i, '');
 }
 
-// Ключ цвета: путь ссылки, в которой стоит обложка, или первой ссылки в строке списка
+// Ключ цвета: путь ссылки, в которой стоит обложка, иначе заголовок строки списка.
+// Кнопка Play в строке тоже ссылка, но с пустым адресом: он указывает на текущую страницу
 export function coverKey(outer: Element): string {
-    const link = outer.closest('a[href]') ?? outer.closest('li, .trackItem, .soundBadge, .sound, .playableTile')?.querySelector('a[href]');
+    let link = outer.closest('a[href]');
+    const row = link ? null : outer.closest('li, .trackItem, .soundBadge, .sound, .playableTile');
+    if (row) {
+        const depth = (a: Element): number => (a.getAttribute('href') ?? '').split('?')[0].split('/').filter(Boolean).length;
+        const real = [...row.querySelectorAll('a[href]')].filter((a) => !/^(#|$)/.test(a.getAttribute('href') ?? ''));
+        link = row.querySelector('a.soundTitle__title[href], a.trackItem__trackTitle[href]') ?? real.sort((a, b) => depth(b) - depth(a))[0] ?? null;
+    }
     if (!link) return '';
     try {
         const url = new URL(link.getAttribute('href') ?? '', location.href);

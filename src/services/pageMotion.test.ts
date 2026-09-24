@@ -115,6 +115,11 @@ it('ключ обложки: путь ссылки без регистра, ст
     document.body.innerHTML = '<li><div class="image sc-artwork" id="row"></div><a href="/a/b">b</a></li><a href="https://example.com/x"><div class="image sc-artwork" id="far"></div></a>';
     expect(coverKey(document.getElementById('row') as Element)).toBe('/a/b');
     expect(coverKey(document.getElementById('far') as Element)).toBe('');
+    // Строка боковой панели: кнопка Play с пустым адресом идёт первой и указывала бы на текущую страницу
+    document.body.innerHTML = '<li class="soundBadge"><div class="image sc-artwork" id="badge"></div><a href="">play</a><a href="/user">u</a><a href="/user/song">t</a></li>'
+        + '<div class="sound"><div class="image sc-artwork" id="titled"></div><a href="/u2/set/x">deep</a><a class="soundTitle__title" href="/u2/song">t</a></div>';
+    expect(coverKey(document.getElementById('badge') as Element)).toBe('/user/song');
+    expect(coverKey(document.getElementById('titled') as Element)).toBe('/u2/song');
     expect(imageBase(ARTWORK)).toBe(imageBase('https://i1.sndcdn.com/artworks-abc-def-t50x50.jpg?1'));
 });
 
