@@ -469,6 +469,35 @@ it('ссылка из Discord: трек открывается и сразу и�
     expect(site.player.playCurrent).toHaveBeenCalled();
 });
 
+it('ссылка из Discord на трек, который уже играет: открывается его страница, очередь и волна остаются', async () => {
+    type Host = { __scOpenTrack: (path: string) => Promise<boolean> };
+    const site = fakeSite((seed) => relatedTracks(seed).map((track) => ({ ...track, permalink_url: 'https://soundcloud.com/art/rel-' + track.id })));
+    window.eval(waveScript());
+    await vi.advanceTimersByTimeAsync(100);
+    document.querySelector<HTMLButtonElement>('#sc-wave .scw-play')!.click();
+    await vi.advanceTimersByTimeAsync(100);
+    const playing = site.player.getCurrentSound()!;
+    const opened: (string | null)[] = [];
+    const onLink = (event: MouseEvent): void => {
+        if (!(event.target instanceof HTMLAnchorElement)) return;
+        opened.push(event.target.getAttribute('href'));
+        event.preventDefault();
+    };
+    document.addEventListener('click', onLink);
+    try {
+        expect(await (window as unknown as Host).__scOpenTrack('/art/rel-' + playing.id)).toBe(true);
+    } finally {
+        document.removeEventListener('click', onLink);
+    }
+    expect(opened).toEqual(['/art/rel-' + playing.id]);
+    expect(site.player.replaceQueue).toHaveBeenCalledTimes(1);
+    expect(site.api.callEndpoint).not.toHaveBeenCalledWith('resolve', expect.anything(), expect.anything());
+    await vi.advanceTimersByTimeAsync(5000);
+    expect(site.player.getCurrentSound()!.id).toBe(playing.id);
+    expect(site.states.fallbackEnabled).toBe(false);
+    expect(document.querySelector('#sc-wave .scw-up-h')?.textContent).toBe('Next up');
+});
+
 it('исчерпанная подборка перед последним треком возвращает автоплей сайта', async () => {
     const few = (seed: number): WaveTrack[] => [0, 1].map((i) => ({ id: seed * 1000 + i, kind: 'track', user_id: seed * 10 + i, duration: 200000, title: 'Few ' + seed + '-' + i }));
     const site = fakeSite(few);

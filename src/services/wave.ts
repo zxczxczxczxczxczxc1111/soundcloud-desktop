@@ -2099,6 +2099,12 @@ export function installWave(config: WaveConfig): void {
         if (!player || !SoundModel || !api) return false;
         if (!/^\/[a-z0-9_-]{1,100}\/[a-z0-9_-]{1,255}$/.test(path)) return true;
         if (go) navigate(path);
+        // Свой же трек из карточки Discord уже играет: страница открыта, очередь и волна остаются как есть
+        const current = player.getCurrentSound();
+        if (current && trackPath(current.attributes?.permalink_url) === path.toLowerCase()) {
+            if (!player.isPlaying()) player.playCurrent({ userInitiated: true });
+            return true;
+        }
         let track: WaveTrack | null;
         try {
             track = asTrack(await resolveUrl('https://soundcloud.com' + path));
