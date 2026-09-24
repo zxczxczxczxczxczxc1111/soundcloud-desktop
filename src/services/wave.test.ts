@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import {
     WAVE_TEXTS, acceptCandidate, artworkUrl, canonicalUrl, classifyLink, formatGenres, genreKeys, genreKeysFor, isWaveEligible,
-    normalizeTag, parseGenres, pickSpaced, reasonText, shapeSamples, topGenres, trackMatchesGenre, trackSignature,
+    moodTags, normalizeTag, parseGenres, pickSpaced, reasonText, shapeSamples, topGenres, trackMatchesGenre, trackSignature,
     type WaveCandidate, type WaveFilter, type WaveTrack,
 } from './wave';
 
@@ -27,6 +27,15 @@ describe('жанр', () => {
         expect(trackMatchesGenre(track(5, { genre: 'Trap' }), genreKeys('rap'))).toBe(false);
         expect(trackMatchesGenre(track(6, { genre: 'Rap / Trap' }), genreKeys('rap'))).toBe(true);
         expect(trackMatchesGenre(track(7, {}), [])).toBe(true);
+    });
+    it('настроение: жанр и теги зерна, у зерна без них самые частые среди похожих', () => {
+        expect(moodTags([track(1, { genre: 'Witch House', tag_list: 'dark "haunted mound"' })], [track(2, { genre: 'Rap' })], 2)).toEqual(['witch house', 'dark']);
+        const around = [
+            track(2, { genre: 'Phonk', tag_list: 'drift' }), track(3, { genre: 'phonk', tag_list: '"Dark Phonk" drift' }),
+            track(4, { genre: 'Phonk' }), track(5, { genre: '', tag_list: 'x' }),
+        ];
+        expect(moodTags([track(1, {})], around, 2)).toEqual(['phonk', 'drift']);
+        expect(moodTags([track(1, {})], [], 2)).toEqual([]);
     });
     it('понимает несколько жанров через запятую и слэш, drum & bass остаётся целым', () => {
         expect(parseGenres(' Techno / dark  techno, industrial;techno ')).toEqual(['techno', 'dark techno', 'industrial']);

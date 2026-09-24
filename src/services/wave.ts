@@ -28,7 +28,8 @@ export type WaveReason =
     | { kind: 'genrePopular'; genre: string }
     | { kind: 'genreSimilar'; genre: string; seed: string }
     | { kind: 'seedTrack' }
-    | { kind: 'artistTrack'; artist: string };
+    | { kind: 'artistTrack'; artist: string }
+    | { kind: 'mood'; seed: string; genre: string };
 export interface WaveCandidate {
     track: WaveTrack;
     reason: WaveReason;
@@ -54,7 +55,7 @@ export type WaveTexts = Record<
     | 'idleSimilar' | 'idleSimilarAny' | 'idleFresh' | 'idleGenre' | 'whySimilar' | 'whyFresh' | 'whyNewArtist' | 'whyGenreFresh'
     | 'whyGenrePopular' | 'whyGenreSimilar' | 'loading' | 'emptyFresh' | 'emptyFreshGenre' | 'emptyGenre' | 'emptySimilar'
     | 'dropGenre' | 'toSimilar' | 'play' | 'pause' | 'clearGenre' | 'upFirst' | 'next' | 'like' | 'error' | 'retry' | 'unavailable'
-    | 'whySeedTrack' | 'whyArtistTrack' | 'seedTrack' | 'seedArtist' | 'seedPlaylist' | 'clearSeed' | 'emptySeed'
+    | 'whySeedTrack' | 'whyArtistTrack' | 'whyMood' | 'seedTrack' | 'seedArtist' | 'seedPlaylist' | 'clearSeed' | 'emptySeed'
     | 'menuWaveTrack' | 'menuWaveArtist' | 'menuWavePlaylist' | 'menuDislike' | 'menuUndislike' | 'menuHideArtist' | 'menuShowArtist'
     | 'toastDisliked' | 'toastUndisliked' | 'toastHidden' | 'toastShown' | 'toastFailed' | 'toastNotSaved' | 'toastEmpty' | 'shake',
     string
@@ -74,7 +75,7 @@ export const WAVE_TEXTS: Record<'ru' | 'en', WaveTexts> = {
         dropGenre: 'Любой жанр', toSimilar: 'Включить Похожее', play: 'Включить волну', pause: 'Пауза', clearGenre: 'Убрать жанр',
         upFirst: 'Первыми сыграют', next: 'Далее', like: 'Нравится', error: 'Не удалось подобрать треки, SoundCloud не ответил', retry: 'Повторить',
         unavailable: 'Волна не работает с этой версией SoundCloud',
-        whySeedTrack: 'С него началась волна', whyArtistTrack: 'Из треков {artist}',
+        whySeedTrack: 'С него началась волна', whyArtistTrack: 'Из треков {artist}', whyMood: 'В духе {seed}: {genre}',
         seedTrack: 'Волна по треку {seed}', seedArtist: 'Волна по артисту {seed}', seedPlaylist: 'Волна по плейлисту {seed}',
         clearSeed: 'Вернуть обычную волну', emptySeed: 'Не нашлось похожих треков',
         menuWaveTrack: 'Волна по треку', menuWaveArtist: 'Волна по артисту', menuWavePlaylist: 'Волна по плейлисту',
@@ -97,7 +98,7 @@ export const WAVE_TEXTS: Record<'ru' | 'en', WaveTexts> = {
         dropGenre: 'Any genre', toSimilar: 'Switch to Similar', play: 'Play wave', pause: 'Pause', clearGenre: 'Clear genre',
         upFirst: 'Up first', next: 'Next up', like: 'Like', error: 'Couldn’t pick tracks, SoundCloud didn’t respond', retry: 'Try again',
         unavailable: 'My Wave doesn’t work with this SoundCloud version',
-        whySeedTrack: 'Your wave starts here', whyArtistTrack: 'By {artist}',
+        whySeedTrack: 'Your wave starts here', whyArtistTrack: 'By {artist}', whyMood: 'In the vibe of {seed}: {genre}',
         seedTrack: 'Wave from {seed}', seedArtist: 'Wave from artist {seed}', seedPlaylist: 'Wave from playlist {seed}',
         clearSeed: 'Back to My Wave', emptySeed: 'No similar tracks found',
         menuWaveTrack: 'Wave from track', menuWaveArtist: 'Wave from artist', menuWavePlaylist: 'Wave from playlist',
@@ -271,7 +272,35 @@ export function reasonText(reason: WaveReason, texts: WaveTexts): string {
         case 'genreSimilar': return fillText(texts.whyGenreSimilar, { genre: reason.genre, seed: reason.seed });
         case 'seedTrack': return texts.whySeedTrack;
         case 'artistTrack': return fillText(texts.whyArtistTrack, { artist: reason.artist });
+        case 'mood': return fillText(texts.whyMood, { seed: reason.seed, genre: reason.genre });
     }
+}
+
+// Настроение зёрен для запасного пути волны: их жанр и теги, а если их нет, самые частые жанры и теги
+// среди похожих (включая отсеянные) в том написании, что встречается чаще
+export function moodTags(seeds: WaveTrack[], around: WaveTrack[], limit: number): string[] {
+    const labels = (track: WaveTrack): string[] => {
+        const list = [(track.genre ?? '').trim()];
+        for (const match of (track.tag_list ?? '').matchAll(/"([^"]+)"|(\S+)/g)) list.push((match[1] ?? match[2] ?? '').trim());
+        return list.filter((label) => normalizeTag(label).length >= 2);
+    };
+    const count = (tracks: WaveTrack[]): string[] => {
+        const counts = new Map<string, { count: number; spellings: Map<string, number> }>();
+        for (const track of tracks)
+            for (const label of new Set(labels(track).map((item) => item.toLowerCase()))) {
+                const key = normalizeTag(label);
+                const entry = counts.get(key) ?? { count: 0, spellings: new Map<string, number>() };
+                entry.count++;
+                entry.spellings.set(label, (entry.spellings.get(label) ?? 0) + 1);
+                counts.set(key, entry);
+            }
+        return [...counts.values()]
+            .sort((a, b) => b.count - a.count)
+            .slice(0, limit)
+            .map((entry) => [...entry.spellings].sort((a, b) => b[1] - a[1])[0][0]);
+    };
+    const own = count(seeds);
+    return own.length ? own : count(around);
 }
 
 // Громкие мастеринги дают сплошной «штрихкод», поэтому динамика растягивается: 10-й и 99-й перцентили в 0..1
@@ -451,6 +480,10 @@ export function installWave(config: WaveConfig): void {
     let seed: Seed | null = null;
     let derivedSeeds: WaveTrack[] = [];
     let ownAdded = false;
+    // Запасной путь, когда похожие и станция почти пусты: треки артиста зерна берутся один раз,
+    // теги настроения считаются один раз, их страницы листаются дальше
+    let artistFallbackDone = false;
+    let fallbackMood: string[] | null = null;
     let seedRequest = 0;
     // Копия отметок «Не нравится» и скрытых артистов из main
     interface Excluded { id: number; title: string; artist: string; url: string }
@@ -712,8 +745,11 @@ export function installWave(config: WaveConfig): void {
             ownAdded = true;
             for (const track of seed.own) accept(found, { track, reason: { kind: 'artistTrack', artist: seed.title } }, filter);
         }
+        // Всё, что пришло из похожих и станции, включая отсеянное: по нему считается настроение запасного пути
+        const observed: WaveTrack[] = [];
         // Похожее на from: причина по жанру или режиму; у волны от трека найденное становится зерном дальше
         const take = (track: WaveTrack, from: WaveTrack): void => {
+            observed.push(track);
             if (!trackMatchesGenre(track, keys)) return;
             const seedTitle = (from.title ?? '').trim() || '…';
             const matched = tags.find((tag) => trackMatchesGenre(track, genreKeys(tag)));
@@ -757,9 +793,32 @@ export function installWave(config: WaveConfig): void {
             }
             if (own !== generation) return 0;
         }
+        // Похожие и станция почти ничего не дали (трек без похожих или всё отсеяно):
+        // другие треки артиста зерна, потом свежее и популярное в настроении зерна
+        if (seed && found.length < 3) {
+            const first = seed.tracks[0];
+            if (seed.kind === 'track' && first && !artistFallbackDone) {
+                artistFallbackDone = true;
+                try {
+                    const artist = trackArtist(first);
+                    if (artist) for (const track of await artistOwnTracks(artist)) accept(found, { track, reason: { kind: 'artistTrack', artist: artistName(first) || seed.title } }, filter);
+                } catch (error) {
+                    console.warn('Волна: треки артиста не загружены', error);
+                }
+                if (own !== generation) return 0;
+            }
+            fallbackMood ??= moodTags(seed.tracks, observed, 2);
+            const moodTasks = fallbackMood.flatMap((tag) => (['recent', 'search'] as const).map((source) =>
+                genrePage(source, tag).then((tracks) => {
+                    for (const track of tracks) accept(found, { track, reason: { kind: 'mood', seed: seed?.title ?? '…', genre: tag } }, filter);
+                }).catch((error: unknown) => console.warn('Волна: настроение не загружено', error))));
+            await Promise.all(moodTasks);
+            if (own !== generation) return 0;
+        }
         if (tasks.length && failures === tasks.length && !found.length) throw new Error('Источники волны не ответили');
         pool.push(...shuffleInPlace(found));
-        const sourcesLeft = seedsFor(keys).length > 0 || stationRoots().length > 0 || tags.some((tag) => (['recent', 'search'] as const).some((source) => !cursors.get(source + ':' + tag)?.done));
+        const pagesLeft = (list: string[]): boolean => list.some((tag) => (['recent', 'search'] as const).some((source) => !cursors.get(source + ':' + tag)?.done));
+        const sourcesLeft = seedsFor(keys).length > 0 || stationRoots().length > 0 || pagesLeft(tags) || pagesLeft(fallbackMood ?? []);
         if (!found.length && !sourcesLeft) exhausted = true;
         return found.length;
     }
@@ -795,6 +854,8 @@ export function installWave(config: WaveConfig): void {
         exhausted = false;
         gathering = null;
         ownAdded = false;
+        artistFallbackDone = false;
+        fallbackMood = null;
         usedSeeds.clear();
         usedStations.clear();
         cursors.clear();
@@ -1259,6 +1320,12 @@ export function installWave(config: WaveConfig): void {
         for (let i = 0; i < stubs.length; i += 50) full.push(...tracksOf(await call('trackBatch', {}, { ids: stubs.slice(i, i + 50).join(',') })));
         return uniqueTracks(full).filter(isWaveEligible);
     }
+    // Топ артиста, у кого топ короче пяти треков, ещё и последние загрузки
+    async function artistOwnTracks(id: number): Promise<WaveTrack[]> {
+        let list = tracksOf(await call('userToptracks', { id }, { limit: 20 }));
+        if (list.length < 5) list = list.concat(tracksOf(await call('userTracks', { id }, { limit: 30 })));
+        return uniqueTracks(list).filter(isWaveEligible);
+    }
     // Зёрна: сам трек; топ артиста (он же идёт в подборку); треки плейлиста
     async function loadSeed(kind: WaveLinkKind, target: MenuTarget): Promise<{ seed: Seed; first: WaveTrack | null } | null> {
         if (kind === 'track') {
@@ -1268,9 +1335,7 @@ export function installWave(config: WaveConfig): void {
         if (kind === 'artist') {
             const artist = await artistOf(target);
             if (!artist) return null;
-            let list = tracksOf(await call('userToptracks', { id: artist.id }, { limit: 20 }));
-            if (list.length < 5) list = list.concat(tracksOf(await call('userTracks', { id: artist.id }, { limit: 30 })));
-            const own = uniqueTracks(list).filter(isWaveEligible);
+            const own = await artistOwnTracks(artist.id);
             return { seed: { kind, title: artist.username || '…', tracks: shuffleInPlace(own.slice()), own }, first: null };
         }
         const body = (await resolveUrl(target.url)) as { title?: unknown } | null;
@@ -1296,6 +1361,11 @@ export function installWave(config: WaveConfig): void {
             staleSeeds.clear();
             resetGeneration();
             const first = loaded.first;
+            // Стартовый трек встанет первым или уже играет: станция и треки артиста не должны вернуть его ещё раз
+            if (first) {
+                taken.add(first.id);
+                signatures.add(trackSignature(first));
+            }
             const keep = !!first && player?.getCurrentSound()?.id === first.id;
             if (first && keep) known.set(first.id, { track: first, reason: { kind: 'seedTrack' } });
             const started = await start(first && !keep ? { track: first, reason: { kind: 'seedTrack' } } : undefined, keep);
@@ -2412,7 +2482,7 @@ export function installWave(config: WaveConfig): void {
 const pageHelpers = [
     normalizeTag, genreKeys, parseGenres, formatGenres, genreKeysFor, classifyLink, canonicalUrl, trackMatchesGenre, trackArtist,
     isWaveEligible, acceptCandidate, trackSignature, pickSpaced, shuffleInPlace, topGenres, fillText, reasonText, shapeSamples,
-    artworkUrl, formatTime, playEnd, siteSource,
+    artworkUrl, formatTime, playEnd, siteSource, moodTags,
 ];
 
 export function waveScript(): string {

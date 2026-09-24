@@ -402,8 +402,48 @@ it('волна от трека скрытого артиста подбирае�
     expect(queued.slice(1).some((item) => item.sound.id % 1000 === 900)).toBe(false);
 });
 
-it('волна от трека, к которому нечего подобрать, не играет его одного и говорит об этом', async () => {
+it('трек без похожих и без станции: волна идёт по другим трекам его артиста', async () => {
     const site = fakeSite((seed) => (seed === 555 ? [] : relatedTracks(seed)), siteExtra);
+    fakeExclusions();
+    const row = listRow();
+    window.eval(waveScript());
+    await vi.advanceTimersByTimeAsync(100);
+    rightClick(row.querySelector('.soundTitle__title')!);
+    choose('wave-track');
+    await vi.advanceTimersByTimeAsync(100);
+    const queued = site.player.replaceQueue.mock.calls[site.player.replaceQueue.mock.calls.length - 1][0] as FakeItem[];
+    expect(queued[0].sound.id).toBe(555);
+    expect(queued.slice(1).every((item) => item.sound.id > 9000 && item.sound.id < 9010)).toBe(true);
+    expect(queued.length).toBe(7);
+    expect(document.querySelector('#sc-wave .scw-tile .scw-t3')?.textContent).toBe('By Art');
+});
+
+it('трек без жанра, все похожие отсеяны: волна идёт по самым частым тегам похожих', async () => {
+    // Похожие на песню это уже слышанные треки истории с жанром Phonk, других треков у артиста нет
+    const heardPhonk = (seed: number): WaveTrack[] =>
+        seed === 555 ? [1, 2, 3].map((id): WaveTrack => ({ id, kind: 'track', user_id: 100 + id, duration: 180000, title: 'Seed ' + id, genre: 'Phonk', tag_list: 'drift "dark phonk"' })) : relatedTracks(seed);
+    const phonk = Array.from({ length: 6 }, (_, i): WaveTrack => ({ id: 8800 + i, kind: 'track', user_id: 880 + i, duration: 200000, title: 'Phonk ' + i, genre: 'Phonk' }));
+    const site = fakeSite(heardPhonk, (name, path, query) => {
+        if (name === 'userToptracks') return { collection: [] };
+        if (name === 'recentTracks') return path.tag === 'phonk' ? { collection: phonk } : { collection: [] };
+        return siteExtra(name, path, query);
+    });
+    fakeExclusions();
+    const row = listRow();
+    window.eval(waveScript());
+    await vi.advanceTimersByTimeAsync(100);
+    rightClick(row.querySelector('.soundTitle__title')!);
+    choose('wave-track');
+    await vi.advanceTimersByTimeAsync(100);
+    const queued = site.player.replaceQueue.mock.calls[site.player.replaceQueue.mock.calls.length - 1][0] as FakeItem[];
+    expect(queued[0].sound.id).toBe(555);
+    expect(queued.slice(1).map((item) => item.sound.id).sort()).toEqual(phonk.map((track) => track.id));
+    expect(site.api.callEndpoint).toHaveBeenCalledWith('recentTracks', { tag: 'phonk' }, { limit: 50 });
+    expect(document.querySelector('#sc-wave .scw-tile .scw-t3')?.textContent).toBe('In the vibe of Song: phonk');
+});
+
+it('волна от трека, к которому нечего подобрать, не играет его одного и говорит об этом', async () => {
+    const site = fakeSite((seed) => (seed === 555 ? [] : relatedTracks(seed)), (name, path, query) => (name === 'userToptracks' ? { collection: [] } : siteExtra(name, path, query)));
     fakeExclusions();
     const row = listRow();
     window.eval(waveScript());
