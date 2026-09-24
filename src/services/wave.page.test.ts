@@ -264,6 +264,31 @@ it('ПКМ по треку в списке: меню и волна от этог
     expect(section.querySelector('.scw-hint')?.textContent).toBe('Similar to what you play and like');
 });
 
+it('меню мышью без фокуса на пункте, стрелки и Shift+F10 ведут по пунктам', async () => {
+    fakeSite(relatedTracks, siteExtra);
+    fakeExclusions();
+    const row = listRow();
+    window.eval(waveScript());
+    await vi.advanceTimersByTimeAsync(100);
+    const title = row.querySelector('.soundTitle__title')!;
+    rightClick(title);
+    const menu = document.querySelector<HTMLElement>('.scw-menu')!;
+    // Фокус на пункте после ПКМ сайт обводит синей рамкой
+    expect(document.activeElement).toBe(menu);
+    expect(menu.style.transformOrigin).toMatch(/px top$/);
+    const key = (name: string): void => void document.activeElement!.dispatchEvent(new KeyboardEvent('keydown', { key: name, bubbles: true, cancelable: true }));
+    key('ArrowUp');
+    expect((document.activeElement as HTMLElement).dataset.menu).toBe('hide-artist');
+    key('ArrowDown');
+    expect((document.activeElement as HTMLElement).dataset.menu).toBe('wave-track');
+    key('Escape');
+    expect(document.querySelector('.scw-menu')).toBeNull();
+
+    // Клавиша меню или Shift+F10: координат нет, фокус сразу на первом пункте
+    title.dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, cancelable: true }));
+    expect((document.activeElement as HTMLElement).dataset.menu).toBe('wave-track');
+});
+
 it('волна по треку, который уже играет: он доигрывает, волна встаёт за ним', async () => {
     const site = fakeSite(relatedTracks, siteExtra);
     fakeExclusions();

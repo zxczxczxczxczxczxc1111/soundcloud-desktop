@@ -1436,10 +1436,16 @@ export function installWave(config: WaveConfig): void {
         // Меню по ПКМ собрано из классов родного меню «…», вид и тема приходят от сайта
         '.scw-menu .scw-mi{display:flex;align-items:center;gap:8px;width:100%;text-align:left;white-space:nowrap}',
         '.scw-menu .scw-mi svg{display:block;width:16px;height:16px;fill:currentColor}',
+        '.scw-menu{animation:scw-menu-in .14s cubic-bezier(.2,0,0,1)}',
+        '@keyframes scw-menu-in{from{opacity:0;transform:scale(.96)}}',
+        '.scw-menu:focus{outline:none}',
+        // Вместо синей рамки сайта: кольцо цвета текста и только с клавиатуры
+        '.scw-menu .scw-mi:focus{box-shadow:none;outline:none}',
+        '.scw-menu .scw-mi:focus-visible{outline:2px solid currentColor;outline-offset:-2px}',
         '.scw-toast{position:fixed;left:50%;bottom:72px;z-index:2147483000;transform:translateX(-50%);max-width:420px;padding:8px 12px;border-radius:4px;background:#303030;color:#fff;box-shadow:0 4px 12px rgba(0,0,0,.45);font-size:14px;line-height:20px;pointer-events:none;opacity:0;transition:opacity .15s}',
         'html.theme-light .scw-toast{background:#fff;color:#121212;box-shadow:0 4px 12px rgba(0,0,0,.18)}',
         '.scw-toast.on{opacity:1}',
-        '@media (prefers-reduced-motion:reduce){.scw-tip,.scw-toast{transition:none}}',
+        '@media (prefers-reduced-motion:reduce){.scw-tip,.scw-toast{transition:none}.scw-menu{animation:none}}',
     ].join('\n');
     const MENU_ICON: Record<string, string> = {
         wave: '<svg viewBox="0 0 16 16" aria-hidden="true"><path d="M1 6.5h1.5v3H1zM4 4.5h1.5v7H4zM7 2h1.5v12H7zM10 5h1.5v6H10zM13 7h1.5v2H13z"/></svg>',
@@ -2063,11 +2069,12 @@ export function installWave(config: WaveConfig): void {
         menu = null;
         menuFor = null;
     }
-    function openMenu(target: MenuTarget, x: number, y: number): void {
+    function openMenu(target: MenuTarget, x: number, y: number, byKeyboard: boolean): void {
         closeMenu();
         ensureStyle();
         const root = el('div', 'dropdownMenu g-z-index-overlay scw-menu');
         root.setAttribute('role', 'menu');
+        root.tabIndex = -1;
         root.style.position = 'fixed';
         const list = el('div', 'moreActions sc-list-nostyle sc-border-box sc-pt-1x sc-pb-1x');
         const group = el('div', 'moreActions__group');
@@ -2094,18 +2101,27 @@ export function installWave(config: WaveConfig): void {
             const at = buttons.indexOf(document.activeElement as HTMLElement);
             if (event.key === 'ArrowDown' || event.key === 'ArrowUp') {
                 event.preventDefault();
-                buttons[(at + (event.key === 'ArrowDown' ? 1 : -1) + buttons.length) % buttons.length]?.focus();
+                const down = event.key === 'ArrowDown';
+                // Открыто мышью: фокус на самом меню, первая стрелка встаёт на крайний пункт
+                const next = at < 0 ? (down ? 0 : buttons.length - 1) : (at + (down ? 1 : -1) + buttons.length) % buttons.length;
+                buttons[next]?.focus();
             } else if (event.key === 'Escape' || event.key === 'Tab') {
                 event.preventDefault();
                 closeMenu();
             }
         });
         document.body.append(root);
-        root.style.left = Math.max(8, Math.min(x, window.innerWidth - root.offsetWidth - 8)) + 'px';
-        root.style.top = Math.max(8, y + root.offsetHeight > window.innerHeight - 8 ? y - root.offsetHeight : y) + 'px';
+        const left = Math.max(8, Math.min(x, window.innerWidth - root.offsetWidth - 8));
+        const above = y + root.offsetHeight > window.innerHeight - 8;
+        root.style.left = left + 'px';
+        root.style.top = Math.max(8, above ? y - root.offsetHeight : y) + 'px';
+        // Раскрывается из точки клика
+        root.style.transformOrigin = Math.max(0, x - left) + 'px ' + (above ? 'bottom' : 'top');
         menu = root;
         menuFor = target;
-        root.querySelector<HTMLElement>('[data-menu]')?.focus();
+        // Фокус на пункте после ПКМ Chrome считает видимым, и сайт рисует ему синюю рамку
+        if (byKeyboard) root.querySelector<HTMLElement>('[data-menu]')?.focus();
+        else root.focus({ preventScroll: true });
     }
     // Узел из iframe принадлежит другому окну, и instanceof Element для него ложен
     const asElement = (value: unknown): Element | null =>
@@ -2119,7 +2135,8 @@ export function installWave(config: WaveConfig): void {
         event.preventDefault();
         let { clientX: x, clientY: y } = event;
         // С клавиатуры (Shift+F10) координат нет: меню встаёт под элементом
-        if (!x && !y) {
+        const byKeyboard = !x && !y;
+        if (byKeyboard) {
             const rect = node.getBoundingClientRect();
             x = rect.left;
             y = rect.bottom;
@@ -2130,7 +2147,7 @@ export function installWave(config: WaveConfig): void {
             x += box.left;
             y += box.top;
         }
-        openMenu(target, x, y);
+        openMenu(target, x, y, byKeyboard);
         void ensureExclusions();
         // Ссылку распознаём заранее, пока выбирают пункт
         if (!target.track && target.url) void resolveUrl(target.url).catch((error: unknown) => console.debug('Волна: ссылка не распознана', error));
