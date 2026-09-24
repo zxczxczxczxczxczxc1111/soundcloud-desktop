@@ -103,7 +103,8 @@ app.whenReady().then(async () => {
     manager.dispose();
     const { showHomepageConfirmDialog } = require('../tsc/settings/confirmPopup');
     for (const accept of [false, true]) {
-        const confirmed = showHomepageConfirmDialog(win, 'https://example.com/?q=<script>alert(1)</script>');
+        const texts = { title: 'Страница плагина', question: 'Открыть этот адрес в браузере?', cancel: 'Отмена', open: 'Открыть в браузере' };
+        const confirmed = showHomepageConfirmDialog(win, 'https://example.com/?q=<script>alert(1)</script>', texts);
         const view = win.contentView.children.at(-1);
         await new Promise(resolve => view.webContents.once('did-finish-load', resolve));
         assert.equal(await view.webContents.executeJavaScript("document.querySelector('.url').textContent.includes('<script>')"), true);
