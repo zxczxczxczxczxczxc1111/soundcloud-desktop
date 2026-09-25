@@ -39,6 +39,7 @@ function applyTexts(next) {
     label('#refresh-btn', isRefreshing ? texts.headerStop : texts.headerRefresh);
     label('.title-bar', texts.headerTitleBar);
     label('#history-btn', texts.headerHistory, true);
+    label('#queue-btn', texts.headerQueue, true);
     label('#minimize-btn', texts.headerMinimize, true);
     label('#close-btn', texts.headerClose, true);
     updateWindowControls();
@@ -182,6 +183,7 @@ document.querySelector('.navigation-controls')?.addEventListener('click', (e) =>
 document.getElementById('history-btn')?.addEventListener('click', () => {
     ipcRenderer.send('toggle-history');
 });
+document.getElementById('queue-btn')?.addEventListener('click', () => ipcRenderer.send('toggle-queue'));
 ipcRenderer.on('history-state', (_, open) => {
     document.getElementById('history-btn')?.setAttribute('aria-pressed', String(open === true));
 });

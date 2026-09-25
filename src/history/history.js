@@ -20,7 +20,7 @@
             h: 'ч',
             min: 'мин',
             sec: 'с',
-            counted: ['трек засчитан', 'трека засчитано', 'треков засчитано'],
+            counted: ['прослушивание', 'прослушивания', 'прослушиваний'],
             artists: ['артист', 'артиста', 'артистов'],
             fresh: ['новый артист', 'новых артиста', 'новых артистов'],
             artistsTitle: (p) => 'Артисты ' + TEXTS.ru.periodText(p),
@@ -29,7 +29,7 @@
             tracks: 'Треки',
             genres: 'Жанры',
             when: 'Когда ты слушаешь',
-            emptyTop: 'Пока пусто: засчитывается трек, прозвучавший 30 секунд',
+            emptyTop: 'Здесь появится музыка, которую ты слушаешь',
             nothing: 'Пока пусто',
             times: ['раз', 'раза', 'раз'],
             heatLabel: 'Минуты музыки по часам и дням недели',
@@ -52,8 +52,7 @@
             of: (a, b) => a + ' из ' + b,
             loading: 'Название загружается',
             unavailable: 'Трек недоступен',
-            bin: (h) => (h < 24 ? 'столбец это ' + h + ' ' + plural(h, ['час', 'часа', 'часов']) : h === 24 ? 'столбец это день' : 'столбец это ' + h / 24 + ' ' + plural(h / 24, ['день', 'дня', 'дней'])),
-            waveLabel: (p, h) => 'Музыка ' + TEXTS.ru.periodText(p) + ', ' + TEXTS.ru.bin(h),
+            waveLabel: (p) => 'Длительность прослушивания ' + TEXTS.ru.periodText(p),
             from: (d) => 'С ' + d,
             results: 'Результаты поиска',
             plays: ['прослушивание', 'прослушивания', 'прослушиваний'],
@@ -70,10 +69,9 @@
             drop: 'Убрать из вкуса',
             removed: 'Убрано из вкуса:',
             restore: 'Вернуть во вкус волны',
-            early: 'Ранние пропуски в волне',
+            early: 'Пропуски до 0:30',
             earlyTotal: (share) => share + '% за 30 дней',
             earlyNone: 'волна ещё не играла',
-            earlyNote: 'Доля треков волны, пропущенных за первые 30 секунд. Чем ниже, тем точнее волна',
             earlyDay: (day, share, early, total) => day + ': ' + share + '%, ' + early + ' из ' + total,
             earlyIdle: (day) => day + ': волна не играла',
             earlyLabel: 'Доля ранних пропусков в волне по дням за 30 дней',
@@ -91,7 +89,7 @@
             h: 'h',
             min: 'min',
             sec: 's',
-            counted: ['track counted', 'tracks counted'],
+            counted: ['play', 'plays'],
             artists: ['artist', 'artists'],
             fresh: ['new artist', 'new artists'],
             artistsTitle: (p) => 'Artists ' + TEXTS.en.periodText(p),
@@ -100,7 +98,7 @@
             tracks: 'Tracks',
             genres: 'Genres',
             when: 'When you listen',
-            emptyTop: 'Nothing yet: a track counts after 30 seconds of playback',
+            emptyTop: 'Music you listen to will appear here',
             nothing: 'Nothing yet',
             times: ['play', 'plays'],
             heatLabel: 'Minutes of music by hour and weekday',
@@ -123,8 +121,7 @@
             of: (a, b) => a + ' of ' + b,
             loading: 'Loading title',
             unavailable: 'Track unavailable',
-            bin: (h) => (h < 24 ? 'each bar is ' + h + ' ' + (h === 1 ? 'hour' : 'hours') : h === 24 ? 'each bar is a day' : 'each bar is ' + h / 24 + ' days'),
-            waveLabel: (p, h) => 'Music ' + TEXTS.en.periodText(p) + ', ' + TEXTS.en.bin(h),
+            waveLabel: (p) => 'Listening time ' + TEXTS.en.periodText(p),
             from: (d) => 'From ' + d,
             results: 'Search results',
             plays: ['play', 'plays'],
@@ -141,10 +138,9 @@
             drop: 'Remove from taste',
             removed: 'Removed from taste:',
             restore: 'Put back into the wave’s taste',
-            early: 'Early skips in the wave',
+            early: 'Skips before 0:30',
             earlyTotal: (share) => share + '% in 30 days',
             earlyNone: 'the wave hasn’t played yet',
-            earlyNote: 'Share of wave tracks skipped in the first 30 seconds. Lower means a more accurate wave',
             earlyDay: (day, share, early, total) => day + ': ' + share + '%, ' + early + ' of ' + total,
             earlyIdle: (day) => day + ': the wave didn’t play',
             earlyLabel: 'Share of early skips in the wave by day, last 30 days',
@@ -299,7 +295,9 @@
     // Волна периода: высота столбца это минуты звука, выбранный день оранжевый, под осью отражение
     function periodWave(wave) {
         const bins = wave.bins;
-        const max = Math.max(1, ...bins);
+        const peak = Math.max(1, ...bins);
+        const step = peak > 60 ? 60 : 10;
+        const max = Math.ceil(peak / step) * step;
         const binMs = wave.binHours * 3600000;
         const rects = bins.map((minutes, i) => {
             const at = wave.from + i * binMs;
@@ -311,9 +309,12 @@
                 (minutes ? '<rect class="' + cls + ' echo" x="' + i * 3 + '" y="93" width="2" height="' + (h * 0.3).toFixed(1) + '"/>' : '')
             );
         }).join('');
+        const dates = [...new Set([0, .25, .5, .75, 1].map((fraction) => dayStart(wave.from + Math.floor((bins.length - 1) * fraction) * binMs)))];
+        const grid = [2, 46, 90].map((y) => '<line x1="0" x2="' + bins.length * 3 + '" y1="' + y + '" y2="' + y + '" class="pwave-grid"/>').join('');
         return (
-            '<div class="pwave"><svg viewBox="0 0 ' + bins.length * 3 + ' 124" preserveAspectRatio="none" data-wave="period" role="img" aria-label="' + esc(T.waveLabel(state.period, wave.binHours)) + '">' + rects + '</svg>' +
-            '<div class="pwave-x"><span>' + esc(fmtShort.format(wave.from)) + '</span><span>' + esc(T.bin(wave.binHours)) + '</span><span>' + esc(T.todayLower) + '</span></div></div>'
+            '<div class="pwave"><div class="pwave-axis" aria-hidden="true"><span>' + esc(minutesLabel(max)) + '</span><span>' + esc(minutesLabel(max / 2)) + '</span><span>0</span></div>' +
+            '<svg viewBox="0 0 ' + bins.length * 3 + ' 124" preserveAspectRatio="none" data-wave="period" role="img" aria-label="' + esc(T.waveLabel(state.period)) + '">' + grid + rects + '</svg>' +
+            '<div class="pwave-x">' + dates.map((at) => '<button data-day="' + at + '" aria-label="' + esc(fmtLong.format(at)) + '" aria-pressed="' + (at === state.selected) + '">' + esc(fmtShort.format(at)) + '</button>').join('') + '</div></div>'
         );
     }
 
@@ -390,7 +391,7 @@
             '<div><div class="sec-h"><h2>' + esc(T.tasteTags) + '</h2></div>' + tasteList('tag', t.tags) + '</div></div>' +
             restoreLine +
             '<div class="sec"><div class="sec-h"><h2>' + esc(T.early) + '</h2><span class="sub num">' + esc(total ? T.earlyTotal(Math.round((early / total) * 100)) : T.earlyNone) + '</span></div>' +
-            '<p class="sub note">' + esc(T.earlyNote) + '</p>' + earlyChart(t.early) + '</div>'
+            earlyChart(t.early) + '</div>'
         );
     }
 
@@ -447,6 +448,8 @@
     function render(keepScroll) {
         const scroll = view.scrollTop;
         const active = document.activeElement;
+        const focusKey = active?.tagName === 'BUTTON' ? ['period', 'day', 'act', 'artist'].find((key) => active.dataset[key]) : null;
+        const focusValue = focusKey ? active.dataset[focusKey] : null;
         const focusSearch = active && active.id === 'q';
         const caret = focusSearch ? active.selectionStart : 0;
         let body;
@@ -461,6 +464,8 @@
             const q = document.getElementById('q');
             q.focus();
             q.setSelectionRange(caret, caret);
+        } else if (focusKey) {
+            [...view.querySelectorAll('button')].find((button) => button.dataset[focusKey] === focusValue)?.focus({ preventScroll: true });
         }
     }
 
@@ -507,15 +512,33 @@
         state.loaded = true;
     }
 
+    let playRequest = 0;
     async function play(path, key) {
+        const request = ++playRequest;
         try {
-            if (await api.invoke('history:play', path)) {
+            const result = await api.invoke('history:play', path);
+            if (request !== playRequest) return;
+            if (result === 'played') {
                 state.playing = key || '';
                 render(true);
+            } else if (result !== 'superseded') {
+                showPlayError();
             }
         } catch (error) {
             console.error('Трек не включён:', error);
+            if (request === playRequest) showPlayError();
         }
+    }
+    function showPlayError() {
+        let message = document.getElementById('play-error');
+        if (!message) {
+            message = document.createElement('p');
+            message.id = 'play-error';
+            message.className = 'empty';
+            message.setAttribute('role', 'alert');
+            view.prepend(message);
+        }
+        message.textContent = state.lang === 'en' ? 'Could not play this track. Check your connection and try again.' : 'Не удалось включить трек. Проверь соединение и попробуй ещё раз.';
     }
 
     // События
@@ -587,7 +610,8 @@
                 return;
             }
             render(true);
-            document.getElementById('journal')?.scrollIntoView({ block: 'start', behavior: 'smooth' });
+            const reduce = document.documentElement.classList.contains('reduce-motion') || window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+            document.getElementById('journal')?.scrollIntoView({ block: 'start', behavior: reduce ? 'instant' : 'smooth' });
         }
     });
     document.addEventListener('keydown', (event) => {
@@ -670,6 +694,7 @@
         try {
             const init = await api.invoke('history:init');
             setLanguage(init.language);
+            document.documentElement.classList.toggle('reduce-motion', init.reduceMotion === true);
             state.signedIn = init.signedIn === true;
             if (state.signedIn) await reload(true);
             else state.loaded = true;

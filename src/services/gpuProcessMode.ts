@@ -1,17 +1,18 @@
-import { existsSync } from 'fs';
-import { win32 } from 'path';
+export type GpuCompatibilityMode = 'auto' | 'on' | 'off';
+export type GpuDetection = 'nvidia' | 'other' | 'unknown' | 'unsupported';
+export interface GpuRuntimeState {
+    mode: GpuCompatibilityMode;
+    detection: GpuDetection;
+    active: boolean;
+    interrupted: boolean;
+}
 
-// Драйвер NVIDIA с «Background Application Max Frame Rate» считает отдельный GPU-процесс Chromium
-// фоновым и показывает его кадры не чаще лимита (по умолчанию 20 в секунду) даже у окна в фокусе.
-// Исключения есть только для приложений с профилем в драйвере (Chrome, Discord).
-// GPU внутри главного процесса показывает кадры от имени окна и в фокусе под ограничение не попадает.
-// Флаг --separate-gpu-process возвращает обычный режим.
-export function shouldRunGpuInProcess(
-    platform: NodeJS.Platform,
-    env: NodeJS.ProcessEnv,
-    argv: readonly string[],
-    exists: (file: string) => boolean = existsSync,
-): boolean {
-    if (platform !== 'win32' || argv.includes('--separate-gpu-process')) return false;
-    return exists(win32.join(env.SystemRoot || 'C:\\Windows', 'System32', 'nvapi64.dll'));
+export function isGpuCompatibilityMode(value: unknown): value is GpuCompatibilityMode {
+    return value === 'auto' || value === 'on' || value === 'off';
+}
+
+// Ручной выбор сохраняется; после аварийного выхода один запуск проходит с отдельным GPU.
+export function shouldRunGpuInProcess(platform: NodeJS.Platform, mode: GpuCompatibilityMode, detection: GpuDetection, argv: readonly string[], interrupted = false): boolean {
+    return platform === 'win32' && !interrupted && !argv.includes('--separate-gpu-process') &&
+        (argv.includes('--in-process-gpu') || mode === 'on' || (mode === 'auto' && detection === 'nvidia'));
 }

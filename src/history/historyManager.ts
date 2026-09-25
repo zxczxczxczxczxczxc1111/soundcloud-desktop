@@ -1,8 +1,7 @@
 import { WebContentsView, BrowserWindow, ipcMain, type IpcMainEvent, type IpcMainInvokeEvent, type WebContents } from 'electron';
 import { join } from 'path';
 import { trustLocalFile } from '../trustedViews';
-import type { HistoryIndex } from '../services/historyIndex';
-import type { TasteService } from '../services/tasteModel';
+import type { LibraryService } from '../services/libraryService';
 import { trackPathOf } from '../services/waveSignals';
 
 const HEADER = 32;
@@ -17,6 +16,7 @@ export interface HistoryHost {
     /** Пользователь, если страница сайта его не назвала */
     fallbackUser(): number;
     language(): 'ru' | 'en';
+    reduceMotion?(): boolean;
     /** Перед открытием: закрыть то, что история перекроет */
     beforeOpen(): void;
     onState(open: boolean): void;
@@ -66,7 +66,7 @@ export class HistoryManager {
             .catch((error: unknown) => console.warn('История: страница артиста не открыта', error));
     };
 
-    constructor(private parentWindow: BrowserWindow, private index: HistoryIndex, private taste: TasteService, private host: HistoryHost) {
+    constructor(private parentWindow: BrowserWindow, private index: LibraryService, private host: HistoryHost) {
         this.parentWindow.on('resize', this.resize);
         this.parentWindow.once('closed', () => this.dispose());
         ipcMain.handle('history:init', async (event) => {
@@ -74,27 +74,27 @@ export class HistoryManager {
             this.userId = await this.user();
             if (this.userId) {
                 try {
-                    this.index.sync(this.userId);
+                    await this.index.request('sync', this.userId);
                 } catch (error) {
                     console.warn('История: журнал не перенесён в индекс', error);
                 }
                 void this.fill(this.userId);
             }
-            return { language: this.host.language(), signedIn: this.userId > 0 };
+            return { language: this.host.language(), signedIn: this.userId > 0, reduceMotion: this.host.reduceMotion?.() === true };
         });
         ipcMain.handle('history:overview', (event, from: unknown, to: unknown) => {
             this.guard(event);
             if ((from !== null && !isBound(from)) || !isBound(to)) return null;
-            return this.index.overview(this.userId, from, to);
+            return this.index.request('overview', this.userId, from, to);
         });
-        ipcMain.handle('history:day', (event, from: unknown, to: unknown) => {
+        ipcMain.handle('history:day', async (event, from: unknown, to: unknown) => {
             this.guard(event);
             if (!isBound(from) || !isBound(to) || to <= from) return null;
-            return { rows: this.index.day(this.userId, from, to), ...this.index.neighbors(this.userId, from, to) };
+            return { rows: await this.index.request('day', this.userId, from, to), ...await this.index.request('neighbors', this.userId, from, to) };
         });
         ipcMain.handle('history:search', (event, query: unknown) => {
             this.guard(event);
-            return this.index.search(this.userId, query);
+            return this.index.request('search', this.userId, query);
         });
         ipcMain.handle('history:play', async (event, path: unknown) => {
             this.guard(event);
@@ -103,17 +103,17 @@ export class HistoryManager {
             if (!track || !site) return false;
             // userGesture: трек включает пользователь, политика автовоспроизведения его не держит
             const done = await (site.executeJavaScript('window.__scOpenTrack ? window.__scOpenTrack(' + JSON.stringify(track) + ', false) : false', true) as Promise<unknown>);
-            return done === true;
+            return done;
         });
         // Вкус глазами волны: любимые артисты и теги модели, доля ранних пропусков
         ipcMain.handle('history:taste', (event) => {
             this.guard(event);
-            return this.taste.view(this.userId);
+            return this.index.request('view', this.userId);
         });
-        ipcMain.handle('history:taste-remove', (event, kind: unknown, key: unknown, removed: unknown) => {
+        ipcMain.handle('history:taste-remove', async (event, kind: unknown, key: unknown, removed: unknown) => {
             this.guard(event);
-            if (!this.taste.setRemoved(this.userId, kind, key, removed)) return null;
-            return this.taste.view(this.userId);
+            if (!await this.index.request('setRemoved', this.userId, kind, key, removed)) return null;
+            return this.index.request('view', this.userId);
         });
         ipcMain.on('history:ready', this.ready);
         ipcMain.on('history:close', this.close);
@@ -147,7 +147,7 @@ export class HistoryManager {
         this.filling = true;
         try {
             for (let round = 0; round < 10; round++) {
-                const ids = this.index.missing(userId);
+                const ids = await this.index.request('missing', userId);
                 const site = this.site();
                 if (!ids.length || !site) return;
                 const script = 'window.__scResolveTracks ? window.__scResolveTracks(' + JSON.stringify(ids) + ') : null';
@@ -155,7 +155,7 @@ export class HistoryManager {
                 const wanted = new Set(ids);
                 const asked = Array.isArray(result?.asked) ? result.asked.filter((id): id is number => isId(id) && wanted.has(id)) : [];
                 if (!asked.length) return;
-                if (this.index.resolve(userId, asked, result?.tracks)) this.view?.webContents.send('history:changed');
+                if (await this.index.request('resolve', userId, asked, result?.tracks)) this.view?.webContents.send('history:changed');
                 // Часть пачек сайт не отдал: остаток спросим при следующем открытии
                 if (asked.length < ids.length) return;
             }
@@ -244,6 +244,6 @@ export class HistoryManager {
         ipcMain.removeListener(SEND[0], this.ready);
         ipcMain.removeListener(SEND[1], this.close);
         ipcMain.removeListener(SEND[2], this.artist);
-        this.index.close();
+        void this.index.close().catch((error: unknown) => console.warn('Библиотека не закрыта', error));
     }
 }

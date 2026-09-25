@@ -319,10 +319,6 @@ export class PresenceService {
         this.revision++;
         void this.flush();
     }
-    public async reconnect(): Promise<void> {
-        this.lastPayload = null;
-        await this.flush();
-    }
     public isConnected(): boolean {
         return this.rpc?.isConnected ?? false;
     }

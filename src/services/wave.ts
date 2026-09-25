@@ -2,6 +2,9 @@
 // Функции ниже уходят на страницу текстом, поэтому они не ссылаются на импорты и константы модуля,
 // только друг на друга по имени: waveScript кладёт их объявления в одну обёртку со скриптом.
 import type { PlaySignal, TrackMeta } from '../types';
+import type { PlaybackSnapshot, LocalMix, LibraryCatalog } from './playbackStore';
+import { installPlaybackPage } from './playbackPage';
+import { installPlaybackRecovery } from './playbackRecovery';
 
 export interface WaveTrack {
     id: number;
@@ -20,6 +23,7 @@ export interface WaveTrack {
     full_duration?: number;
 }
 export type WaveMode = 'similar' | 'fresh';
+export type OpenTrackResult = 'played' | 'not-ready' | 'unavailable' | 'failed' | 'superseded';
 export type WaveReason =
     | { kind: 'similar'; seed: string }
     | { kind: 'fresh'; seed: string }
@@ -28,6 +32,7 @@ export type WaveReason =
     | { kind: 'genrePopular'; genre: string }
     | { kind: 'genreSimilar'; genre: string; seed: string }
     | { kind: 'seedTrack' }
+    | { kind: 'restored' }
     | { kind: 'artistTrack'; artist: string }
     | { kind: 'mood'; seed: string; genre: string }
     | { kind: 'tasteArtist'; artist: string }
@@ -60,12 +65,12 @@ export type WaveTexts = Record<
     | 'idleSimilar' | 'idleSimilarAny' | 'idleFresh' | 'idleGenre' | 'whySimilar' | 'whyFresh' | 'whyNewArtist' | 'whyGenreFresh'
     | 'whyGenrePopular' | 'whyGenreSimilar' | 'loading' | 'emptyFresh' | 'emptyFreshGenre' | 'emptyGenre' | 'emptySimilar'
     | 'dropGenre' | 'toSimilar' | 'play' | 'pause' | 'clearGenre' | 'upFirst' | 'next' | 'like' | 'error' | 'retry' | 'unavailable'
-    | 'whySeedTrack' | 'whyArtistTrack' | 'whyMood' | 'seedTrack' | 'seedArtist' | 'seedPlaylist' | 'clearSeed' | 'emptySeed'
+    | 'whySeedTrack' | 'whyRestored' | 'whyArtistTrack' | 'whyMood' | 'seedTrack' | 'seedArtist' | 'seedPlaylist' | 'clearSeed' | 'emptySeed'
     | 'menuWaveTrack' | 'menuWaveArtist' | 'menuWavePlaylist' | 'menuDislike' | 'menuUndislike' | 'menuHideArtist' | 'menuShowArtist'
     | 'toastDisliked' | 'toastUndisliked' | 'toastHidden' | 'toastShown' | 'toastFailed' | 'toastNotSaved' | 'toastEmpty' | 'shake' | 'history'
     | 'whyTasteArtist' | 'whyTasteTag' | 'more' | 'later' | 'menuUnmore' | 'menuUnlater' | 'toastMore' | 'toastUnmore' | 'toastLater'
     | 'toastLaterArtist' | 'toastUnlater'
-    | 'lang' | 'shelf' | 'shelfDaily' | 'shelfForgotten' | 'shelfEmpty' | 'tracksCount' | 'groupAnd' | 'whyDaily' | 'whyForgotten' | 'whyGroup'
+    | 'lang' | 'shelf' | 'shelfDaily' | 'shelfForgotten' | 'shelfEmpty' | 'shelfFailed' | 'tracksCount' | 'groupAnd' | 'whyDaily' | 'whyForgotten' | 'whyGroup'
     | 'seedDaily' | 'seedForgotten' | 'seedGroup' | 'seedTracks' | 'menuPick' | 'menuUnpick' | 'toastPicked' | 'toastUnpicked' | 'toastPickFull'
     | 'pickStart' | 'pickClear' | 'mixPlay' | 'mixClose' | 'mixLoading' | 'mixFailed' | 'mixEmpty',
     string
@@ -84,8 +89,9 @@ export const WAVE_TEXTS: Record<'ru' | 'en', WaveTexts> = {
         emptyGenre: 'Не нашлось треков в жанре {genre}', emptySimilar: 'Не нашлось похожих треков: волне нужны лайки или история прослушивания',
         dropGenre: 'Любой жанр', toSimilar: 'Включить Похожее', play: 'Включить волну', pause: 'Пауза', clearGenre: 'Убрать жанр',
         upFirst: 'Первыми сыграют', next: 'Далее', like: 'Нравится', error: 'Не удалось подобрать треки, SoundCloud не ответил', retry: 'Повторить',
-        unavailable: 'Волна не работает с этой версией SoundCloud',
+        unavailable: 'Плеер SoundCloud ещё не готов',
         whySeedTrack: 'С него началась волна', whyArtistTrack: 'Из треков {artist}', whyMood: 'В духе {seed}: {genre}',
+        whyRestored: 'Из сохранённой очереди',
         seedTrack: 'Волна по треку {seed}', seedArtist: 'Волна по артисту {seed}', seedPlaylist: 'Волна по плейлисту {seed}',
         clearSeed: 'Вернуть обычную волну', emptySeed: 'Не нашлось похожих треков',
         menuWaveTrack: 'Волна по треку', menuWaveArtist: 'Волна по артисту', menuWavePlaylist: 'Волна по плейлисту',
@@ -99,6 +105,7 @@ export const WAVE_TEXTS: Record<'ru' | 'en', WaveTexts> = {
         toastMore: 'Волна подберёт больше такого', toastUnmore: 'Отметка «Больше такого» снята',
         toastLater: 'Трек не попадёт в волну неделю', toastLaterArtist: 'Артист не попадёт в волну неделю', toastUnlater: 'Снова может попасть в волну',
         lang: 'ru', shelf: 'Подборки', shelfDaily: 'Находки дня', shelfForgotten: 'Давно не слушал', shelfEmpty: 'Подборкам нужны твои лайки',
+        shelfFailed: 'Подборки не загрузились',
         tracksCount: 'трек|трека|треков', groupAnd: '{a} и {b}',
         whyDaily: 'Находка дня: новый для тебя артист', whyForgotten: 'Из твоих лайков, давно не звучал', whyGroup: 'Твой вкус: {name}',
         seedDaily: 'Находки дня: новые для тебя артисты, до полуночи', seedForgotten: 'Лайки, которые давно не звучали',
@@ -120,8 +127,9 @@ export const WAVE_TEXTS: Record<'ru' | 'en', WaveTexts> = {
         emptyGenre: 'No tracks in {genre}', emptySimilar: 'No similar tracks: the wave needs your likes or listening history',
         dropGenre: 'Any genre', toSimilar: 'Switch to Similar', play: 'Play wave', pause: 'Pause', clearGenre: 'Clear genre',
         upFirst: 'Up first', next: 'Next up', like: 'Like', error: 'Couldn’t pick tracks, SoundCloud didn’t respond', retry: 'Try again',
-        unavailable: 'My Wave doesn’t work with this SoundCloud version',
+        unavailable: 'The SoundCloud player is not ready yet',
         whySeedTrack: 'Your wave starts here', whyArtistTrack: 'By {artist}', whyMood: 'In the vibe of {seed}: {genre}',
+        whyRestored: 'From your saved queue',
         seedTrack: 'Wave from {seed}', seedArtist: 'Wave from artist {seed}', seedPlaylist: 'Wave from playlist {seed}',
         clearSeed: 'Back to My Wave', emptySeed: 'No similar tracks found',
         menuWaveTrack: 'Wave from track', menuWaveArtist: 'Wave from artist', menuWavePlaylist: 'Wave from playlist',
@@ -136,6 +144,7 @@ export const WAVE_TEXTS: Record<'ru' | 'en', WaveTexts> = {
         toastLater: 'This track won’t play in My Wave for a week', toastLaterArtist: 'This artist won’t play in My Wave for a week',
         toastUnlater: 'Can play in My Wave again',
         lang: 'en', shelf: 'Mixes', shelfDaily: 'Daily finds', shelfForgotten: 'Not played in a while', shelfEmpty: 'Mixes need your likes',
+        shelfFailed: 'Could not load mixes',
         tracksCount: 'track|tracks|tracks', groupAnd: '{a} and {b}',
         whyDaily: 'Daily find: an artist new to you', whyForgotten: 'From your likes, not played in a while', whyGroup: 'Your taste: {name}',
         seedDaily: 'Daily finds: artists new to you, until midnight', seedForgotten: 'Likes you haven’t played in a while',
@@ -430,6 +439,7 @@ export function reasonText(reason: WaveReason, texts: WaveTexts): string {
         case 'genrePopular': return fillText(texts.whyGenrePopular, { genre: reason.genre });
         case 'genreSimilar': return fillText(texts.whyGenreSimilar, { genre: reason.genre, seed: reason.seed });
         case 'seedTrack': return texts.whySeedTrack;
+        case 'restored': return texts.whyRestored;
         case 'artistTrack': return fillText(texts.whyArtistTrack, { artist: reason.artist });
         case 'mood': return fillText(texts.whyMood, { seed: reason.seed, genre: reason.genre });
         case 'tasteArtist': return fillText(texts.whyTasteArtist, { artist: reason.artist });
@@ -661,9 +671,9 @@ export function siteSource(type: unknown): string {
     return 'site' + (typeof type === 'string' && /^[a-z][a-z_-]{0,23}$/i.test(type) ? ':' + type.toLowerCase() : '');
 }
 
-interface SiteSound {
+export interface SiteSound {
     id: number;
-    attributes?: Record<string, unknown>;
+    attributes?: WaveTrack & { likes_count?: number; playback_count?: number };
     isPlayable?(): boolean;
     isSnippetized?(): boolean;
     isBlocked?(): boolean;
@@ -671,7 +681,7 @@ interface SiteSound {
     getMediaDuration?(): number;
     currentTime?(): number;
 }
-interface SiteQueueItem {
+export interface SiteQueueItem {
     sound?: SiteSound;
     explicit?: boolean;
     /** Откуда сайт поставил трек в очередь: single, playlist, stream, history и другие */
@@ -687,12 +697,12 @@ interface SiteQueue {
     add(items: SiteQueueItem[]): void;
     reset(items: SiteQueueItem[]): void;
 }
-interface SitePlayer {
+export interface SitePlayer {
     getQueue(): SiteQueue;
     getQueueState(): { currentIndex: number };
     getCurrentQueueItem(): SiteQueueItem | null | undefined;
     getCurrentSound(): SiteSound | null | undefined;
-    replaceQueue(items: SiteQueueItem[], index: number): void;
+    replaceQueue(items: SiteQueueItem[], index: number, options?: { pause?: boolean }): void;
     playCurrent(options?: object): void;
     pauseCurrent(options?: object): void;
     isPlaying(): boolean;
@@ -714,19 +724,31 @@ interface WaveExclusionsApi {
     load(userId: number): Promise<unknown>;
     set(userId: number, kind: 'track' | 'artist' | 'later-track' | 'later-artist' | 'more', entry: object, excluded: boolean): Promise<unknown>;
 }
-interface WaveWindow extends Window {
+export interface WaveWindow extends Window {
     __disposeWave?: () => void;
     __scWaveExclusionsChanged?: () => void;
     __scWaveTakeSignals?: () => { userId: number; signals: PlaySignal[] };
-    __scOpenTrack?: (path: string, navigate?: boolean) => Promise<boolean>;
+    __scOpenTrack?: (path: string, navigate?: boolean) => Promise<OpenTrackResult>;
     __scNavigate?: (path: string) => boolean;
     __scResolveTracks?: (ids: unknown) => Promise<{ asked: number[]; tracks: object[] } | null>;
     __scWhoAmI?: () => Promise<number>;
+    __scSaveSession?: () => Promise<void>;
+    __scResume?: () => void;
+    __scQueue?: () => void;
     // Кэш средних цветов обложек из плавности сайта (pageMotion), ключ это путь трека
     __scmCoverColor?: (key: string) => string | undefined;
     __scmLearnCover?: (key: string, url: string) => void;
     __scSiteTranslation?: { language?: string };
     soundcloudAPI?: {
+        library?: {
+            loadSession(user: number): Promise<PlaybackSnapshot | null>;
+            saveSession(user: number, snapshot: PlaybackSnapshot): Promise<boolean>;
+            loadCatalog(user: number): Promise<LibraryCatalog | null>;
+            saveCatalog(user: number, tracks: WaveTrack[]): Promise<boolean>;
+            listMixes(user: number): Promise<LocalMix[]>;
+            saveMix(user: number, title: string, tracks: WaveTrack[]): Promise<LocalMix>;
+            removeMix(user: number, id: string): Promise<boolean>;
+        };
         waveJournal?: WaveJournalApi;
         waveExclusions?: WaveExclusionsApi;
         waveTaste?: { load(userId: number): Promise<unknown> };
@@ -741,7 +763,7 @@ interface WaveConfig {
     texts: Record<'ru' | 'en', WaveTexts>;
 }
 
-export function installWave(config: WaveConfig): void {
+export function installWave(config: WaveConfig, createPlayback: typeof installPlaybackPage, createRecovery: typeof installPlaybackRecovery): void {
     const host = window as unknown as WaveWindow & Record<string, unknown>;
     host.__disposeWave?.();
     const T: WaveTexts = config.texts[host.__scSiteTranslation?.language === 'ru' ? 'ru' : 'en'];
@@ -759,6 +781,7 @@ export function installWave(config: WaveConfig): void {
         likedTracks: WaveTrack[];
         knownArtists: Set<number>;
         loadedAt: number;
+        likesCursor: Record<string, string | number> | null;
     }
     interface Cursor { query: Record<string, string | number> | null; done: boolean }
 
@@ -788,6 +811,7 @@ export function installWave(config: WaveConfig): void {
 
     let profile: Profile | null = null;
     let profilePromise: Promise<Profile> | null = null;
+    let profileRetryAt = 0;
     // Всё, что относится к текущим режиму и жанру; смена режима начинает новое поколение
     let generation = 0;
     let pool: WaveCandidate[] = [];
@@ -883,6 +907,82 @@ export function installWave(config: WaveConfig): void {
     const durationOf = (sound: SiteSound | null | undefined): number => (typeof sound?.getMediaDuration === 'function' ? sound.getMediaDuration() || 0 : 0);
     const positionOf = (sound: SiteSound | null | undefined): number => (typeof sound?.currentTime === 'function' ? sound.currentTime() || 0 : 0);
 
+    function createQueueItem(track: WaveTrack): SiteQueueItem | null {
+        const Item = player?.getQueue().model;
+        if (!Item || !SoundModel) return null;
+        const sound = new SoundModel(track, { parse: true });
+        if ((sound.isPlayable && !sound.isPlayable()) || sound.isBlocked?.()) return null;
+        const index = itemIndex++;
+        const item = new Item({}, { sound, originalModel: sound, queryPosition: index, sourceInfo: { type: 'history' }, index });
+        item.release?.(); return item;
+    }
+    function snapshot(): PlaybackSnapshot | null {
+        const p = player; if (!p) return null;
+        const { items, index } = queueView();
+        if (index < 0 || !items[index]?.sound || items.length > 5000) return null;
+        const saved = items.flatMap((item) => item.sound ? [{ track: { ...item.sound.attributes, id: item.sound.id }, explicit: item.explicit === true, wave: ours.has(item), reason: known.get(item.sound.id)?.reason }] : []);
+        if (saved.length !== items.length) return null;
+        return { version: 1, at: Date.now(), items: saved, index, position: positionOf(p.getCurrentSound()), paused: !p.isPlaying(),
+            active, mode, genre, seed, fallback: fallbackBefore ?? p.getState('fallbackEnabled') === true };
+    }
+    function restoreSnapshot(saved: PlaybackSnapshot, tracks: WaveTrack[]): boolean {
+        const p = player; if (!p || disposed) return false;
+        const byId = new Map(tracks.map((track) => [track.id, track]));
+        const items: SiteQueueItem[] = [];
+        let selected = -1;
+        for (let i = 0; i < saved.items.length; i++) {
+            const stored = saved.items[i]; const track = byId.get(stored.track.id);
+            const item = track ? createQueueItem(track) : null;
+            if (!item) continue;
+            if (selected < 0 && i >= saved.index) selected = items.length;
+            item.explicit = stored.explicit;
+            if (stored.wave && track) {
+                ours.add(item);
+                known.set(track.id, { track, reason: stored.reason ?? { kind: 'restored' } });
+            }
+            items.push(item);
+        }
+        if (selected < 0) return false;
+        openRequest++; seedRequest++; resetGeneration();
+        active = saved.active; mode = saved.mode; genre = saved.genre; seed = saved.seed;
+        fallbackBefore = active ? saved.fallback : null;
+        p.toggleState('fallbackEnabled', active ? false : saved.fallback);
+        startedAt = Date.now(); jumped = true;
+        // SoundCloud по умолчанию запускает заменённую очередь через setCurrentItem. Пауза должна быть явной до её замены.
+        p.replaceQueue(items, selected, { pause: true });
+        const sound = items[selected].sound;
+        if (sound?.id === saved.items[saved.index].track.id && saved.position > 0) sound.seek(saved.position);
+        if (saved.paused) p.pauseCurrent({ userInitiated: true });
+        else p.playCurrent({ userInitiated: true });
+        state = active ? 'playing' : 'idle';
+        render(); return true;
+    }
+    const queueControls = createPlayback({
+        player: () => player, user: ensureUser, library: host.soundcloudAPI?.library, language: T.lang,
+        snapshot, restore: restoreSnapshot, create: createQueueItem,
+        resolve: async (ids) => {
+            const tracks: WaveTrack[] = [];
+            for (let i = 0; i < ids.length && !disposed; i += 100) {
+                const parts = [ids.slice(i, i + 50), ids.slice(i + 50, i + 100)].filter((part) => part.length);
+                const loaded = await Promise.all(parts.map((part) => call('trackBatch', {}, { ids: part.join(',') })));
+                for (const body of loaded) tracks.push(...tracksOf(body));
+            }
+            return tracks;
+        },
+        changed: () => { openRequest++; tick(); render(); },
+    });
+    host.__scQueue = () => queueControls.toggle();
+    host.__scSaveSession = () => queueControls.save();
+    const recovery = createRecovery({ player: () => player, language: T.lang, checkpoint: () => queueControls.save(), refresh: () => {
+        profileRetryAt = 0;
+        shelfFailedAt = 0;
+        if (isVisible()) ensureShelf();
+        if (profile) void expandLibrary(profile).catch((error: unknown) => console.warn('Библиотека не обновлена', error));
+        void queueControls.ready().catch((error: unknown) => console.warn('Сессия не восстановлена', error));
+        if (active) void refill();
+    } });
+    host.__scResume = () => recovery.resume();
+
     function findRequire(): WebpackRequire[] {
         const found: WebpackRequire[] = [];
         const probe = '__scWave' + Date.now() + Math.random().toString(36).slice(2);
@@ -953,42 +1053,94 @@ export function installWave(config: WaveConfig): void {
         const liked = new Set<number>();
         let likedTracks: WaveTrack[] = [];
         let journal: number[] = [];
+        let likesCursor: Record<string, string | number> | null = null;
+        const failures: unknown[] = [];
         await Promise.all([
             call('playHistoryTracks', {}, { limit: 200 }).then((body) => {
                 for (const entry of collection(body)) {
                     const track = asTrack((entry as { track?: unknown }).track);
                     if (track) history.push(track);
                 }
-            }).catch((error: unknown) => console.warn('Волна: история не загружена', error)),
+            }).catch((error: unknown) => { failures.push(error); console.warn('Волна: история не загружена', error); }),
             (async () => {
-                let query: Record<string, string | number> | null = { limit: 200 };
-                for (let page = 0; query && page < 25; page++) {
-                    const body = await call('soundLikesIds', {}, query);
-                    for (const id of collection(body)) if (typeof id === 'number') liked.add(id);
-                    query = nextQuery(body);
-                }
+                const body = await call('soundLikesIds', {}, { limit: 200 });
+                for (const id of collection(body)) if (typeof id === 'number') liked.add(id);
+                likesCursor = nextQuery(body);
                 const first = [...liked].slice(0, 50);
                 if (first.length) likedTracks = collection(await call('trackBatch', {}, { ids: first.join(',') })).map(asTrack).filter((track): track is WaveTrack => !!track);
-            })().catch((error: unknown) => console.warn('Волна: лайки не загружены', error)),
+            })().catch((error: unknown) => { failures.push(error); console.warn('Волна: лайки не загружены', error); }),
             (async () => {
                 const loaded = userId ? await host.soundcloudAPI?.waveJournal?.load(userId) : [];
                 if (Array.isArray(loaded)) journal = loaded.filter((id): id is number => typeof id === 'number');
             })().catch((error: unknown) => console.warn('Волна: журнал не загружен', error)),
         ]);
+        if (failures.length) throw new Error('Профиль SoundCloud загружен не полностью', { cause: failures[0] });
         const recent = new Set(history.map((track) => track.id));
         const heard = new Set([...journal, ...recent]);
         const knownArtists = new Set([...history, ...likedTracks].map(trackArtist));
-        return { userId, history, recent, heard, liked, likedTracks, knownArtists, loadedAt: Date.now() };
+        return { userId, history, recent, heard, liked, likedTracks, knownArtists, loadedAt: Date.now(), likesCursor };
     }
     function ensureProfile(): Promise<Profile> {
-        if (profile && Date.now() - profile.loadedAt < 30 * 60000) return Promise.resolve(profile);
+        if (profile && (Date.now() - profile.loadedAt < 30 * 60000 || Date.now() < profileRetryAt)) return Promise.resolve(profile);
         profilePromise ??= loadProfile().then((loaded) => {
             // Прослушанное в этой сессии не теряется при обновлении профиля
             if (profile) for (const id of profile.heard) loaded.heard.add(id);
             profile = loaded;
+            profileRetryAt = 0;
+            void expandLibrary(loaded).catch((error: unknown) => console.warn('Волна: библиотека догрузится позже', error));
             return loaded;
+        }).catch((error: unknown) => {
+            if (!profile) throw error;
+            profileRetryAt = Date.now() + 15000;
+            console.warn('Волна: используется последний загруженный профиль', error);
+            return profile;
         }).finally(() => { profilePromise = null; });
         return profilePromise;
+    }
+    let expanding: Profile | null = null;
+    let expansion: Promise<void> | null = null;
+    function expandLibrary(current: Profile): Promise<void> {
+        if (expanding === current && expansion) return expansion;
+        expansion = expandLibraryData(current);
+        return expansion;
+    }
+    async function expandLibraryData(current: Profile): Promise<void> {
+        expanding = current;
+        try {
+            const cached = await host.soundcloudAPI?.library?.loadCatalog(current.userId);
+            if (disposed || profile !== current) return;
+            const byId = new Map(current.likedTracks.map((track) => [track.id, track]));
+            if (cached) for (const track of cached.tracks) byId.set(track.id, track);
+            const publish = (): void => {
+                current.likedTracks = [...byId.values()].filter((track) => current.liked.has(track.id));
+                current.knownArtists = new Set([...current.history, ...current.likedTracks].map(trackArtist));
+            };
+            const visited = new Set<string>();
+            do {
+                const missing = [...current.liked].filter((id) => !byId.has(id));
+                for (let i = 0; i < missing.length && !disposed && profile === current; i += 100) {
+                    await Promise.all([missing.slice(i, i + 50), missing.slice(i + 50, i + 100)].filter((part) => part.length).map(async (part) => {
+                        for (const track of tracksOf(await call('trackBatch', {}, { ids: part.join(',') }))) byId.set(track.id, track);
+                    }));
+                    if (disposed || profile !== current) return;
+                    publish();
+                    await wait(100);
+                }
+                if (!current.likesCursor || disposed || profile !== current) break;
+                const key = JSON.stringify(current.likesCursor);
+                if (visited.has(key) || current.liked.size >= 100000) throw new Error('Зацикленная или слишком большая библиотека SoundCloud');
+                visited.add(key);
+                const body = await call('soundLikesIds', {}, current.likesCursor);
+                if (disposed || profile !== current) return;
+                for (const id of collection(body)) if (typeof id === 'number') current.liked.add(id);
+                current.likesCursor = nextQuery(body);
+            } while (!disposed && profile === current);
+            if (disposed || profile !== current) return;
+            publish();
+            if (host.soundcloudAPI?.library && !await host.soundcloudAPI.library.saveCatalog(current.userId, current.likedTracks)) throw new Error('Каталог не сохранён');
+        } finally {
+            if (expanding === current) expanding = null;
+        }
     }
 
     function fillExcluded(map: Map<number, Excluded>, input: unknown): void {
@@ -1079,9 +1231,9 @@ export function installWave(config: WaveConfig): void {
         const mixed: WaveTrack[] = [...likedSeeds];
         if (seed) mixed.push(...seed.tracks, ...derivedSeeds);
         else {
-            const history = p.history.slice(0, 30);
+            const history = shuffleInPlace(p.history.slice());
             // «Больше такого» идёт вперёд лайков сайта
-            const likes = [...moreSeeds(), ...p.likedTracks].slice(0, 50);
+            const likes = [...moreSeeds(), ...shuffleInPlace(p.likedTracks.slice())];
             for (let i = 0; i < Math.max(history.length, likes.length); i++) {
                 if (history[i]) mixed.push(history[i]);
                 if (likes[i]) mixed.push(likes[i]);
@@ -1112,11 +1264,13 @@ export function installWave(config: WaveConfig): void {
         return true;
     }
     async function genrePage(source: 'recent' | 'search', tag: string): Promise<WaveTrack[]> {
+        const own = generation;
         const cursor = cursors.get(source + ':' + tag) ?? { query: null, done: false };
         if (cursor.done) return [];
         const body = source === 'recent'
             ? await call('recentTracks', { tag }, cursor.query ?? { limit: 50 })
             : await call('searchCategory', { category: 'tracks' }, cursor.query ?? { q: '*', 'filter.genre_or_tag': tag, limit: 50 });
+        if (disposed || own !== generation) return [];
         const next = nextQuery(body);
         cursors.set(source + ':' + tag, { query: next, done: !next });
         return collection(body).map(asTrack).filter((track): track is WaveTrack => !!track);
@@ -1183,11 +1337,13 @@ export function installWave(config: WaveConfig): void {
         let failures = 0;
         const tasks: Promise<void>[] = picked.map((from) =>
             call('relatedSounds', { track_id: from.id }, { limit: 50 }).then((body) => {
+                if (disposed || own !== generation) return;
                 for (const value of collection(body)) {
                     const track = asTrack(value);
                     if (track) take(track, from);
                 }
             }).catch((error: unknown) => {
+                if (disposed || own !== generation) return;
                 failures++;
                 // Зерно без ответа можно взять в следующий раз
                 usedSeeds.delete(from.id);
@@ -1197,6 +1353,7 @@ export function installWave(config: WaveConfig): void {
         for (const tag of tags)
             for (const source of ['recent', 'search'] as const)
                 tasks.push(genrePage(source, tag).then((tracks) => {
+                    if (disposed || own !== generation) return;
                     for (const track of tracks) accept(found, { track, reason: { kind: source === 'recent' ? 'genreFresh' : 'genrePopular', genre: tag } }, filter);
                 }).catch((error: unknown) => { failures++; console.warn('Волна: жанр не загружен', error); }));
         await Promise.all(tasks);
@@ -1207,8 +1364,11 @@ export function installWave(config: WaveConfig): void {
         if (root) {
             usedStations.add(root.id);
             try {
-                for (const track of await stationTracks(root)) take(track, root);
+                const tracks = await stationTracks(root);
+                if (disposed || own !== generation) return 0;
+                for (const track of tracks) take(track, root);
             } catch (error) {
+                if (own === generation) usedStations.delete(root.id);
                 console.warn('Волна: станция трека не загружена', error);
             }
             if (own !== generation) return 0;
@@ -1222,10 +1382,12 @@ export function installWave(config: WaveConfig): void {
                 artistFallbackDone = true;
                 try {
                     const artist = trackArtist(first);
-                    const own = artist ? await artistOwnTracks(artist) : [];
-                    artistCount = own.length;
-                    for (const track of own) accept(found, { track, reason: { kind: 'artistTrack', artist: artistName(first) || seed.title } }, filter);
+                    const tracks = artist ? await artistOwnTracks(artist) : [];
+                    if (disposed || own !== generation) return 0;
+                    artistCount = tracks.length;
+                    for (const track of tracks) accept(found, { track, reason: { kind: 'artistTrack', artist: artistName(first) || seed!.title } }, filter);
                 } catch (error) {
+                    if (own === generation) artistFallbackDone = false;
                     console.warn('Волна: треки артиста не загружены', error);
                 }
                 if (own !== generation) return 0;
@@ -1233,6 +1395,7 @@ export function installWave(config: WaveConfig): void {
             fallbackMood ??= moodTags(seed.tracks, observed, 2);
             const moodTasks = fallbackMood.flatMap((tag) => (['recent', 'search'] as const).map((source) =>
                 genrePage(source, tag).then((tracks) => {
+                    if (disposed || own !== generation) return;
                     for (const track of tracks) accept(found, { track, reason: { kind: 'mood', seed: seed?.title ?? '…', genre: tag } }, filter);
                 }).catch((error: unknown) => console.warn('Волна: настроение не загружено', error))));
             await Promise.all(moodTasks);
@@ -1568,7 +1731,7 @@ export function installWave(config: WaveConfig): void {
         return active && !!item && ours.has(item);
     }
     function publishMeta(sound: SiteSound): void {
-        const attrs = sound.attributes ?? {};
+        const attrs = sound.attributes ?? { id: sound.id };
         const user = (attrs.user && typeof attrs.user === 'object' ? attrs.user : {}) as Record<string, unknown>;
         const meta: TrackMeta = {
             id: sound.id,
@@ -1593,7 +1756,7 @@ export function installWave(config: WaveConfig): void {
     }
 
     function beginPlay(sound: SiteSound): void {
-        const attrs = sound.attributes ?? {};
+        const attrs = sound.attributes ?? { id: sound.id };
         const item = player?.getCurrentQueueItem();
         const candidate = known.get(sound.id);
         const waveItem = fromWave(item) && !!candidate;
@@ -1675,6 +1838,9 @@ export function installWave(config: WaveConfig): void {
     function tick(): void {
         const p = player;
         if (!p || disposed) return;
+        queueControls.tick();
+        if (shelfFailedAt && Date.now() - shelfFailedAt >= 30000 && isVisible()) ensureShelf();
+        recovery.tick();
         const sound = p.getCurrentSound();
         const id = sound?.id ?? 0;
         if (id !== currentId) {
@@ -1905,10 +2071,13 @@ export function installWave(config: WaveConfig): void {
     // recentMain это прослушанное за 30 дней по журналу клиента, история сайта помнит только последние 200
     async function buildShelf(day: string, recentMain: number[]): Promise<Shelf> {
         const p = await ensureProfile();
+        await expandLibrary(p);
         await Promise.all([ensureExclusions(), ensureTaste()]);
         shelfTracks.clear();
         const likedIds = [...p.liked];
-        const ids = likedIds.length > 400 ? [...likedIds.slice(0, 250), ...likedIds.slice(-150)] : likedIds;
+        // Выборка распределена по всей библиотеке, включая её середину. Каталог расширяется в фоне.
+        const ids = shuffleInPlace(likedIds.slice()).slice(0, 400);
+        for (const track of p.likedTracks) if (ids.includes(track.id)) shelfTracks.set(track.id, track);
         const liked = (ids.length ? await tracksByIds(ids) : []).filter((track) => isWaveEligible(track) && !isExcluded(track));
         const cards: ShelfCard[] = [];
         const weights = taste?.tracks ?? null;
@@ -1949,15 +2118,16 @@ export function installWave(config: WaveConfig): void {
         }
         return { day, cards };
     }
-    // Снимок дня из main или новая сборка. Без моста в main полки нет; сбой повторяется не чаще раза в пять минут
+    // Снимок дня или новая сборка; после сбоя сохраняем видимую ошибку и ограничиваем частоту повтора.
     function ensureShelf(): void {
         const bridge = host.soundcloudAPI?.waveShelf;
         const day = localDay(Date.now());
-        if (!bridge || shelfPromise || (shelf && shelf.day === day) || Date.now() - shelfFailedAt < 5 * 60000) return;
+        if (!bridge || shelfPromise || (shelf && shelf.day === day) || Date.now() - shelfFailedAt < 30000) return;
         // Полка прошлых суток сменилась: номер карточки у играющей волны больше ни на что не указывает
         const replace = (next: Shelf): void => {
             if (shelf && seed) seed.card = undefined;
             shelf = next;
+            shelfFailedAt = 0;
             openCard = null;
             mixLists.clear();
         };
@@ -2094,33 +2264,36 @@ export function installWave(config: WaveConfig): void {
     }
     // Ссылка «открыть в клиенте» из Discord: переход на страницу трека внутри сайта без перезагрузки и сразу воспроизведение;
     // страница истории включает трек, не уводя сайт со своей страницы.
-    // false значит «сайт ещё не готов, спроси позже», true значит «сделано или повторять бессмысленно»
-    async function openTrack(path: string, go = true): Promise<boolean> {
-        if (!player || !SoundModel || !api) return false;
-        if (!/^\/[a-z0-9_-]{1,100}\/[a-z0-9_-]{1,255}$/.test(path)) return true;
+    let openRequest = 0;
+    async function openTrack(path: string, go = true): Promise<OpenTrackResult> {
+        const request = ++openRequest;
+        if (!player || !SoundModel || !api) return 'not-ready';
+        if (!/^\/[a-z0-9_-]{1,100}\/[a-z0-9_-]{1,255}$/.test(path)) return 'unavailable';
+        const previous = player.getCurrentQueueItem();
         if (go) navigate(path);
         // Свой же трек из карточки Discord уже играет: страница открыта, очередь и волна остаются как есть
         const current = player.getCurrentSound();
         if (current && trackPath(current.attributes?.permalink_url) === path.toLowerCase()) {
             if (!player.isPlaying()) player.playCurrent({ userInitiated: true });
-            return true;
+            return 'played';
         }
         let track: WaveTrack | null;
         try {
             track = asTrack(await resolveUrl('https://soundcloud.com' + path));
         } catch (error) {
             console.warn('Волна: трек по ссылке не найден', error);
-            return true;
+            return request === openRequest ? 'failed' : 'superseded';
         }
+        if (disposed || request !== openRequest || player.getCurrentQueueItem() !== previous) return 'superseded';
         const Item = player.getQueue().model;
-        if (!track || (track.kind && track.kind !== 'track') || !Item) return true;
+        if (!track || (track.kind && track.kind !== 'track') || !Item) return 'unavailable';
         const sound = new SoundModel(track, { parse: true });
-        if ((sound.isPlayable && !sound.isPlayable()) || sound.isBlocked?.()) return true;
+        if ((sound.isPlayable && !sound.isPlayable()) || sound.isBlocked?.()) return 'unavailable';
         const item = new Item({}, { sound, originalModel: sound, queryPosition: 0, sourceInfo: { type: 'single' }, index: 0 });
         item.release?.();
         player.replaceQueue([item], 0);
         player.playCurrent({ userInitiated: true });
-        return true;
+        return 'played';
     }
     host.__scOpenTrack = openTrack;
     host.__scNavigate = navigate;
@@ -2324,6 +2497,8 @@ export function installWave(config: WaveConfig): void {
         '.scw-like[aria-pressed="true"] svg{fill:#ff5500}',
         '#sc-wave .scw-btn{height:32px;padding:0 12px;border-radius:4px;background:var(--scw-surface);font-weight:600}',
         '.scw-cover{position:relative;width:200px;height:200px;flex:none;background:var(--scw-tile)}',
+        '.scw-cover.scw-empty-cover{display:grid;place-items:center;overflow:hidden;background:radial-gradient(ellipse at 70% 20%,#ff550016,transparent 65%),#191919}',
+        '.scw-empty-cover svg{width:100%;height:100%;color:#f50}',
         '.scw-cover.collage{display:grid;grid-template-columns:1fr 1fr}',
         '.scw-cover.collage>span{position:relative;background:var(--scw-tile)}',
         // Картинка проявляется поверх подложки со средним цветом обложки
@@ -2351,26 +2526,39 @@ export function installWave(config: WaveConfig): void {
         '.scw-tile>.scw-t1,.scw-tile>.scw-t2,.scw-tile>.scw-t3{grid-column:2;margin:0}',
         // Подборки это отдельный раздел со своим заголовком, а не продолжение волны
         '.scw-shelf-h{font-size:20px;line-height:26px;font-weight:600;margin:48px 0 16px}',
+        '.scw-shelf-error{display:flex;align-items:center;gap:16px;min-height:48px}',
+        '#sc-wave .scw-play{transition:filter .12s,transform .1s}',
+        '#sc-wave .scw-play:not(:disabled):hover{filter:brightness(.9)}',
+        '#sc-wave .scw-play:not(:disabled):active{transform:scale(.96)}',
+        'html.scm-reduce #sc-wave .scw-play{transition:none;transform:none}',
+        '@media(prefers-reduced-motion:reduce){#sc-wave .scw-play{transition:none;transform:none!important}}',
         '.scw-tiles.scw-shelf{grid-template-columns:repeat(6,minmax(0,1fr));gap:20px}',
+        '@media(max-width:1200px){#sc-wave .scw-tiles:not(.scw-shelf){grid-template-columns:repeat(3,minmax(0,1fr))}#sc-wave .scw-tiles.scw-shelf{grid-template-columns:repeat(4,minmax(0,1fr))}}',
         '.scw-card{position:relative;min-width:0}',
         '#sc-wave .scw-card-open{display:block;width:100%;min-width:0;text-align:left}',
         // Кнопка «слушать» лежит поверх обложки: слой того же размера, что обложка, пропускает клики мимо кнопки
         '.scw-card-over{position:absolute;z-index:2;left:0;top:0;width:100%;aspect-ratio:1;pointer-events:none}',
-        '#sc-wave .scw-card-play{position:absolute;right:8px;bottom:8px;width:36px;height:36px;border-radius:50%;background:var(--scw-btn);display:grid;place-items:center;pointer-events:auto;opacity:0;transition:opacity .15s cubic-bezier(.2,0,0,1)}',
-        '.scw-card-play svg{width:18px;height:18px;fill:var(--scw-btn-ink)}',
-        '#sc-wave .scw-card:hover .scw-card-play,#sc-wave .scw-card:focus-within .scw-card-play,#sc-wave .scw-card.on .scw-card-play{opacity:1}',
+        '#sc-wave .scw-card-play{position:absolute;right:8px;bottom:8px;width:40px;height:40px;border-radius:50%;background:#fff;display:grid;place-items:center;pointer-events:auto;opacity:0;transform:translateY(6px) scale(.92);box-shadow:0 3px 12px #0009,0 0 0 1px #0002;transition:opacity .18s ease,transform .18s cubic-bezier(.2,0,0,1),background-color .12s,box-shadow .18s}',
+        '.scw-card-play svg{width:20px;height:20px;fill:#111}',
+        '#sc-wave .scw-card:hover .scw-card-play,#sc-wave .scw-card:focus-within .scw-card-play,#sc-wave .scw-card.on .scw-card-play{opacity:1;transform:translateY(0) scale(1)}',
+        '#sc-wave .scw-card .scw-card-play:hover{transform:translateY(0) scale(1.08);background:#ff7133;box-shadow:0 5px 16px #000a,0 0 0 1px #0002}',
+        '#sc-wave .scw-card .scw-card-play:active{transform:translateY(0) scale(.95);background:#f50}',
+        '#sc-wave .scw-card-play:focus-visible{outline:2px solid #fff;outline-offset:3px}',
+        '@media(hover:none){#sc-wave .scw-card .scw-card-play{opacity:1;transform:none}}',
         '.scw-art.scw-quad{display:grid;grid-template-columns:1fr 1fr;grid-template-rows:1fr 1fr}',
         '.scw-art.scw-quad>span{position:relative;background:var(--scw-tile)}',
         // Наведение плёнкой поверх обложки, играющая подборка кромкой 3 px снизу
         '.scw-card .scw-art::before,.scw-card .scw-art::after{content:"";position:absolute;z-index:1;left:0;right:0;opacity:0;transition:opacity .15s cubic-bezier(.2,0,0,1)}',
-        '.scw-card .scw-art::before{top:0;bottom:0;background:var(--scw-film-strong)}',
+        '.scw-card .scw-art::before{top:0;bottom:0;background:linear-gradient(180deg,transparent 25%,#0008)}',
         '.scw-card .scw-art::after{bottom:0;height:3px;background:#ff5500}',
-        '.scw-card:hover .scw-art::before,.scw-card.open .scw-art::before,.scw-card.on .scw-art::after{opacity:1}',
+        '.scw-card:hover .scw-art::before,.scw-card:focus-within .scw-art::before,.scw-card.open .scw-art::before,.scw-card.on .scw-art::before,.scw-card.on .scw-art::after{opacity:1}',
         // Раскрытая подборка: плашка под полкой с уголком под своей карточкой (6 колонок, промежуток 20 px)
         '.scw-mix{position:relative;margin-top:16px;padding:16px 16px 8px;border-radius:6px;background:var(--scw-film)}',
         '.scw-mix::before{content:"";position:absolute;top:-8px;left:calc((100% - 100px) / 6 * (var(--scw-at) + .5) + 20px * var(--scw-at) - 8px);border:8px solid transparent;border-top:0;border-bottom-color:var(--scw-film)}',
         '.scw-mix-head{display:flex;align-items:center;gap:12px;margin-bottom:8px}',
-        '#sc-wave .scw-mix-play{width:40px;height:40px;border-radius:50%;background:var(--scw-btn);display:grid;place-items:center;flex:none}',
+        '#sc-wave .scw-mix-play{width:40px;height:40px;border-radius:50%;background:var(--scw-btn);display:grid;place-items:center;flex:none;transition:filter .12s,transform .12s}',
+        '#sc-wave .scw-mix-play:hover{filter:brightness(.9);transform:scale(1.06)}',
+        '#sc-wave .scw-mix-play:active{transform:scale(.95)}',
         '.scw-mix-play svg{width:18px;height:18px;fill:var(--scw-btn-ink)}',
         '.scw-mix-title{flex:1;min-width:0}',
         '.scw-mix-title b{display:block;font-size:16px;line-height:22px;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}',
@@ -2402,7 +2590,8 @@ export function installWave(config: WaveConfig): void {
         '.scw-menu .scw-mi:focus-visible{outline:2px solid currentColor;outline-offset:-2px}',
         '.scw-toast{position:fixed;left:50%;bottom:72px;z-index:2147483000;transform:translateX(-50%);max-width:420px;padding:8px 12px;border-radius:4px;background:#303030;color:#fff;box-shadow:0 4px 12px rgba(0,0,0,.45);font-size:14px;line-height:20px;pointer-events:none;opacity:0;transition:opacity .15s}',
         '.scw-toast.on{opacity:1}',
-        '@media (prefers-reduced-motion:reduce){.scw-tip,.scw-toast,.scw-card .scw-art::before,.scw-card .scw-art::after,#sc-wave .scw-card-play{transition:none}.scw-menu{animation:none}}',
+        '@media (prefers-reduced-motion:reduce){.scw-tip,.scw-toast,.scw-card .scw-art::before,.scw-card .scw-art::after,#sc-wave .scw-card-play,#sc-wave .scw-mix-play{transition:none}.scw-menu{animation:none}#sc-wave .scw-card .scw-card-play,#sc-wave .scw-mix-play{transform:none!important}}',
+        'html.scm-reduce #sc-wave .scw-card .scw-card-play,html.scm-reduce #sc-wave .scw-mix-play{transition:none;transform:none!important}',
         // «Меньше анимаций» в F1: без масштаба меню, растворения остаются
         'html.scm-reduce .scw-menu{animation:none}',
     ].join('\n');
@@ -2640,8 +2829,13 @@ export function installWave(config: WaveConfig): void {
     function renderShelf(): HTMLElement[] {
         if (!host.soundcloudAPI?.waveShelf || state === 'unavailable') return [];
         const current = shelf;
-        if (!current && !shelfPromise) return [];
+        if (!current && !shelfPromise && !shelfFailedAt) return [];
         const headline = el('div', 'scw-shelf-h', T.shelf);
+        if (!current && !shelfPromise && shelfFailedAt) {
+            const error = el('div', 'scw-shelf-error'); error.setAttribute('role', 'status');
+            error.append(el('span', 'scw-hint', T.shelfFailed), textButton('shelf-retry', T.retry));
+            return [headline, error];
+        }
         if (current && !current.cards.length) return [headline, el('div', 'scw-hint', T.shelfEmpty)];
         const grid = el('div', 'scw-tiles scw-shelf' + (current ? '' : ' wait held'));
         const cards = current?.cards ?? Array.from({ length: 4 }, (): ShelfCard | null => null);
@@ -2776,17 +2970,21 @@ export function installWave(config: WaveConfig): void {
         } else if (state === 'empty') {
             if (genre) meta.append(textButton('drop-genre', T.dropGenre));
             if (mode === 'fresh') meta.append(textButton('to-similar', T.toSimilar));
-        } else if (state === 'error') meta.append(textButton('retry', T.retry));
+        } else if (state === 'error' || state === 'unavailable') meta.append(textButton('retry', T.retry));
         info.append(top, canvas, meta);
         const cover = el('div', 'scw-cover');
         if (current) art(cover, current.track, 't500x500');
-        else {
+        else if (state === 'idle' && preview.some((item) => artworkUrl(item.track, 't300x300'))) {
             cover.classList.add('collage');
             for (let i = 0; i < 4; i++) {
                 const cell = el('span', '');
                 if (state === 'idle' && preview[i]) art(cell, preview[i].track, 't300x300');
                 cover.append(cell);
             }
+        } else {
+            cover.classList.add('scw-empty-cover');
+            cover.setAttribute('aria-hidden', 'true');
+            cover.innerHTML = '<svg viewBox="0 0 200 200" fill="none"><circle cx="100" cy="100" r="76" stroke="currentColor" opacity=".07"/><circle cx="100" cy="100" r="57" stroke="currentColor" opacity=".12"/><path d="M48 96v8m13-22v36m13-43v50m13-61v72m13-84v96m13-75v54m13-44v34m13-43v52m13-36v20" stroke="currentColor" stroke-width="3" stroke-linecap="round" opacity=".7"/></svg>';
         }
         body.append(info, cover);
         section.append(body, ...renderTiles(), ...renderShelf());
@@ -3003,6 +3201,9 @@ export function installWave(config: WaveConfig): void {
             case 'shelf-open':
                 toggleMix(Number(control.dataset.card));
                 return;
+            case 'shelf-retry':
+                shelfFailedAt = 0; profileRetryAt = 0; ensureShelf();
+                return;
             case 'mix-close':
                 openCard = null;
                 render();
@@ -3065,6 +3266,8 @@ export function installWave(config: WaveConfig): void {
                 applySettings('similar', genre);
                 return;
             case 'retry':
+                if (!tickTimer) { clearTimeout(attachTimer); attempts = 0; attach(); return; }
+                profileRetryAt = 0;
                 resetGeneration();
                 void preparePreview();
                 return;
@@ -3240,6 +3443,8 @@ export function installWave(config: WaveConfig): void {
         if (target.kind === 'playlist') items.push(['wave-playlist', T.menuWavePlaylist, 'wave']);
         if (hasArtist) items.push(['wave-artist', T.menuWaveArtist, target.kind === 'artist' ? 'wave' : 'artist']);
         if (target.kind === 'track') {
+            items.push(['queue-next', T.lang === 'ru' ? 'Слушать следующим' : 'Play next', 'pick']);
+            items.push(['queue-last', T.lang === 'ru' ? 'В конец очереди' : 'Add to queue', 'pick']);
             items.push(pickedIndex(target) >= 0 ? ['unpick', T.menuUnpick, 'undo'] : ['pick', T.menuPick, 'pick']);
             items.push(trackMarked(moreTracks, target) ? ['unmore', T.menuUnmore, 'undo'] : ['more', T.more, 'more']);
             items.push(trackMarked(laterTracks, target) ? ['unlater', T.menuUnlater, 'undo'] : ['later', T.later, 'later']);
@@ -3251,6 +3456,10 @@ export function installWave(config: WaveConfig): void {
     }
     function runMenu(act: string, target: MenuTarget): void {
         switch (act) {
+            case 'queue-next':
+            case 'queue-last':
+                void trackOf(target).then((track) => { if (track && !disposed) queueControls.add(track, act === 'queue-next'); }).catch((error: unknown) => { console.warn('Очередь: трек не добавлен', error); showToast(T.toastFailed); });
+                return;
             case 'wave-track': void startSeed('track', target); return;
             case 'wave-artist': void startSeed('artist', target); return;
             case 'wave-playlist': void startSeed('playlist', target); return;
@@ -3434,6 +3643,12 @@ export function installWave(config: WaveConfig): void {
     }
 
     let frame = 0;
+    let paintFrame = 0;
+    const repaint = (): void => {
+        if (disposed || document.hidden || paintFrame) return;
+        paintFrame = requestAnimationFrame(() => { paintFrame = 0; paint(); });
+    };
+    const onResize = (): void => { closeMenu(); repaint(); };
     const observer = new MutationObserver(() => {
         if (!frame) frame = requestAnimationFrame(() => {
             frame = 0;
@@ -3463,26 +3678,38 @@ export function installWave(config: WaveConfig): void {
             paintTimer = setInterval(() => {
                 if (currentCandidate() && player?.isPlaying()) paint();
             }, 250);
-            state = 'idle';
+            state = 'loading';
+            void queueControls.ready().catch((error: unknown) => console.warn('Сессия пока не восстановлена', error)).finally(() => {
+                if (disposed) return;
+                state = active ? 'playing' : 'idle'; render(); mount();
+            });
+            return;
+        }
+        attempts++;
+        if (attempts === 20) {
+            console.warn('Волна: плеер SoundCloud пока не найден');
+            state = 'unavailable';
             render();
-            mount();
-            return;
         }
-        if (++attempts < 20) {
-            attachTimer = setTimeout(attach, 1000);
-            return;
-        }
-        console.warn('Волна: плеер SoundCloud не найден');
-        state = 'unavailable';
-        render();
+        attachTimer = setTimeout(attach, attempts < 20 ? 1000 : 10000);
     }
+    const onOnline = (): void => {
+        if (disposed) return;
+        profileRetryAt = 0;
+        if (!tickTimer) { clearTimeout(attachTimer); attach(); }
+        else if (state === 'error' && !active) { resetGeneration(); void preparePreview(); }
+    };
 
     const onScroll = (): void => {
         hideTip();
         closeMenu();
     };
     const dispose = (): void => {
+        void queueControls.save().catch((error: unknown) => console.warn('Сессия при переходе не сохранена', error));
+        queueControls.dispose();
+        recovery.dispose();
         disposed = true;
+        openRequest++;
         generation++;
         seedRequest++;
         observer.disconnect();
@@ -3492,7 +3719,9 @@ export function installWave(config: WaveConfig): void {
         document.removeEventListener('mousedown', onOutside, true);
         document.removeEventListener('keydown', onDocumentKey);
         window.removeEventListener('blur', closeMenu);
-        window.removeEventListener('resize', closeMenu);
+        window.removeEventListener('resize', onResize);
+        document.removeEventListener('visibilitychange', repaint);
+        cancelAnimationFrame(paintFrame);
         closeMenu();
         if (toastTimer !== undefined) clearTimeout(toastTimer);
         toastBox.remove();
@@ -3508,6 +3737,7 @@ export function installWave(config: WaveConfig): void {
         flushSignals();
         document.removeEventListener('scroll', onScroll, true);
         window.removeEventListener('pagehide', dispose);
+        window.removeEventListener('online', onOnline);
         hideTip();
         tip.remove();
         section?.remove();
@@ -3518,6 +3748,9 @@ export function installWave(config: WaveConfig): void {
         delete host.__scNavigate;
         delete host.__scResolveTracks;
         delete host.__scWhoAmI;
+        delete host.__scQueue;
+        delete host.__scSaveSession;
+        delete host.__scResume;
     };
     host.__disposeWave = dispose;
     // Выход из приложения: main забирает недописанное вместе с текущим прослушиванием,
@@ -3536,12 +3769,14 @@ export function installWave(config: WaveConfig): void {
         void ensureExclusions();
     };
     window.addEventListener('pagehide', dispose, { once: true });
+    window.addEventListener('online', onOnline);
     document.addEventListener('scroll', onScroll, true);
     document.addEventListener('contextmenu', onPageMenu);
     document.addEventListener('mousedown', onOutside, true);
     document.addEventListener('keydown', onDocumentKey);
     window.addEventListener('blur', closeMenu);
-    window.addEventListener('resize', closeMenu);
+    window.addEventListener('resize', onResize);
+    document.addEventListener('visibilitychange', repaint);
     observer.observe(document.documentElement, { childList: true, subtree: true });
     state = 'loading';
     watchFrames();
@@ -3554,9 +3789,10 @@ const pageHelpers = [
     normalizeTag, tagKeys, genreKeys, parseGenres, formatGenres, genreKeysFor, classifyLink, canonicalUrl, trackMatchesGenre, trackArtist,
     isWaveEligible, acceptCandidate, trackSignature, pickSpaced, tasteMaps, tasteScore, tasteOrder, tasteReason, applyTasteReasons, shuffleInPlace, topGenres, fillText, reasonText, shapeSamples,
     artworkUrl, formatTime, playEnd, siteSource, moodTags, trackPath, localDay, countText, tasteGroups, forgottenPicks, pickFinds,
+    installPlaybackPage, installPlaybackRecovery,
 ];
 
 export function waveScript(): string {
     const config: WaveConfig = { texts: WAVE_TEXTS };
-    return '(function(){\n' + pageHelpers.map((helper) => helper.toString()).join('\n') + '\n(' + installWave.toString() + ')(' + JSON.stringify(config) + ');\n})();';
+    return '(function(){\n' + pageHelpers.map((helper) => helper.toString()).join('\n') + '\n(' + installWave.toString() + ')(' + JSON.stringify(config) + ', installPlaybackPage, installPlaybackRecovery);\n})();';
 }

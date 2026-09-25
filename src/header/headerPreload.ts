@@ -10,6 +10,7 @@ const SEND_CHANNELS = new Set([
     'refresh-page',
     'title-bar-double-click',
     'toggle-history',
+    'toggle-queue',
 ]);
 
 const INVOKE_CHANNELS = new Set(['get-header-texts', 'get-navigation-controls-enabled', 'get-theme-colors', 'is-maximized']);

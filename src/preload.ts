@@ -1,6 +1,52 @@
 import { contextBridge, ipcRenderer } from 'electron';
 import type { SiteDictionary, TrackInfo, TrackUpdateReason } from './types';
 
+// Правила скрытия приходят до скриптов сайта. Неразмеченная полка ждёт заголовка, вместо кадра с запрещённым блоком.
+export function installEarlyBlocks(css: string): void {
+    const page = window as Window & { __scEarlyBlocks?: { update(css: string): void } };
+    if (page.__scEarlyBlocks) { page.__scEarlyBlocks.update(css); return; }
+    const style = document.createElement('style'); style.id = 'sc-early-blocks';
+    const setStyle = (value: string): void => {
+        style.textContent = value + '\nhtml[data-sc-home] li.mixedModularHome__item:not([data-sc-shelf]){visibility:hidden!important}';
+    };
+    setStyle(css);
+    const patterns: Array<[string, RegExp]> = [
+        ['more', /^(More of what you like|Больше того, что тебе нравится)$/i], ['recent', /^(Recently played|Недавно играло)$/i],
+        ['mixed', /^(Mixed for|Миксы для)( |$)/i], ['stations', /^(Discover with Stations|Станции)$/i],
+        ['trending', /^(Trending by genre|В тренде по жанрам)$/i], ['made', /^(Made for|Для)( |$)/i],
+        ['curated', /^(Curated by SoundCloud|Подборки SoundCloud)$/i], ['albums', /^(Albums for|Альбомы для)( |$)/i],
+        ['liked', /^(Liked by|Лайкнули)$/i], ['buzzing', /^(Artists to watch out for|Артисты, за которыми стоит следить)$/i],
+    ];
+    const update = (): void => {
+        const root = document.documentElement; if (!root) return;
+        if (!style.isConnected) root.prepend(style);
+        const home = location.pathname === '/' || location.pathname === '/discover';
+        root.toggleAttribute('data-sc-home', home);
+        if (!home) return;
+        for (const item of document.querySelectorAll('li.mixedModularHome__item:not([data-sc-shelf])')) {
+            const title = item.querySelector('.mixedSelectionModule__titleText')?.textContent?.replace(/\s+/g, ' ').trim();
+            if (title) item.setAttribute('data-sc-shelf', patterns.find(([, pattern]) => pattern.test(title))?.[0] ?? 'other');
+        }
+    };
+    const observer = new MutationObserver(update);
+    observer.observe(document, { childList: true, subtree: true, characterData: true });
+    const push = history.pushState; const replace = history.replaceState;
+    history.pushState = function (...args) { push.apply(this, args); update(); };
+    history.replaceState = function (...args) { replace.apply(this, args); update(); };
+    window.addEventListener('popstate', update);
+    page.__scEarlyBlocks = { update: (value) => { setStyle(value); update(); } };
+    window.addEventListener('pagehide', () => { observer.disconnect(); window.removeEventListener('popstate', update); history.pushState = push; history.replaceState = replace; }, { once: true });
+    update();
+}
+
+try {
+    const css: unknown = ipcRenderer.sendSync('soundcloud:early-blocks');
+    if (typeof css === 'string') contextBridge.executeInMainWorld({ func: installEarlyBlocks, args: [css] });
+} catch (error) { console.warn('Ранние правила скрытия не установлены', error); }
+ipcRenderer.on('soundcloud:early-blocks', (_event, css: unknown) => {
+    if (typeof css === 'string') contextBridge.executeInMainWorld({ func: installEarlyBlocks, args: [css] });
+});
+
 /**
  * Русский перевод сайта. Сайт переводит интерфейс через свой модуль Lingua: ключ это английская фраза.
  * Функция ставит перехват загрузки модулей webpack, находит Lingua и подкладывает словарь сразу после
@@ -188,6 +234,15 @@ try {
 }
 
 contextBridge.exposeInMainWorld('soundcloudAPI', {
+    library: {
+        loadSession: (user: number) => ipcRenderer.invoke('soundcloud:library:loadSession', user),
+        saveSession: (user: number, snapshot: unknown) => ipcRenderer.invoke('soundcloud:library:saveSession', user, snapshot),
+        loadCatalog: (user: number) => ipcRenderer.invoke('soundcloud:library:loadCatalog', user),
+        saveCatalog: (user: number, tracks: unknown) => ipcRenderer.invoke('soundcloud:library:saveCatalog', user, tracks),
+        listMixes: (user: number) => ipcRenderer.invoke('soundcloud:library:listMixes', user),
+        saveMix: (user: number, title: string, tracks: unknown) => ipcRenderer.invoke('soundcloud:library:saveMix', user, title, tracks),
+        removeMix: (user: number, id: string) => ipcRenderer.invoke('soundcloud:library:removeMix', user, id),
+    },
     playback: (command: string) => {
         if (['play', 'pause', 'next', 'previous'].includes(command)) ipcRenderer.send('soundcloud:playback', command);
     },

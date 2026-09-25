@@ -13,8 +13,9 @@ process.on('unhandledRejection', (error) => {
 });
 
 app.whenReady().then(async () => {
+    await require('./library-smoke.cjs')();
     // Локальные проверки не должны ждать сторонний сервер шрифтов.
-    session.defaultSession.webRequest.onBeforeRequest({ urls: ['https://assets.web.soundcloud.cloud/*'] }, (_details, callback) => callback({ cancel: true }));
+    session.defaultSession.webRequest.onBeforeRequest({ urls: ['https://assets.web.soundcloud.cloud/*', 'https://style.sndcdn.com/*'] }, (_details, callback) => callback({ cancel: true }));
     const { ViewStyles } = require('../tsc/services/viewStyles');
     const { SettingsManager } = require('../tsc/settings/settingsManager');
     const win = new BrowserWindow({ show: false, webPreferences: { sandbox: true } });

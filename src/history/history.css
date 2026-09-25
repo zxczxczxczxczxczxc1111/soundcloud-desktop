@@ -4,7 +4,7 @@
     --surface: #303030;
     --text: #ffffff;
     --muted: #999999;
-    --faint: #757575;
+    --faint: #898989;
     --film: rgba(255, 255, 255, 0.06);
     --film-strong: rgba(255, 255, 255, 0.1);
     --line: rgba(255, 255, 255, 0.1);
@@ -24,6 +24,7 @@
     --font: Söhne, system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif;
     color-scheme: dark;
 }
+.reduce-motion * { transition: none !important; animation: none !important; scroll-behavior: auto !important; }
 * {
     box-sizing: border-box;
     margin: 0;
@@ -468,7 +469,17 @@ h2 {
 }
 .pwave {
     margin-bottom: 40px;
+    display: grid;
+    grid-template-columns: 48px minmax(0, 1fr);
+    column-gap: 12px;
+    padding-top: 12px;
 }
+.pwave-axis { position: relative; height: 124px; font-size: 12px; color: var(--muted); font-variant-numeric: tabular-nums; }
+.pwave-axis span { position: absolute; right: 0; transform: translateY(-50%); white-space: nowrap; }
+.pwave-axis span:nth-child(1) { top: 2px; }
+.pwave-axis span:nth-child(2) { top: 46px; }
+.pwave-axis span:nth-child(3) { top: 90px; }
+.pwave-grid { stroke: var(--line); stroke-width: 1; vector-effect: non-scaling-stroke; }
 .pwave svg {
     width: 100%;
     height: 124px;
@@ -487,12 +498,16 @@ h2 {
     opacity: 0.3;
 }
 .pwave-x {
+    grid-column: 2;
     display: flex;
     justify-content: space-between;
     color: var(--faint);
     font-size: 12px;
     margin-top: 4px;
 }
+.pwave-x button { color: inherit; padding: 4px 6px; border-radius: 4px; font-size: inherit; }
+.pwave-x button:hover { color: var(--text); background: var(--film); }
+.pwave-x button[aria-pressed="true"] { color: var(--text); }
 .artists {
     display: grid;
     grid-template-columns: repeat(auto-fill, minmax(112px, 1fr));

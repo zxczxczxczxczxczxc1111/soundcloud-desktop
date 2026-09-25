@@ -1,18 +1,20 @@
 import { HOME_BLOCK_KEYS, type HomeBlockKey } from '../services/homeBlocks';
+import { isGpuCompatibilityMode, type GpuCompatibilityMode } from '../services/gpuProcessMode';
 
-const booleanKeys = new Set(['adBlocker', 'proxyEnabled', 'webhookEnabled', 'displaySCSmallIcon', 'displayGithubLink', 'discordRichPresence', 'displayButtons', 'minimizeToTray', 'navigationControlsEnabled', 'trackParserEnabled', 'richPresencePreviewEnabled', 'hidePromotions', 'hideEventsNearYou', 'hideArtistUpsells', 'fullShuffle', 'autoUpdateEnabled', 'discordIncognito', 'reduceMotion', ...HOME_BLOCK_KEYS]);
-type BooleanKey = 'adBlocker' | 'proxyEnabled' | 'webhookEnabled' | 'displaySCSmallIcon' | 'displayGithubLink' | 'discordRichPresence' | 'displayButtons' | 'minimizeToTray' | 'navigationControlsEnabled' | 'trackParserEnabled' | 'richPresencePreviewEnabled' | 'hidePromotions' | 'hideEventsNearYou' | 'hideArtistUpsells' | 'fullShuffle' | 'autoUpdateEnabled' | 'discordIncognito' | 'reduceMotion' | HomeBlockKey;
+const booleanKeys = new Set(['adBlocker', 'proxyEnabled', 'webhookEnabled', 'displaySCSmallIcon', 'displayGithubLink', 'discordRichPresence', 'displayButtons', 'minimizeToTray', 'navigationControlsEnabled', 'trackParserEnabled', 'richPresencePreviewEnabled', 'hidePromotions', 'hideEventsNearYou', 'hideArtistUpsells', 'hideHeaderExtras', 'fullShuffle', 'autoUpdateEnabled', 'discordIncognito', 'reduceMotion', ...HOME_BLOCK_KEYS]);
+type BooleanKey = 'adBlocker' | 'proxyEnabled' | 'webhookEnabled' | 'displaySCSmallIcon' | 'displayGithubLink' | 'discordRichPresence' | 'displayButtons' | 'minimizeToTray' | 'navigationControlsEnabled' | 'trackParserEnabled' | 'richPresencePreviewEnabled' | 'hidePromotions' | 'hideEventsNearYou' | 'hideArtistUpsells' | 'hideHeaderExtras' | 'fullShuffle' | 'autoUpdateEnabled' | 'discordIncognito' | 'reduceMotion' | HomeBlockKey;
 type StringKey = 'proxyHost' | 'proxyPort' | 'proxyUsername' | 'proxyPassword' | 'webhookUrl' | 'customTheme' | DiscordTextKey;
 /** Шаблоны строк карточки Discord и стоп-листы артистов и жанров */
 export type DiscordTextKey = 'discordLine1' | 'discordLine2' | 'discordCoverText' | 'discordHiddenArtists' | 'discordHiddenGenres';
 export const DISCORD_TEXT_KEYS: ReadonlySet<string> = new Set<DiscordTextKey>(['discordLine1', 'discordLine2', 'discordCoverText', 'discordHiddenArtists', 'discordHiddenGenres']);
-export type SettingChange = { key: BooleanKey; value: boolean } | { key: StringKey; value: string } | { key: 'webhookTriggerPercentage' | 'statusDisplayType'; value: number } | { key: 'siteLanguage'; value: 'ru' | 'en' };
+export type SettingChange = { key: BooleanKey; value: boolean } | { key: StringKey; value: string } | { key: 'webhookTriggerPercentage' | 'statusDisplayType'; value: number } | { key: 'siteLanguage'; value: 'ru' | 'en' } | { key: 'gpuCompatibilityMode'; value: GpuCompatibilityMode };
 
 export function validateSettingChange(input: unknown): input is SettingChange {
     if (!input || typeof input !== 'object' || Array.isArray(input)) return false;
     const { key, value } = input as Record<string, unknown>;
     if (typeof key !== 'string') return false;
     if (booleanKeys.has(key)) return typeof value === 'boolean';
+    if (key === 'gpuCompatibilityMode') return isGpuCompatibilityMode(value);
     if (key === 'siteLanguage') return value === 'ru' || value === 'en';
     if (key === 'statusDisplayType') return value === 0 || value === 1 || value === 2;
     if (key === 'webhookTriggerPercentage') return typeof value === 'number' && Number.isFinite(value) && value >= 0 && value <= 100;

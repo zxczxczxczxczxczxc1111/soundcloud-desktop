@@ -9,7 +9,7 @@ import { isTrustedLocalSender, trustLocalFile } from './trustedViews';
 import { PlaybackController } from './services/playbackController';
 import { AdblockService } from './services/adblockService';
 import { ViewStyles, splitThemeCSS } from './services/viewStyles';
-import { pageFeaturesScript } from './services/pageFeatures';
+import { ARTIST_TOOLS_CSS, pageFeaturesScript } from './services/pageFeatures';
 import { fullShuffleScript } from './services/fullShuffle';
 import { homeBlockDefaults, homeBlocksCss, homePageScript, isHomeBlockKey } from './services/homeBlocks';
 import { waveScript } from './services/wave';
@@ -19,13 +19,13 @@ import { WaveJournal } from './services/waveJournal';
 import { WaveExclusions } from './services/waveExclusions';
 import { WaveShelf } from './services/waveShelf';
 import { WaveSignals } from './services/waveSignals';
-import { HistoryIndex } from './services/historyIndex';
+import { LibraryService } from './services/libraryService';
 import { HistoryManager } from './history/historyManager';
-import { TasteService } from './services/tasteModel';
 import { AwayTracker } from './services/awayTracker';
 import { OPEN_PROTOCOL, parseOpenLink } from './services/openLink';
 import { getSiteDictionary } from './services/siteDictionary';
-import { shouldRunGpuInProcess } from './services/gpuProcessMode';
+import { isGpuCompatibilityMode, shouldRunGpuInProcess, type GpuRuntimeState } from './services/gpuProcessMode';
+import { detectNvidiaAdapter } from './services/gpuDetection';
 import { tintIcon } from './services/devIcon';
 import { revealWindow } from './services/revealWindow';
 import { watchHiddenPage } from './services/hiddenPageWatchdog';
@@ -134,6 +134,7 @@ const store = new Store<Record<string, unknown>>({
         hidePromotions: true,
         hideEventsNearYou: true,
         hideArtistUpsells: true,
+        hideHeaderExtras: true,
         fullShuffle: true,
         reduceMotion: false,
         siteLanguage: 'ru',
@@ -170,7 +171,7 @@ let waveJournal: WaveJournal | null = null;
 let waveExclusions: WaveExclusions | null = null;
 let waveSignals: WaveSignals | null = null;
 let historyManager: HistoryManager | null = null;
-let tasteService: TasteService | null = null;
+let listeningLibrary: LibraryService | null = null;
 let presenceService: PresenceService;
 let webhookService: WebhookService;
 let updateService: UpdateService | null = null;
@@ -218,10 +219,19 @@ function applyMacMemoryOptimizations(): void {
 }
 
 applyMacMemoryOptimizations();
-if (shouldRunGpuInProcess(process.platform, process.env, process.argv)) {
+const gpuInterrupted = store.get('gpuCompatibilityRunning', false) === true;
+const savedGpuMode = store.get('gpuCompatibilityMode');
+const gpuMode = isGpuCompatibilityMode(savedGpuMode) ? savedGpuMode : 'auto';
+const gpuDetection = detectNvidiaAdapter(process.platform);
+const gpuInProcess = shouldRunGpuInProcess(process.platform, gpuMode, gpuDetection, process.argv, gpuInterrupted);
+const gpuRuntime: GpuRuntimeState = { mode: gpuMode, detection: gpuDetection, active: gpuInProcess, interrupted: gpuInterrupted };
+
+if (gpuInProcess) {
     app.commandLine.appendSwitch('in-process-gpu');
     // С DirectComposition GPU в главном процессе показывает пустое окно
     app.commandLine.appendSwitch('disable-direct-composition');
+} else if (gpuInterrupted || process.argv.includes('--separate-gpu-process')) {
+    app.commandLine.removeSwitch('in-process-gpu');
 }
 // header height for header BrowserView
 const HEADER_HEIGHT = 32;
@@ -243,6 +253,8 @@ const diagnostics = new DiagnosticJournal(path.join(profilePath, 'diagnostics'),
     node: process.versions.node, os: release(), arch: process.arch,
 });
 diagnostics.captureConsole();
+store.set('gpuCompatibilityRunning', gpuInProcess);
+diagnostics.record('gpu.status', { gpuInProcess, gpuAuto: gpuMode === 'auto', gpuNvidiaDetected: gpuDetection === 'nvidia', gpuFallback: gpuInterrupted });
 app.on('gpu-info-update', () => {
     if (!app.isReady()) return;
     const status = app.getGPUFeatureStatus();
@@ -359,6 +371,11 @@ function toggleHistory(): void {
     }
     historyManager.toggle();
 }
+function closeQueueDialog(): void {
+    if (contentView && !contentView.webContents.isDestroyed()) {
+        void contentView.webContents.executeJavaScript('document.getElementById("sc-desktop-queue")?.close()').catch((error: unknown) => console.warn('Очередь не закрыта', error));
+    }
+}
 
 function showMainWindow(): void {
     if (!mainWindow || mainWindow.isDestroyed()) return;
@@ -387,7 +404,7 @@ function setupTray() {
 }
 
 function headerTexts(): Record<string, string> {
-    const keys = ['headerBack', 'headerForward', 'headerRefresh', 'headerStop', 'headerTitleBar', 'headerMinimize', 'headerMaximize', 'headerRestore', 'headerClose', 'headerHistory'] as const;
+    const keys = ['headerBack', 'headerForward', 'headerRefresh', 'headerStop', 'headerTitleBar', 'headerMinimize', 'headerMaximize', 'headerRestore', 'headerClose', 'headerHistory', 'headerQueue'] as const;
     return Object.fromEntries(keys.map((key) => [key, translationService.translate(key)]));
 }
 
@@ -753,7 +770,10 @@ async function init() {
     }, 30000);
     diagnosticTimer.unref();
     powerMonitor.on('suspend', () => { diagnostics.record('system.suspend'); diagnostics.flush(); });
-    powerMonitor.on('resume', () => diagnostics.record('system.resume'));
+    powerMonitor.on('resume', () => {
+        diagnostics.record('system.resume');
+        if (contentView && !contentView.webContents.isDestroyed()) void contentView.webContents.executeJavaScript('window.__scResume?.()').catch(console.error);
+    });
     powerMonitor.on('lock-screen', () => awayTracker.lock());
     powerMonitor.on('unlock-screen', () => awayTracker.unlock());
     clearInterval(awayTimer);
@@ -899,6 +919,8 @@ async function init() {
             if (!contentView.webContents.isDestroyed()) contentView.webContents.focus();
         },
         (contents) => shortcutService.attachToWebContents(contents),
+        closeQueueDialog,
+        gpuRuntime,
     );
     pluginService.onPluginsChanged(() => settingsManager.getView()?.webContents.send('plugins-changed'));
     proxyService = new ProxyService(contentView.webContents, store, queueToastNotification, (key) => translationService.translate(key));
@@ -964,6 +986,13 @@ async function init() {
         }
         event.returnValue = dictionary;
     });
+    ipcMain.removeAllListeners('soundcloud:early-blocks');
+    ipcMain.on('soundcloud:early-blocks', (event) => {
+        let css = '';
+        try { if (isTrustedSoundCloudSender(event)) css = hiddenBlocksCSS(); }
+        catch (error) { console.warn('Правила скрытия не прочитаны', error); }
+        event.returnValue = css;
+    });
     waveJournal?.flush();
     waveJournal = new WaveJournal(path.join(app.getPath('userData'), 'wave'));
     ipcMain.removeHandler('soundcloud:wave-journal:load');
@@ -1017,7 +1046,7 @@ async function init() {
         if (saved) {
             settingsManager.getView()?.webContents.send('wave-exclusions-changed');
             // «Больше такого» учит модель вкуса, «Не нравится» снимает его с трека
-            tasteService?.invalidate(userId);
+            listeningLibrary?.invalidate(userId, exclusions.load(userId).more.map((entry) => ({ id: entry.id, artist: entry.artistId ?? 0, genre: entry.genre ?? '', tags: entry.tags ?? '', at: entry.at })));
         }
         return saved;
     });
@@ -1029,7 +1058,7 @@ async function init() {
         if (!isTrustedLocalSender(event)) throw new Error('Недопустимый отправитель IPC');
         const userId = exclusions.currentUser();
         if (!exclusions.set(userId, kind, { id }, false)) throw new Error('Отметка не снята');
-        tasteService?.invalidate(userId);
+        listeningLibrary?.invalidate(userId, exclusions.load(userId).more.map((entry) => ({ id: entry.id, artist: entry.artistId ?? 0, genre: entry.genre ?? '', tags: entry.tags ?? '', at: entry.at })));
         // Страница держит отметки у себя, поэтому перечитывает их по сигналу
         if (!contentView.webContents.isDestroyed())
             contentView.webContents.executeJavaScript('window.__scWaveExclusionsChanged && window.__scWaveExclusionsChanged()').catch((error: unknown) => {
@@ -1038,16 +1067,30 @@ async function init() {
     });
     // История прослушиваний: индекс поверх журнала сигналов, страница поверх сайта до его плеера
     historyManager?.dispose();
-    const historyIndex = new HistoryIndex(path.join(app.getPath('userData'), 'wave'), waveSignals);
-    // Модель вкуса волны по тому же индексу: профиль для страницы волны, вкус для страницы истории
-    tasteService = new TasteService(path.join(app.getPath('userData'), 'wave'), historyIndex, (userId) =>
-        exclusions.load(userId).more.map((entry) => ({ id: entry.id, artist: entry.artistId ?? 0, genre: entry.genre ?? '', tags: entry.tags ?? '', at: entry.at })),
-    );
-    const taste = tasteService;
-    ipcMain.handle('soundcloud:wave-taste', (event, userId: unknown) => {
+    const library = new LibraryService(path.join(app.getPath('userData'), 'wave'), () => waveSignals?.flush());
+    listeningLibrary = library;
+    const playbackChannels = ['loadSession', 'saveSession', 'loadCatalog', 'saveCatalog', 'listMixes', 'saveMix', 'removeMix'] as const;
+    for (const method of playbackChannels) {
+        const channel = 'soundcloud:library:' + method;
+        ipcMain.removeHandler(channel);
+        ipcMain.handle(channel, (event, userId: unknown, value: unknown, tracks: unknown) => {
+            if (!isTrustedSoundCloudSender(event)) throw new Error('Недопустимый отправитель библиотеки');
+            if (typeof userId !== 'number' || !Number.isSafeInteger(userId) || userId <= 0) throw new Error('Пользователь не определён');
+            switch (method) {
+                case 'loadSession': return library.request(method, userId);
+                case 'saveSession': return library.request(method, userId, value);
+                case 'loadCatalog': return library.request(method, userId);
+                case 'saveCatalog': return library.request(method, userId, value);
+                case 'listMixes': return library.request(method, userId);
+                case 'saveMix': return library.request(method, userId, value, tracks);
+                case 'removeMix': return library.request(method, userId, value);
+            }
+        });
+    }
+    ipcMain.handle('soundcloud:wave-taste', async (event, userId: unknown) => {
         if (!isTrustedSoundCloudSender(event)) return null;
         try {
-            return taste.profile(userId);
+            return await library.request('profile', userId);
         } catch (error) {
             console.warn('Вкус волны не посчитан:', error);
             return null;
@@ -1055,12 +1098,12 @@ async function init() {
     });
     // Подборки дня: снимок собирает страница, main хранит его до полуночи и подсказывает, что звучало за 30 дней
     const shelf = new WaveShelf(path.join(app.getPath('userData'), 'wave'));
-    ipcMain.handle('soundcloud:wave-shelf:load', (event, userId: unknown) => {
+    ipcMain.handle('soundcloud:wave-shelf:load', async (event, userId: unknown) => {
         if (!isTrustedSoundCloudSender(event)) return null;
         let recent: number[] = [];
         try {
             if (typeof userId === 'number' && Number.isSafeInteger(userId) && userId > 0)
-                recent = [...new Set(historyIndex.tastePlays(userId, Date.now() - 30 * 86400000).map((play) => play.id))].slice(-5000);
+                recent = [...new Set((await library.request('tastePlays', userId, Date.now() - 30 * 86400000)).map((play) => play.id))].slice(-5000);
         } catch (error) {
             console.warn('Недавние прослушивания для подборок не прочитаны:', error);
         }
@@ -1069,11 +1112,13 @@ async function init() {
     ipcMain.handle('soundcloud:wave-shelf:save', (event, userId: unknown, snapshot: unknown) =>
         isTrustedSoundCloudSender(event) ? shelf.save(userId, snapshot) : false,
     );
-    historyManager = new HistoryManager(mainWindow, historyIndex, taste, {
+    historyManager = new HistoryManager(mainWindow, library, {
         site: () => (contentView.webContents.isDestroyed() ? null : contentView.webContents),
         fallbackUser: () => waveExclusions?.currentUser() ?? 0,
         language: appLanguage,
+        reduceMotion: () => store.get('reduceMotion', false) === true,
         beforeOpen: () => {
+            closeQueueDialog();
             if (settingsManager.getView()) settingsManager.toggle();
         },
         onState: (open) => {
@@ -1098,6 +1143,13 @@ async function init() {
         applyThemeToContent();
     });
     ipcMain.removeAllListeners('toggle-history');
+    ipcMain.removeAllListeners('toggle-queue');
+    ipcMain.on('toggle-queue', (event) => {
+        if (!isTrustedLocalSender(event)) return;
+        historyManager?.hide();
+        if (settingsManager.getView()) settingsManager.toggle();
+        void contentView.webContents.executeJavaScript('window.__scQueue?.()').catch(console.error);
+    });
     ipcMain.on('toggle-history', (event) => {
         if (isTrustedLocalSender(event)) toggleHistory();
     });
@@ -1373,7 +1425,7 @@ async function init() {
             }
             // Re-apply the theme to all content
             applyThemeToContent();
-        } else if (key === 'hidePromotions' || key === 'hideEventsNearYou' || key === 'hideArtistUpsells' || isHomeBlockKey(key)) {
+        } else if (key === 'hidePromotions' || key === 'hideEventsNearYou' || key === 'hideArtistUpsells' || key === 'hideHeaderExtras' || isHomeBlockKey(key)) {
             applyThemeToContent();
         } else if (key === 'fullShuffle') {
             void contentView.webContents.executeJavaScript(fullShuffleScript(data.value === true)).catch(console.error);
@@ -1489,6 +1541,16 @@ async function init() {
 
 
 const viewStyles = new ViewStyles();
+function hiddenBlocksCSS(): string {
+    return [
+        homeBlocksCss((key) => store.get(key, homeBlockDefaults[key]) === true),
+        store.get('hideArtistUpsells', true) ? ARTIST_TOOLS_CSS : '',
+        store.get('hideHeaderExtras', true) ? '.header .header__fanUpsell,.header .header__forArtistsButton,.header .header__soundInput{display:none!important}' : '',
+        store.get('hidePromotions', true) ? '.banner.m-promotion{display:none!important}' : '',
+        store.get('hideEventsNearYou', true) ? '.velvetCakeModule{display:none!important}' : '',
+        store.get('hideArtistUpsells', true) ? '.creatorSubscriptionsButton.header__creatorUpsell,.artistConnectItem.m-upsellNextPro,.dropdownMenu [href*="checkout.soundcloud.com"],.spotlight:has(.spotlight__upsellBanner),.spotlight__upsellBanner,.spotlight__upsellCTA,.sidebarContent:has(.velvetCakeIframe),.artistConnectContainer .tileGallery__sliderPeekForward,.artistConnectContainer .tileGallery__sliderPeekBackward,.MuiBox-root:has(a[href*="getstarted/fan-support"]){display:none!important}' : '',
+    ].join('\n');
+}
 function applyThemeToContent() {
     if (!contentView || contentView.webContents.isDestroyed()) return;
     const sections = splitThemeCSS(themeService.getCurrentCustomThemeCSS());
@@ -1500,14 +1562,12 @@ function applyThemeToContent() {
         ':root{--background-base:#121212;--background-surface:#212121;--text-base:#ffffff;}',
         // Стандартные свойства: ::-webkit-scrollbar рисуется главным потоком и отстаёт от прокрутки.
         'html{scrollbar-width:thin;scrollbar-color:rgba(255,255,255,.2) rgba(255,255,255,.05)}',
-        store.get('hidePromotions', true) ? '.banner.m-promotion{display:none!important}' : '',
-        store.get('hideEventsNearYou', true) ? '.velvetCakeModule{display:none!important}' : '',
-        homeBlocksCss((key) => store.get(key, homeBlockDefaults[key]) === true),
-        store.get('hideArtistUpsells', true) ? '.creatorSubscriptionsButton.header__creatorUpsell,.artistConnectItem.m-upsellNextPro,.dropdownMenu [href*="checkout.soundcloud.com"],.spotlight:has(.spotlight__upsellBanner),.spotlight__upsellBanner,.spotlight__upsellCTA,.sidebarContent:has(.velvetCakeIframe),.artistConnectContainer .tileGallery__sliderPeekForward,.artistConnectContainer .tileGallery__sliderPeekBackward,.MuiBox-root:has(a[href*="getstarted/fan-support"]){display:none!important}' : '',
+        hiddenBlocksCSS(),
         sections.all, sections.content,
     ].join('\n');
     // До первой загрузки сайта страницы нет: стили и скрипты всё равно пропали бы, их ставит did-finish-load
     if (contentView.webContents.getURL()) {
+        contentView.webContents.send('soundcloud:early-blocks', hiddenBlocksCSS());
         void viewStyles.apply(contentView.webContents, css).catch(console.error);
         void contentView.webContents.executeJavaScript('for(const n of [document.documentElement,document.body]){n.classList.remove("theme-light");n.classList.add("theme-dark")}').catch(console.error);
         void contentView.webContents.executeJavaScript(pageFeaturesScript(store.get('hideArtistUpsells', true) === true)).catch(console.error);
@@ -1605,8 +1665,8 @@ app.on('before-quit', (event) => {
     if (!waveSignalsTaken && waveSignals && contentView && !contentView.webContents.isDestroyed()) {
         waveSignalsTaken = true;
         event.preventDefault();
-        const taken = contentView.webContents.executeJavaScript('window.__scWaveTakeSignals ? window.__scWaveTakeSignals() : null') as Promise<unknown>;
-        const late = new Promise<null>((resolve) => setTimeout(() => resolve(null), 700));
+        const taken = contentView.webContents.executeJavaScript('(async()=>{await window.__scSaveSession?.();return window.__scWaveTakeSignals?.() ?? null})()') as Promise<unknown>;
+        const late = new Promise<null>((resolve) => setTimeout(() => resolve(null), 5000));
         void Promise.race([taken, late])
             .then((result) => {
                 const out = result as { userId?: unknown; signals?: unknown } | null;
@@ -1640,6 +1700,7 @@ app.on('before-quit', (event) => {
 });
 
 app.on('will-quit', () => {
+    store.set('gpuCompatibilityRunning', false);
     clearInterval(diagnosticTimer);
     loopDelay.disable();
     diagnostics.close();
@@ -1654,10 +1715,13 @@ app.on('will-quit', () => {
 // Ссылка «открыть в клиенте» из карточки Discord: страница сайта включает трек, когда её модули найдены.
 // До этого __scOpenTrack отвечает false или его ещё нет, тогда повтор раз в секунду, не дольше 30 секунд
 let openLinkTimer: ReturnType<typeof setTimeout> | undefined;
-function openTrackLink(trackPath: string, attempt = 0): void {
+let openLinkRequest = 0;
+function openTrackLink(trackPath: string, attempt = 0, request = ++openLinkRequest): void {
+    if (request !== openLinkRequest) return;
     clearTimeout(openLinkTimer);
     const retry = (): void => {
-        if (attempt < 30) openLinkTimer = setTimeout(() => openTrackLink(trackPath, attempt + 1), 1000);
+        if (request !== openLinkRequest) return;
+        if (attempt < 30) openLinkTimer = setTimeout(() => openTrackLink(trackPath, attempt + 1, request), 1000);
         else console.warn('Ссылка на трек: сайт не готов за 30 секунд');
     };
     const view = contentView as BrowserView | undefined;
@@ -1666,9 +1730,9 @@ function openTrackLink(trackPath: string, attempt = 0): void {
         return;
     }
     // userGesture: воспроизведение по ссылке запускает пользователь, политика автовоспроизведения его не держит
-    const script = 'window.__scOpenTrack ? window.__scOpenTrack(' + JSON.stringify(trackPath) + ') : false';
+    const script = 'window.__scOpenTrack ? window.__scOpenTrack(' + JSON.stringify(trackPath) + ') : "not-ready"';
     (view.webContents.executeJavaScript(script, true) as Promise<unknown>).then(
-        (done) => { if (done !== true) retry(); },
+        (done) => { if (done === 'not-ready') retry(); else if (done === 'failed' || done === 'unavailable') queueToastNotification(translationService.translate('pageLoadFailed')); },
         (error: unknown) => { console.warn('Ссылка на трек не открыта:', error); retry(); },
     );
 }

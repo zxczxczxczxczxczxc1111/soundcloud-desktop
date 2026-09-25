@@ -266,10 +266,6 @@ export class ThemeService {
         return this.themesPath;
     }
 
-    public getAvailableThemes(): CustomTheme[] {
-        return Array.from(this.customThemes.values());
-    }
-
     public refreshThemes(): void {
         this.customThemes.clear();
         this.loadCustomThemes();

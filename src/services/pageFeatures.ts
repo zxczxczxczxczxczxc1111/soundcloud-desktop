@@ -3,6 +3,10 @@ interface FeatureWindow extends Window {
     __disposeSoundCloudFeatures?: () => void;
 }
 
+// Врезка рисуется своим документом раньше load и позднего анализа платных функций.
+// Путь стабилен при переводе title; правило работает на всех страницах сайта.
+export const ARTIST_TOOLS_CSS = '.webiEmbeddedModuleContainer:has(iframe[src*="/n/embeds/credit-tracker"]),.webiEmbeddedModuleContainer:has(iframe[title="Artist tools" i]),.webiEmbeddedModuleContainer:has(iframe[title="Инструменты артиста"]),iframe[src*="/n/embeds/credit-tracker"],iframe[title="Artist tools" i],iframe[title="Инструменты артиста"]{display:none!important}';
+
 export function installPageFeatures(hideArtistUpsells: boolean): void {
     const host = window as FeatureWindow;
     host.__disposeSoundCloudFeatures?.();

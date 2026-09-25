@@ -6,6 +6,7 @@ import { WebContentsView, BrowserWindow, ipcMain, type IpcMainInvokeEvent, type 
 import type ElectronStore from 'electron-store';
 import type { ThemeColors } from '../utils/colorExtractor';
 import { join } from 'path';
+import type { GpuRuntimeState } from '../services/gpuProcessMode';
 
 const defaults: Record<string, string | number | boolean> = {
     minimizeToTray: false,
@@ -14,8 +15,10 @@ const defaults: Record<string, string | number | boolean> = {
     hidePromotions: true,
     hideEventsNearYou: true,
     hideArtistUpsells: true,
+    hideHeaderExtras: true,
     fullShuffle: true,
     reduceMotion: false,
+    gpuCompatibilityMode: 'auto',
     siteLanguage: 'ru',
     ...homeBlockDefaults,
     adBlocker: true,
@@ -66,14 +69,17 @@ export class SettingsManager {
         private restoreFocus: () => void = () => parentWindow.webContents.focus(),
         /** Горячие клавиши клиента внутри панели: Ctrl+H и другие работают и при открытых настройках */
         private attach: (contents: WebContents) => void = () => undefined,
+        private beforeOpen: () => void = () => undefined,
+        private gpuRuntime?: GpuRuntimeState,
     ) {
         this.parentWindow.on('resize', this.resize);
         this.parentWindow.once('closed', () => this.dispose());
         ipcMain.handle('get-settings-state', (event) => {
             if (!this.owns(event)) throw new Error('Недопустимый отправитель настроек');
-            return Object.fromEntries(
-                Object.entries(defaults).map(([key, fallback]) => [key, this.store.get(key, fallback)]),
-            );
+            return {
+                ...Object.fromEntries(Object.entries(defaults).map(([key, fallback]) => [key, this.store.get(key, fallback)])),
+                gpuRuntime: this.gpuRuntime,
+            };
         });
         ipcMain.on('settings-ready', this.ready);
     }
@@ -88,6 +94,7 @@ export class SettingsManager {
             this.teardownView();
             return;
         }
+        this.beforeOpen();
         this.view = new WebContentsView({
             webPreferences: {
                 nodeIntegration: false,
@@ -156,9 +163,6 @@ export class SettingsManager {
     }
     public getView(): WebContentsView | null {
         return this.view;
-    }
-    public updateTranslations(): void {
-        this.view?.webContents.send('update-translations');
     }
     public dispose(): void {
         if (this.disposed) return;

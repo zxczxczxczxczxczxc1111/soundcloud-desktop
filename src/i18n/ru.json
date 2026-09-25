@@ -76,6 +76,7 @@
     "headerMaximize": "Развернуть",
     "headerRestore": "Восстановить",
     "headerClose": "Закрыть",
+    "headerQueue": "Очередь и подборки",
     "headerHistory": "История, Ctrl+H",
     "pluginPageTitle": "Страница плагина",
     "pluginPageQuestion": "Открыть этот адрес в браузере?",

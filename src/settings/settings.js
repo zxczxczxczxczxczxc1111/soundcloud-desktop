@@ -3,6 +3,7 @@ const SOUNDCLOUD_BADGE = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAEAAAABA
 
 async function initializeSettings() {
     const initial = await window.settingsAPI.invoke('get-settings-state');
+    document.documentElement.classList.toggle('reduce-motion', initial.reduceMotion === true);
     // Панель говорит на языке сайта. Ключ словаря это русская строка, поэтому разметка остаётся русской
     const englishText = window.SETTINGS_EN || {};
     let language = initial.siteLanguage === 'en' ? 'en' : 'ru';
@@ -20,6 +21,20 @@ async function initializeSettings() {
     });
     document.getElementById('useArtistInStatusLineToggle').checked = initial.statusDisplayType === 1;
     document.getElementById('siteLanguage').value = initial.siteLanguage === 'en' ? 'en' : 'ru';
+    const gpuSelector = document.getElementById('gpuCompatibilityMode');
+    gpuSelector.value = initial.gpuCompatibilityMode;
+    function updateGpuStatus() {
+        const runtime = initial.gpuRuntime;
+        let text = 'Применится после перезапуска.';
+        if (runtime?.detection === 'unsupported') text = 'Доступно на Windows.';
+        else if (runtime && gpuSelector.value === runtime.mode) {
+            if (runtime.interrupted) text = 'Отключено после аварийного завершения.';
+            else if (runtime.active) text = runtime.mode === 'auto' ? 'Включено автоматически для NVIDIA.' : 'Включено.';
+            else if (runtime.mode === 'auto') text = runtime.detection === 'nvidia' ? 'Отключено параметром запуска.' : runtime.detection === 'unknown' ? 'Не удалось определить видеокарту.' : 'NVIDIA не обнаружена.';
+            else text = 'Выключено.';
+        }
+        document.getElementById('gpuCompatibilityStatus').textContent = tr(text);
+    }
     for (const [id, setting] of [
         ['proxyFields', 'proxyEnabled'],
         ['webhookFields', 'webhookEnabled'],
@@ -366,7 +381,7 @@ async function initializeSettings() {
         new MutationObserver(sync).observe(select, { childList: true, subtree: true, characterData: true });
         sync();
     }
-    for (const id of ['customThemeSelector', 'accountSelector', 'siteLanguage']) {
+    for (const id of ['customThemeSelector', 'accountSelector', 'siteLanguage', 'gpuCompatibilityMode']) {
         const select = document.getElementById(id);
         if (select) enhanceSelect(select);
     }
@@ -399,6 +414,7 @@ async function initializeSettings() {
             }
             sourceAttributes.set(element, sources);
         }
+        updateGpuStatus();
     }
     applyLanguage();
 
@@ -494,12 +510,20 @@ async function initializeSettings() {
     document.getElementById('hideArtistUpsells')?.addEventListener('change', (e) => {
         ipcRenderer.send('setting-changed', { key: 'hideArtistUpsells', value: e.target.checked });
     });
+    document.getElementById('hideHeaderExtras')?.addEventListener('change', (e) => {
+        ipcRenderer.send('setting-changed', { key: 'hideHeaderExtras', value: e.target.checked });
+    });
 
     document.getElementById('fullShuffle')?.addEventListener('change', (e) => {
         ipcRenderer.send('setting-changed', { key: 'fullShuffle', value: e.target.checked });
     });
     document.getElementById('reduceMotion')?.addEventListener('change', (e) => {
+        document.documentElement.classList.toggle('reduce-motion', e.target.checked);
         ipcRenderer.send('setting-changed', { key: 'reduceMotion', value: e.target.checked });
+    });
+    gpuSelector.addEventListener('change', () => {
+        ipcRenderer.send('setting-changed', { key: 'gpuCompatibilityMode', value: gpuSelector.value });
+        updateGpuStatus();
     });
 
     // Перевод сайта ставится до его скриптов, поэтому сайт ждёт перезагрузки, а панель переводится сразу.

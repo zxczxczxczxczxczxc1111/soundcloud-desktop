@@ -4,6 +4,23 @@ import { applyPreferenceMigrations } from './preferenceMigrations';
 function memoryStore(values: Record<string, unknown>) {
     return { values, get: (key: string) => values[key], set: (key: string, value: unknown) => { values[key] = value; } };
 }
+it('новый профиль и прежнее умолчание NVIDIA переходят в автоматический режим', () => {
+    for (const values of [{}, { gpuCompatibility: false }]) {
+        const store = memoryStore(values);
+        applyPreferenceMigrations(store);
+        expect(store.values.gpuCompatibilityMode).toBe('auto');
+    }
+});
+it('сохраняет прежнее включение NVIDIA и новый ручной выбор после перезапуска', () => {
+    const store = memoryStore({ gpuCompatibility: true });
+    applyPreferenceMigrations(store);
+    expect(store.values.gpuCompatibilityMode).toBe('on');
+    for (const mode of ['off', 'auto', 'on']) {
+        store.set('gpuCompatibilityMode', mode);
+        applyPreferenceMigrations(store);
+        expect(store.values.gpuCompatibilityMode).toBe(mode);
+    }
+});
 it('включает блокировку рекламы один раз, а выключенную после этого не трогает', () => {
     const store = memoryStore({ adBlocker: false });
     applyPreferenceMigrations(store);

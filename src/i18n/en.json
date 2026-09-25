@@ -76,6 +76,7 @@
     "headerMaximize": "Maximize",
     "headerRestore": "Restore",
     "headerClose": "Close",
+    "headerQueue": "Queue and mixes",
     "headerHistory": "History, Ctrl+H",
     "pluginPageTitle": "Plugin page",
     "pluginPageQuestion": "Open this address in the browser?",

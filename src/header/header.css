@@ -153,6 +153,8 @@ button.nav-button {
     outline: 2px solid var(--header-text);
     outline-offset: -2px;
 }
+.windows-controls .control:focus-visible { outline: 2px solid var(--header-text); outline-offset: -3px; }
+@media (prefers-reduced-motion: reduce) { .nav-button, .windows-controls .control, .theme-toggle { transition: none; } .nav-button.refreshing .refresh-icon { animation: none; } }
 
 .title-bar {
     display: flex;

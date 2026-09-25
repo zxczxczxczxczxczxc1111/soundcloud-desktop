@@ -105,22 +105,9 @@ export class ShortcutService {
         this.shortcuts.set(id, { accelerator, action, description, enabled });
     }
 
-    unregister(id: string) {
-        this.shortcuts.delete(id);
-    }
-
     setEnabled(id: string, enabled: boolean) {
         const shortcut = this.shortcuts.get(id);
         if (shortcut) shortcut.enabled = enabled;
-    }
-
-    getShortcuts() {
-        return Array.from(this.shortcuts.entries()).map(([id, shortcut]) => ({
-            id,
-            accelerator: shortcut.accelerator,
-            description: shortcut.description,
-            enabled: shortcut.enabled ?? true,
-        }));
     }
 
     clear() {

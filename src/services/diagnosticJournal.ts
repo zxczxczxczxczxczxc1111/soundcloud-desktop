@@ -6,7 +6,7 @@ const numbers = new Set([
     'cpuPercent', 'workingSetMiB', 'privateMiB', 'processes', 'loopP95Ms', 'loopMaxMs', 'updates', 'trackChanges', 'sinceUpdateMs', 'sinceProgressMs', 'exitCode', 'errorCode', 'line',
     'droppedEvents', 'uptimeSeconds', 'waveSeen', 'waveArtistTracks', 'waveMoodTags',
 ]);
-const flags = new Set(['playing', 'hasTrack', 'windowVisible', 'windowMinimized', 'settingsOpen', 'previousUnclean', 'adblock', 'proxy', 'dirty', 'discord', 'githubBadge']);
+const flags = new Set(['playing', 'hasTrack', 'windowVisible', 'windowMinimized', 'settingsOpen', 'previousUnclean', 'adblock', 'proxy', 'dirty', 'discord', 'githubBadge', 'gpuInProcess', 'gpuAuto', 'gpuNvidiaDetected', 'gpuFallback']);
 const reasons = new Set(['clean-exit', 'abnormal-exit', 'killed', 'crashed', 'oom', 'launch-failed', 'integrity-failure', 'memory-eviction']);
 const errorTypes = new Set(['Error', 'TypeError', 'RangeError', 'ReferenceError', 'SyntaxError', 'URIError', 'AggregateError']);
 const sourceFiles = new Set([

@@ -3,7 +3,8 @@
  * @vitest-environment-options { "url": "https://soundcloud.com/discover" }
  */
 import { afterEach, beforeEach, expect, it, vi } from 'vitest';
-import { localDay, waveScript, type WaveTrack } from './wave';
+import { localDay, waveScript, type WaveTrack, type WaveWindow } from './wave';
+import type { PlaybackSnapshot } from './playbackStore';
 
 // Поддельный сайт: плеер, API и модель трека через тот же webpackJsonp, что у SoundCloud
 interface FakeItem { sound: { id: number; currentTime?(): number; getMediaDuration?(): number }; explicit?: boolean; sourceInfo?: { type: string } }
@@ -31,7 +32,7 @@ function fakeSite(related: (seed: number) => WaveTrack[], extra: Extra = () => u
         isSnippetized(): boolean { return false; }
         isBlocked(): boolean { return false; }
         isPlayable(): boolean { return true; }
-        seek(): void {}
+        seek(value: number): void { position = value; }
         getMediaDuration(): number { return 200000; }
         currentTime(): number { return position; }
     }
@@ -59,7 +60,7 @@ function fakeSite(related: (seed: number) => WaveTrack[], extra: Extra = () => u
     const api = {
         callEndpointByUrl: vi.fn(),
         callEndpoint: vi.fn(async (name: string, path: { track_id?: number }, query: Record<string, unknown>) => {
-            const body = extra(name, path, query);
+            const body = await extra(name, path, query);
             if (body !== undefined) return { body };
             switch (name) {
                 case 'me': return { body: { id: 77 } };
@@ -175,7 +176,7 @@ it('без модулей сайта говорит, что волна не ра
     Object.assign(window, { webpackJsonp: [] });
     window.eval(waveScript());
     await vi.advanceTimersByTimeAsync(21000);
-    expect(document.querySelector('#sc-wave .scw-track')?.textContent).toBe('My Wave doesn’t work with this SoundCloud version');
+    expect(document.querySelector('#sc-wave .scw-track')?.textContent).toBe('The SoundCloud player is not ready yet');
     expect(document.querySelector<HTMLButtonElement>('#sc-wave .scw-play')?.disabled).toBe(true);
 });
 
@@ -233,7 +234,7 @@ it('ПКМ по треку в списке: меню и волна от этог
 
     const event = rightClick(row.querySelector('.soundTitle__title')!);
     expect(event.defaultPrevented).toBe(true);
-    expect(menuActs()).toEqual(['wave-track', 'wave-artist', 'pick', 'more', 'later', 'dislike', 'hide-artist']);
+    expect(menuActs()).toEqual(['wave-track', 'wave-artist', 'queue-next', 'queue-last', 'pick', 'more', 'later', 'dislike', 'hide-artist']);
     choose('wave-track');
     expect(document.querySelector('.scw-menu')).toBeNull();
     await vi.advanceTimersByTimeAsync(100);
@@ -447,11 +448,11 @@ it('волна от трека, к которому нечего подобра�
 });
 
 it('ссылка из Discord: трек открывается и сразу играет, мусор и неготовый сайт не ломают', async () => {
-    type Host = { __scOpenTrack: (path: string) => Promise<boolean> };
+    type Host = { __scOpenTrack: (path: string) => Promise<string> };
     Object.assign(window, { webpackJsonp: [] });
     window.eval(waveScript());
     // Модули сайта ещё не найдены: main спросит позже
-    expect(await (window as unknown as Host).__scOpenTrack('/art/song')).toBe(false);
+    expect(await (window as unknown as Host).__scOpenTrack('/art/song')).toBe('not-ready');
     window.dispatchEvent(new Event('pagehide'));
 
     const site = fakeSite(relatedTracks, siteExtra);
@@ -459,9 +460,9 @@ it('ссылка из Discord: трек открывается и сразу и�
     window.eval(waveScript());
     await vi.advanceTimersByTimeAsync(100);
     const open = (window as unknown as Host).__scOpenTrack;
-    expect(await open('/../evil')).toBe(true);
+    expect(await open('/../evil')).toBe('unavailable');
     expect(site.player.replaceQueue).not.toHaveBeenCalled();
-    expect(await open('/art/song')).toBe(true);
+    expect(await open('/art/song')).toBe('played');
     expect(site.api.callEndpoint).toHaveBeenCalledWith('resolve', {}, { url: 'https://soundcloud.com/art/song' });
     const queued = site.player.replaceQueue.mock.calls[0][0] as FakeItem[];
     expect(queued.map((item) => item.sound.id)).toEqual([555]);
@@ -470,7 +471,7 @@ it('ссылка из Discord: трек открывается и сразу и�
 });
 
 it('ссылка из Discord на трек, который уже играет: открывается его страница, очередь и волна остаются', async () => {
-    type Host = { __scOpenTrack: (path: string) => Promise<boolean> };
+    type Host = { __scOpenTrack: (path: string) => Promise<string> };
     const site = fakeSite((seed) => relatedTracks(seed).map((track) => ({ ...track, permalink_url: 'https://soundcloud.com/art/rel-' + track.id })));
     window.eval(waveScript());
     await vi.advanceTimersByTimeAsync(100);
@@ -485,7 +486,7 @@ it('ссылка из Discord на трек, который уже играет:
     };
     document.addEventListener('click', onLink);
     try {
-        expect(await (window as unknown as Host).__scOpenTrack('/art/rel-' + playing.id)).toBe(true);
+        expect(await (window as unknown as Host).__scOpenTrack('/art/rel-' + playing.id)).toBe('played');
     } finally {
         document.removeEventListener('click', onLink);
     }
@@ -815,6 +816,18 @@ it('ожидание рисует заготовки плиток; обложк�
 const batchOf = (list: WaveTrack[]) => (query: Record<string, unknown>): WaveTrack[] =>
     String(query.ids).split(',').map((id) => list.find((track) => track.id === Number(id)) ?? { id: Number(id), kind: 'track', user_id: 700, duration: 200000, title: 'Seed ' + id });
 
+it('ошибка подборок видна, повтор восстанавливает полку без перезагрузки страницы', async () => {
+    fakeSite(relatedTracks);
+    const snapshot = { day: localDay(Date.now()), cards: [{ kind: 'group', title: 'Techno', sub: '', ids: [51], seeds: [], keys: ['techno'], art: [] }] };
+    const load = vi.fn().mockRejectedValueOnce(new Error('Offline')).mockResolvedValue({ snapshot, recent: [] });
+    Object.assign(window, { soundcloudAPI: { waveShelf: { load, save: vi.fn(async () => true) } } });
+    window.eval(waveScript()); await vi.advanceTimersByTimeAsync(100);
+    expect(document.querySelector('.scw-shelf-error')?.textContent).toContain('Could not load mixes');
+    document.querySelector<HTMLButtonElement>('[data-act="shelf-retry"]')!.click(); await vi.advanceTimersByTimeAsync(100);
+    expect(document.querySelector('.scw-shelf-error')).toBeNull();
+    expect(document.querySelector('.scw-card .scw-t1')?.textContent).toBe('Techno');
+});
+
 it('полка из снимка дня: находки играют первыми по порядку, карточка отмечена, режим скрыт', async () => {
     const finds = Array.from({ length: 12 }, (_, i): WaveTrack => ({ id: 5001 + i, kind: 'track', user_id: 600 + i, duration: 200000, title: 'Find ' + i }));
     const site = fakeSite(relatedTracks, (name, _path, query) => (name === 'trackBatch' ? batchOf(finds)(query) : undefined));
@@ -950,4 +963,168 @@ it('набор через меню: трек в подборку, кнопка �
     expect(queued.some((item) => Math.floor(item.sound.id / 1000) === 555)).toBe(true);
     expect(section.querySelector('.scw-hint')?.textContent).toBe('Wave from picks: Song');
     expect(section.querySelector('[data-act="pick-start"]')).toBeNull();
+});
+
+it('подключает плеер, появившийся после первых двадцати попыток', async () => {
+    window.eval(waveScript());
+    await vi.advanceTimersByTimeAsync(21000);
+    expect(document.querySelector('#sc-wave')?.textContent).toContain('is not ready yet');
+    const site = fakeSite(relatedTracks);
+    window.dispatchEvent(new Event('online'));
+    document.body.append(document.createElement('div'));
+    await vi.advanceTimersByTimeAsync(10000);
+    expect(site.api.callEndpoint).toHaveBeenCalled();
+    expect(document.querySelector<HTMLButtonElement>('#sc-wave .scw-play')?.disabled).toBe(false);
+    expect(document.querySelector('#sc-wave [data-act="retry"]')).toBeNull();
+});
+
+it('повторяет загрузку профиля после временной ошибки сети', async () => {
+    let offline = true;
+    const site = fakeSite(relatedTracks, (name) => {
+        if (offline && ['playHistoryTracks', 'soundLikesIds'].includes(name)) throw new Error('Temporary network failure');
+    });
+    window.eval(waveScript());
+    await vi.advanceTimersByTimeAsync(100);
+    const initialCalls = site.api.callEndpoint.mock.calls.filter(([name]) => name === 'playHistoryTracks').length;
+    expect(initialCalls).toBe(1);
+    offline = false;
+    window.dispatchEvent(new Event('online'));
+    document.querySelector<HTMLButtonElement>('#sc-wave [data-act="shake"]')!.click();
+    await vi.advanceTimersByTimeAsync(10000);
+    expect(site.api.callEndpoint.mock.calls.filter(([name]) => name === 'playHistoryTracks')).toHaveLength(initialCalls + 1);
+    expect(site.api.callEndpoint.mock.calls.some(([name]) => name === 'relatedSounds')).toBe(true);
+    expect(document.querySelectorAll('#sc-wave .scw-tile[data-track]')).toHaveLength(5);
+});
+
+it('ответы старого режима не отбирают треки у нового', async () => {
+    const pending: Array<() => void> = [];
+    fakeSite(relatedTracks, (name, path) => {
+        if (name === 'relatedSounds') return new Promise((resolve) => {
+            pending.push(() => resolve({ collection: relatedTracks(Number(path.track_id)) }));
+        });
+        return undefined;
+    });
+    window.eval(waveScript());
+    await vi.advanceTimersByTimeAsync(100);
+    expect(pending).toHaveLength(3);
+    document.querySelector<HTMLButtonElement>('#sc-wave [data-mode="fresh"]')!.click();
+    await vi.advanceTimersByTimeAsync(100);
+    expect(pending).toHaveLength(6);
+    for (const complete of pending.slice(0, 3)) complete();
+    await vi.advanceTimersByTimeAsync(100);
+    for (const complete of pending.slice(3, 6)) complete();
+    await vi.advanceTimersByTimeAsync(100);
+    expect(document.querySelectorAll('#sc-wave .scw-tile[data-track]')).toHaveLength(5);
+    expect(document.querySelector<HTMLButtonElement>('#sc-wave .scw-play')?.disabled).toBe(false);
+});
+
+it('из истории играет последний выбранный трек независимо от порядка ответов', async () => {
+    const pending = new Map<string, (track: WaveTrack) => void>();
+    const site = fakeSite(relatedTracks, (name, _path, query) => {
+        if (name === 'resolve') return new Promise((resolve) => { pending.set(String(query.url), resolve); });
+        return undefined;
+    });
+    window.eval(waveScript());
+    await vi.advanceTimersByTimeAsync(100);
+    const open = (window as unknown as { __scOpenTrack(path: string, go: boolean): Promise<string> }).__scOpenTrack;
+    const first = open('/artist/first', false);
+    const second = open('/artist/second', false);
+    pending.get('https://soundcloud.com/artist/second')!({ id: 92, kind: 'track', title: 'Second' });
+    await second;
+    expect(site.player.getCurrentSound()?.id).toBe(92);
+    pending.get('https://soundcloud.com/artist/first')!({ id: 91, kind: 'track', title: 'First' });
+    await first;
+    expect(site.player.getCurrentSound()?.id).toBe(92);
+});
+
+it('ошибка включения из истории возвращает failed', async () => {
+    const site = fakeSite(relatedTracks, (name) => {
+        if (name === 'resolve') throw new Error('HTTP 503');
+    });
+    window.eval(waveScript());
+    await vi.advanceTimersByTimeAsync(100);
+    const open = (window as unknown as { __scOpenTrack(path: string, go: boolean): Promise<string> }).__scOpenTrack;
+    expect(await open('/artist/unavailable', false)).toBe('failed');
+    expect(site.player.playCurrent).not.toHaveBeenCalled();
+    expect(site.player.getCurrentSound()).toBeNull();
+});
+
+function savedLibrary(snapshot: PlaybackSnapshot | null = null) {
+    const library = {
+        loadSession: vi.fn(async () => snapshot), saveSession: vi.fn(async () => true),
+        loadCatalog: vi.fn(async () => null), saveCatalog: vi.fn(async () => true),
+        listMixes: vi.fn(async () => []), saveMix: vi.fn(), removeMix: vi.fn(async () => true),
+    };
+    Object.assign(window, { soundcloudAPI: { library } });
+    return library;
+}
+it('восстанавливает источник волны, очередь, позицию и паузу', async () => {
+    const tracks = relatedTracks(31).slice(0, 3);
+    const saved: PlaybackSnapshot = { version: 1, at: Date.now(), items: tracks.map((track) => ({ track, wave: true, explicit: false })),
+        index: 1, position: 43000, paused: true, active: true, mode: 'fresh', genre: null, seed: null, fallback: true };
+    const site = fakeSite(relatedTracks, (name) => name === 'trackBatch' ? tracks : undefined);
+    const library = savedLibrary(saved);
+    window.eval(waveScript());
+    await vi.advanceTimersByTimeAsync(100);
+    expect(site.player.getCurrentSound()?.id).toBe(tracks[1].id);
+    expect(site.player.replaceQueue).toHaveBeenCalledWith(expect.any(Array), 1, { pause: true });
+    expect(position).toBe(43000); expect(site.player.isPlaying()).toBe(false);
+    expect(document.querySelector('#sc-wave')?.textContent).toContain(tracks[1].title);
+    expect(site.states.fallbackEnabled).toBe(false);
+    await (window as WaveWindow).__scSaveSession?.();
+    expect(library.saveSession).toHaveBeenLastCalledWith(77, expect.objectContaining({ paused: true, active: true, mode: 'fresh', position: 43000 }));
+});
+it('добавляет трек следующим и в конец без остановки текущего', async () => {
+    const site = fakeSite(relatedTracks, siteExtra);
+    window.eval(waveScript()); await vi.advanceTimersByTimeAsync(100);
+    document.querySelector<HTMLButtonElement>('#sc-wave .scw-play')!.click(); await vi.advanceTimersByTimeAsync(100);
+    const current = site.player.getCurrentSound()?.id;
+    const row = listRow(); rightClick(row.querySelector('.soundTitle__title')!); choose('queue-next');
+    await vi.advanceTimersByTimeAsync(100);
+    expect(site.player.getQueue().slice()[1].sound.id).toBe(song.id);
+    expect(site.player.getCurrentSound()?.id).toBe(current); expect(site.player.isPlaying()).toBe(true);
+    rightClick(row.querySelector('.soundTitle__title')!); choose('queue-last'); await vi.advanceTimersByTimeAsync(100);
+    expect(site.player.getQueue().slice(-1)[0]?.sound.id).toBe(song.id);
+});
+it('повторяет восстановление сессии после ошибки API без перезаписи сохранённой очереди', async () => {
+    const tracks = relatedTracks(31).slice(0, 3);
+    const saved: PlaybackSnapshot = { version: 1, at: Date.now(), items: tracks.map((track) => ({ track, wave: true, explicit: false })),
+        index: 1, position: 43000, paused: true, active: true, mode: 'similar', genre: null, seed: null, fallback: true };
+    let requests = 0;
+    const site = fakeSite(relatedTracks, (name) => {
+        if (name === 'trackBatch') { if (++requests === 1) throw new Error('HTTP 503'); return tracks; }
+        return undefined;
+    });
+    const library = savedLibrary(saved); window.eval(waveScript()); await vi.advanceTimersByTimeAsync(100);
+    expect(library.saveSession).not.toHaveBeenCalled();
+    await vi.advanceTimersByTimeAsync(6000);
+    expect(site.player.getCurrentSound()?.id).toBe(tracks[1].id);
+    expect(position).toBe(43000); expect(site.player.isPlaying()).toBe(false);
+});
+it('позднее возвращение сайтом того же трека не отменяет восстановление волны', async () => {
+    const tracks = relatedTracks(31).slice(0, 3);
+    const saved: PlaybackSnapshot = { version: 1, at: Date.now(), items: tracks.map((track) => ({ track, wave: true, explicit: false })),
+        index: 1, position: 43000, paused: true, active: true, mode: 'similar', genre: null, seed: null, fallback: true };
+    let complete: ((tracks: WaveTrack[]) => void) | undefined;
+    const site = fakeSite(relatedTracks, (name) => name === 'trackBatch' ? new Promise<WaveTrack[]>((resolve) => { complete = resolve; }) : undefined);
+    savedLibrary(saved); window.eval(waveScript()); await vi.advanceTimersByTimeAsync(100);
+    site.setItems([{ sound: { id: tracks[1].id } }], 0);
+    expect(complete).toBeDefined(); complete!(tracks);
+    await vi.advanceTimersByTimeAsync(100);
+    expect(site.player.getQueue().length).toBe(3); expect(position).toBe(43000);
+    expect(document.querySelector('#sc-wave')?.textContent).toContain(tracks[1].title);
+});
+it('не прерывает первую подборку ожиданием следующих страниц лайков, затем охватывает их', async () => {
+    const likes = Array.from({ length: 250 }, (_, i) => ({ id: 20000 + i, title: 'Like ' + i, user_id: 30000 + i, duration: 200000 }));
+    let continuePage: ((body: unknown) => void) | undefined;
+    fakeSite(relatedTracks, (name, _path, query) => {
+        if (name === 'soundLikesIds') return query.cursor ? new Promise((resolve) => { continuePage = resolve; }) : { collection: likes.slice(0, 200).map((t) => t.id), next_href: 'https://api-v2.soundcloud.com/me/likes/ids?cursor=next' };
+        if (name === 'trackBatch') return likes.filter((track) => String(query.ids).split(',').includes(String(track.id)));
+        return undefined;
+    });
+    const library = savedLibrary(); window.eval(waveScript()); await vi.advanceTimersByTimeAsync(1000);
+    expect(document.querySelectorAll('#sc-wave .scw-tile[data-track]')).toHaveLength(5);
+    expect(continuePage).toBeDefined(); continuePage!({ collection: likes.slice(200).map((t) => t.id) });
+    await vi.advanceTimersByTimeAsync(1000);
+    expect(library.saveCatalog).toHaveBeenCalledWith(77, expect.arrayContaining([expect.objectContaining({ id: 20249 })]));
 });

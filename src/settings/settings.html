@@ -4,8 +4,9 @@
         <meta charset="utf-8" />
         <meta
             http-equiv="Content-Security-Policy"
-            content="default-src 'none'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src https: data:; font-src https://assets.web.soundcloud.cloud; connect-src 'none'"
+            content="default-src 'none'; script-src 'self'; style-src 'self' 'unsafe-inline' https://style.sndcdn.com; img-src https: data:; font-src data: https://assets.web.soundcloud.cloud; connect-src 'none'"
         />
+        <link rel="stylesheet" href="https://style.sndcdn.com/css/soehne-6ee1b930cae107f8f71f.css" />
         <link rel="stylesheet" href="settings.css" />
         <script src="settingsText.js" defer></script>
         <script src="settings.js" defer></script>
@@ -51,6 +52,14 @@
                         <label class="row"><span class="text">Сворачивать в трей</span><span class="toggle"><input type="checkbox" id="minimizeToTray" /><span class="slider"></span></span></label>
                         <label class="row"><span class="text">Кнопки навигации в шапке</span><span class="toggle"><input type="checkbox" id="navigationControlsEnabled" /><span class="slider"></span></span></label>
                         <label class="row"><span class="text">Меньше анимаций</span><span class="toggle"><input type="checkbox" id="reduceMotion" /><span class="slider"></span></span></label>
+                        <div class="row">
+                            <span class="text"><label for="gpuCompatibilityMode">Совместимость NVIDIA</label><span class="hint" id="gpuCompatibilityStatus" data-no-i18n aria-live="polite"></span></span>
+                            <select id="gpuCompatibilityMode" class="input" aria-label="Совместимость NVIDIA">
+                                <option value="auto">Автоматически</option>
+                                <option value="on">Включено</option>
+                                <option value="off">Выключено</option>
+                            </select>
+                        </div>
                     </section>
 
                     <section class="section" id="soundcloud" hidden>
@@ -59,6 +68,7 @@
                         <label class="row"><span class="text">Скрывать рекламные блоки</span><span class="toggle"><input type="checkbox" id="hidePromotions" /><span class="slider"></span></span></label>
                         <label class="row"><span class="text">Скрывать концерты поблизости</span><span class="toggle"><input type="checkbox" id="hideEventsNearYou" /><span class="slider"></span></span></label>
                         <label class="row"><span class="text">Скрывать предложения Artist Pro</span><span class="toggle"><input type="checkbox" id="hideArtistUpsells" /><span class="slider"></span></span></label>
+                        <label class="row"><span class="text">Скрывать Go+, Artist Studio и загрузку в шапке</span><span class="toggle"><input type="checkbox" id="hideHeaderExtras" /><span class="slider"></span></span></label>
                         <label class="row">
                             <span class="text"><span>Перемешивать всю очередь</span><span class="hint">Сам SoundCloud перемешивает только загруженные треки</span></span>
                             <span class="toggle"><input type="checkbox" id="fullShuffle" /><span class="slider"></span></span>
