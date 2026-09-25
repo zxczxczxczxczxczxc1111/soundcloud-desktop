@@ -103,7 +103,9 @@ it('«Не нравится» с подтверждёнными копиями, 
     expect(excluded(upload(2, 'Y', 2, 'Other'))).toBe(true);
     expect(excluded(upload(3, 'Z', 9, 'Hidden'))).toBe(true);
     expect(excluded(upload(4, 'Later', 1, 'Artist'))).toBe(false);
+    // «Скрыть другие версии» на оригинале: slowed скрыт, сам оригинал и его перезалив остаются
     expect(excluded(upload(5, 'Artist - Theme (Slowed)', 7, 'Slowed Channel'))).toBe(true);
+    expect(excluded(upload(7, 'Artist - Theme', 8, 'Vibes'))).toBe(false);
     expect(excluded(upload(6, 'Artist - Other', 1, 'Artist'))).toBe(false);
 });
 
@@ -216,6 +218,47 @@ it('сборка в worker: до конца обхода ждёт, после п
         expect(outcome.edition?.uploads.map((item) => item.id)).toEqual([52]);
         expect(radar.build(77, '2026-09-25', cutoff, true, false, now)).toEqual({ published: false, waiting: false, edition: null });
         expect(store.editions(77)).toHaveLength(1);
+    } finally {
+        index.close();
+        store.close();
+    }
+});
+
+it('выпуск для страницы: «Уже слышал» на сейчас без перестановки; «Все найденные» без позиций выпуска, найденное позже с отметкой', () => {
+    const directory = mkdtempSync(join(tmpdir(), 'sc-radar-test-'));
+    folders.push(directory);
+    const store = new RecommendStore(directory);
+    const index = new HistoryIndex(directory, new WaveSignals(directory));
+    const taste = new TasteService(directory, index, () => [], (user, played) => store.tasteLibrary(user, played));
+    const empty: WaveExclusionList = { tracks: [], artists: [], laterTracks: [], laterArtists: [], more: [], families: [] };
+    const radar = new RadarService(store, index, taste, () => empty);
+    const now = Date.now();
+    const cutoff = now - 3 * 3600000;
+    const at = (shift: number): string => new Date(cutoff + shift).toISOString();
+    const track = (id: number, title: string, created: string): object => ({ id, kind: 'track', title, user_id: 5, user: { id: 5, username: 'Five' }, duration: 200000, created_at: created });
+    try {
+        store.syncStart(77, 'followings', false, now);
+        store.syncPage(77, 'followings', 1, [{ key: 'sc:user:5' }], null, now);
+        store.syncFinish(77, 'followings', 1, 'complete', '', now);
+        store.recordUploads(77, [track(51, 'Fresh', at(-2 * DAY)), track(52, 'Artist - Reup', at(-DAY))], now - 4 * 3600000);
+        store.catalogChecked(77, 'user:5', 'Five', 'ok', '', 2, now - 4 * 3600000);
+        expect(radar.build(77, '2026-09-25', cutoff, false, false, now).published).toBe(true);
+        // После выпуска: лайк позиции и новая загрузка подписки
+        store.syncStart(77, 'likes', false, now);
+        store.syncPage(77, 'likes', 1, [{ key: 'sc:track:51' }], null, now);
+        store.syncFinish(77, 'likes', 1, 'complete', '', now);
+        store.recordUploads(77, [track(54, 'Later', at(3600000))], now);
+
+        const view = radar.view(77, undefined, undefined, now);
+        expect(view.editions.map((entry) => [entry.period, entry.revision])).toEqual([['2026-09-25', 1]]);
+        expect(view.edition?.items.map((item) => [item.id, item.heard])).toEqual([[51, true]]);
+        expect(view.edition?.uploads.map((item) => item.id)).toEqual([52]);
+        expect(radar.view(77, '2026-09-18', 1, now)).toEqual({ edition: null, editions: view.editions });
+
+        const found = radar.found(77, '2026-09-25', 1, now);
+        expect(found.map((item) => [item.id, item.after === true])).toEqual([[54, true]]);
+        expect(radar.found(77, '2026-09-18', 1, now)).toEqual([]);
+        expect(radar.found('77', '2026-09-25', 1, now)).toEqual([]);
     } finally {
         index.close();
         store.close();

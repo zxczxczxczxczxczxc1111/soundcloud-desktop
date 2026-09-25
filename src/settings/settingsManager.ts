@@ -1,6 +1,6 @@
 import { trustLocalFile } from '../trustedViews';
 import { homeBlockDefaults } from '../services/homeBlocks';
-import { DEFAULT_RADAR_SCHEDULE } from '../services/radarSchedule';
+import { DEFAULT_RADAR_SCHEDULE, systemTimeZone } from '../services/radarSchedule';
 import { TEMPLATE_DEFAULTS } from '../services/presenceService';
 import { WebContentsView, BrowserWindow, ipcMain, type IpcMainInvokeEvent, type WebContents } from 'electron';
 import type ElectronStore from 'electron-store';
@@ -74,6 +74,8 @@ export class SettingsManager {
             if (!this.owns(event)) throw new Error('Недопустимый отправитель настроек');
             return {
                 ...Object.fromEntries(Object.entries(defaults).map(([key, fallback]) => [key, this.store.get(key, fallback)])),
+                // Зону при первом запуске пишет перенос настроек; до него показывается зона системы
+                radarZone: this.store.get('radarZone', systemTimeZone()),
                 gpuRuntime: this.gpuRuntime,
             };
         });

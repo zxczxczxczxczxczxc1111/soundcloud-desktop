@@ -20,7 +20,7 @@ import { WaveExclusions } from './services/waveExclusions';
 import { WaveShelf } from './services/waveShelf';
 import { WaveSignals } from './services/waveSignals';
 import { LibraryService } from './services/libraryService';
-import { DEFAULT_RADAR_SCHEDULE, RadarScheduler, cleanCollectResult, cleanSchedule } from './services/radarSchedule';
+import { DEFAULT_RADAR_SCHEDULE, RadarScheduler, cleanCollectResult, cleanSchedule, radarPeriod } from './services/radarSchedule';
 import { HistoryManager } from './history/historyManager';
 import { AwayTracker } from './services/awayTracker';
 import { OPEN_PROTOCOL, parseOpenLink } from './services/openLink';
@@ -1067,9 +1067,31 @@ async function init() {
         },
         changed: (state) => {
             if (state.error) console.warn('Радар: ' + state.phase + ' ' + state.period + ' ' + state.error);
+            // Страница сама решает, перечитывать ли выпуск: по смене периода или публикации
+            void radarPage('window.__scRadarChanged?.(' + JSON.stringify(state) + ')').catch((error: unknown) => console.warn('Радар: страница не узнала о выпуске', error));
         },
     });
     radarScheduler.start();
+    // Радар для страницы: выпуск с архивом, «Все найденные», пересборка и состояние сбора
+    const radarUser = (event: Pick<IpcMainEvent, 'sender' | 'senderFrame'>, userId: unknown): number => {
+        if (!isTrustedSoundCloudSender(event)) throw new Error('Недопустимый отправитель радара');
+        if (typeof userId !== 'number' || !Number.isSafeInteger(userId) || userId <= 0) throw new Error('Пользователь не определён');
+        return userId;
+    };
+    for (const channel of ['soundcloud:radar:view', 'soundcloud:radar:found', 'soundcloud:radar:rebuild', 'soundcloud:radar:state']) ipcMain.removeHandler(channel);
+    ipcMain.handle('soundcloud:radar:view', (event, userId: unknown, period: unknown, revision: unknown) => library.request('radarView', radarUser(event, userId), period, revision));
+    ipcMain.handle('soundcloud:radar:found', (event, userId: unknown, period: unknown, revision: unknown) => library.request('radarFound', radarUser(event, userId), period, revision));
+    ipcMain.handle('soundcloud:radar:rebuild', async (event, userId: unknown) => {
+        const user = radarUser(event, userId);
+        const period = radarPeriod(Date.now(), cleanSchedule(store.get('radarDay'), store.get('radarTime'), store.get('radarZone')));
+        // Недели ещё нет: это просто сборка сейчас, а не ревизия; иначе новая ревизия, прежняя остаётся в архиве
+        const manual = (await library.request('radarStatus', user, period.key, period.at)).published;
+        return library.request('radarBuild', user, period.key, period.at, true, manual);
+    });
+    ipcMain.handle('soundcloud:radar:state', (event) => {
+        if (!isTrustedSoundCloudSender(event)) throw new Error('Недопустимый отправитель радара');
+        return radarScheduler?.getState() ?? null;
+    });
     const playbackChannels = ['loadSession', 'saveSession', 'loadCatalog', 'saveCatalog', 'listMixes', 'saveMix', 'removeMix'] as const;
     for (const method of playbackChannels) {
         const channel = 'soundcloud:library:' + method;

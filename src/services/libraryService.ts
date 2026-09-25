@@ -43,6 +43,8 @@ export interface LibraryOperations {
     radarBuild: Operation<RadarService['build']>;
     radarEditions: Operation<RecommendStore['editions']>;
     radarEdition: Operation<RecommendStore['edition']>;
+    radarView: Operation<RadarService['view']>;
+    radarFound: Operation<RadarService['found']>;
 }
 export type LibraryRequest = { [K in keyof LibraryOperations]: { id: number; method: K; args: LibraryOperations[K]['args'] } }[keyof LibraryOperations];
 export interface LibraryReply { id: number; value?: unknown; error?: string }
@@ -84,7 +86,7 @@ export class LibraryService {
     }
     public request<K extends keyof LibraryOperations>(method: K, ...args: LibraryOperations[K]['args']): Promise<LibraryOperations[K]['result']> {
         try {
-            if (method === 'sync' || method === 'profile' || method === 'view' || method === 'radarBuild') this.flush();
+            if (method === 'sync' || method === 'profile' || method === 'view' || method === 'radarBuild' || method === 'radarView' || method === 'radarFound') this.flush();
             const worker = this.start();
             const id = ++this.sequence;
             return new Promise((resolve, reject) => {

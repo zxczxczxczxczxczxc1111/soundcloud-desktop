@@ -5,7 +5,7 @@ import type { WaveReason, WaveTrack } from './wave';
 import { artworkOf, text, trackPathOf } from './waveSignals';
 
 export interface SavedQueueItem { track: WaveTrack; explicit: boolean; wave: boolean; reason?: WaveReason }
-export interface SavedSeed { kind: 'track' | 'artist' | 'playlist' | 'daily' | 'forgotten' | 'group' | 'tracks'; title: string; tracks: WaveTrack[]; own: WaveTrack[]; order?: 'fixed' | 'blend'; mode?: 'similar' | 'fresh' }
+export interface SavedSeed { kind: 'track' | 'artist' | 'playlist' | 'daily' | 'forgotten' | 'group' | 'tracks' | 'radar'; title: string; tracks: WaveTrack[]; own: WaveTrack[]; order?: 'fixed' | 'blend'; mode?: 'similar' | 'fresh' }
 export interface PlaybackSnapshot {
     version: 1; at: number; items: SavedQueueItem[]; index: number; position: number; paused: boolean;
     active: boolean; mode: 'similar' | 'fresh'; genre: string | null; seed: SavedSeed | null; fallback: boolean;
@@ -55,6 +55,7 @@ function cleanReason(input: unknown): WaveReason | undefined {
         case 'genreSimilar': case 'mood': return { kind: value.kind, seed, genre };
         case 'artistTrack': case 'tasteArtist': return { kind: value.kind, artist };
         case 'group': return { kind: value.kind, name: text(value.name, 200) };
+        case 'radar': return { kind: value.kind, why: text(value.why, 300) };
         case 'newArtist': case 'seedTrack': case 'restored': case 'daily': case 'forgotten': return { kind: value.kind };
         default: return undefined;
     }
@@ -73,7 +74,7 @@ export function cleanPlaybackSnapshot(input: unknown): PlaybackSnapshot | null {
     if (!items.length || index < 0 || index >= items.length) return null;
     const rawSeed = object(value.seed);
     const kind = String(rawSeed.kind);
-    const seed: SavedSeed | null = ['track', 'artist', 'playlist', 'daily', 'forgotten', 'group', 'tracks'].includes(kind) ? {
+    const seed: SavedSeed | null = ['track', 'artist', 'playlist', 'daily', 'forgotten', 'group', 'tracks', 'radar'].includes(kind) ? {
         kind: kind as SavedSeed['kind'], title: text(rawSeed.title, 200), tracks: tracks(rawSeed.tracks, 5000), own: tracks(rawSeed.own, 5000),
         order: rawSeed.order === 'fixed' || rawSeed.order === 'blend' ? rawSeed.order : undefined,
         mode: rawSeed.mode === 'fresh' ? 'fresh' : 'similar',

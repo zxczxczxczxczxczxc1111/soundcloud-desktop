@@ -54,6 +54,8 @@ function run(request: LibraryRequest): unknown {
         case 'radarBuild': return radar.build(...request.args);
         case 'radarEditions': return recommend.editions(...request.args);
         case 'radarEdition': return recommend.edition(...request.args);
+        case 'radarView': return radar.view(...request.args);
+        case 'radarFound': return radar.found(...request.args);
     }
 }
 parentPort?.on('message', (request: LibraryRequest | { method: 'close' }) => {

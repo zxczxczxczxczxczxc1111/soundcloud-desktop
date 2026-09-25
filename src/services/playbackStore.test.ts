@@ -32,6 +32,15 @@ it('A19: очередь после перезапуска хранит точн�
     expect(store.saveSession(78, snapshot())).toBe(true);
     expect(store.loadSession(78)?.items[0].track).not.toHaveProperty('publisher_metadata');
 });
+it('волна от радара переживает перезапуск: источник, причина позиции и порядок выпуска', () => {
+    const store = open(); const saved = snapshot();
+    saved.items[0].reason = { kind: 'radar', why: 'New from Alpha' };
+    saved.seed = { kind: 'radar', title: 'Release Radar, 25 September', tracks: [{ id: 42 }], own: [{ id: 42 }, { id: 43 }], order: 'fixed', mode: 'similar' };
+    store.saveSession(77, saved);
+    const loaded = store.loadSession(77);
+    expect(loaded?.items[0].reason).toEqual({ kind: 'radar', why: 'New from Alpha' });
+    expect(loaded?.seed).toMatchObject({ kind: 'radar', title: 'Release Radar, 25 September', order: 'fixed', own: [{ id: 42 }, { id: 43 }] });
+});
 it('не портит предыдущий снимок некорректным вводом', () => {
     const store = open(); store.saveSession(77, snapshot());
     expect(store.saveSession(77, { ...snapshot(), index: 4 })).toBe(false);

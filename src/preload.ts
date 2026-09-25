@@ -261,6 +261,13 @@ contextBridge.exposeInMainWorld('soundcloudAPI', {
         catalogChecked: (user: number, key: string, label: string, status: string, error: string, found: number) =>
             ipcRenderer.invoke('soundcloud:recommend:catalogChecked', user, key, label, status, error, found),
     },
+    // Пятничный радар: выпуск с архивом, «Все найденные», пересборка и состояние сбора
+    radar: {
+        view: (user: number, period?: string, revision?: number) => ipcRenderer.invoke('soundcloud:radar:view', user, period, revision),
+        found: (user: number, period: string, revision?: number) => ipcRenderer.invoke('soundcloud:radar:found', user, period, revision),
+        rebuild: (user: number) => ipcRenderer.invoke('soundcloud:radar:rebuild', user),
+        state: () => ipcRenderer.invoke('soundcloud:radar:state'),
+    },
     playback: (command: string) => {
         if (['play', 'pause', 'next', 'previous'].includes(command)) ipcRenderer.send('soundcloud:playback', command);
     },

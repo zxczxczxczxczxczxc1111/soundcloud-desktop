@@ -240,6 +240,15 @@ label.row:hover {
     flex: none;
     width: 140px;
 }
+/* Радар: поле времени шириной со списком, у часового пояса длинные названия */
+.row .input.time {
+    flex: none;
+    width: 140px;
+    color-scheme: dark;
+}
+.row .dropdown:has(#radarZone) {
+    width: 220px;
+}
 .excluded-title {
     white-space: nowrap;
     overflow: hidden;

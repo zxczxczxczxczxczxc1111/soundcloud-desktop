@@ -5,7 +5,7 @@ import {
     applyTasteReasons, tagKeys, tasteMaps, tasteOrder, tasteReason, tasteScore, type TasteMaps, type WaveCandidate, type WaveFilter, type WaveTrack,
     countText, forgottenPicks, localDay, pickFinds, tasteGroups, artistNames, isNewArtist, spreadBy,
 } from './wave';
-import { copyKeys, familyKey } from './trackIdentity';
+import { copyKeys, familyKey, versionKey } from './trackIdentity';
 
 describe('вкус волны', () => {
     const taste = (artists: Array<[number, number]>, tags: Array<[string, number]> = [], tracks: Array<[number, number]> = [], extra: object = {}): TasteMaps =>
@@ -102,7 +102,7 @@ describe('вкус волны', () => {
 const track = (id: number, extra: Partial<WaveTrack> = {}): WaveTrack => ({ id, kind: 'track', user_id: id, duration: 180000, policy: 'ALLOW', title: 'Track ' + id, ...extra });
 const filter = (extra: Partial<WaveFilter> = {}): WaveFilter => ({
     mode: 'similar', taken: new Set(), recent: new Set(), heard: new Set(), liked: new Set(), skipped: new Set(),
-    excludedTracks: new Set(), excludedArtists: new Set(), excludedFamilies: new Set(), ...extra,
+    excludedTracks: new Set(), excludedArtists: new Set(), excludedFamilies: new Map(), ...extra,
 });
 
 describe('жанр', () => {
@@ -205,9 +205,11 @@ describe('фильтры', () => {
         expect(acceptCandidate(slowed, filter({ skipped }))).toBe(true);
     });
 
-    it('A08: скрытые другие версии композиции убирают семью, другую песню того же исполнителя нет', () => {
-        const hidden = new Set([familyKey(track(1, { title: 'Artist - Song' }))]);
+    it('A08: «Скрыть другие версии» убирает остальные версии композиции, выбранную версию и другую песню того же исполнителя нет', () => {
+        const chosen = track(1, { title: 'Artist - Song' });
+        const hidden = new Map([[familyKey(chosen), new Set([versionKey(chosen)])]]);
         expect(acceptCandidate(track(2, { title: 'Artist - Song (Slowed)' }), filter({ excludedFamilies: hidden }))).toBe(false);
+        expect(acceptCandidate(track(4, { title: 'Artist - Song' }), filter({ excludedFamilies: hidden }))).toBe(true);
         expect(acceptCandidate(track(3, { title: 'Artist - Other Song' }), filter({ excludedFamilies: hidden }))).toBe(true);
     });
 

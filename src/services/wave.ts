@@ -8,13 +8,14 @@ import { installPlaybackRecovery } from './playbackRecovery';
 import * as identity from './trackIdentity';
 import * as sources from './pageSources';
 import type { SyncBridge } from './pageSources';
-import type { RecordingLink } from './trackIdentity';
-import type { RadarCollectResult } from './radarSchedule';
+import type { MatchLevel, RecordingLink } from './trackIdentity';
+import type { RadarCollectResult, RadarState } from './radarSchedule';
+import type { RadarReason } from './radar';
 
 // Разбор версий и сеть подбора живут в своих модулях. Функции страницы зовут их по голому имени: в Node имя
 // берётся отсюда, на странице из объявлений identityHelpers и sourceHelpers в той же обёртке.
 // Именованный импорт превратился бы в trackIdentity_1.copyKey и на странице не нашёлся
-const { confirmedCopies, confirmedGroups, copyKey, copyKeys, familyKey, matchLevel, nameKey, parseTrackTitle, searchQueries, trackCredits } = identity;
+const { confirmedCopies, confirmedGroups, copyKey, copyKeys, familyKey, matchLevel, nameKey, parseTrackTitle, searchQueries, trackCredits, versionKey } = identity;
 const { classifyFailure, createDispatcher, createSearchCache, likeItems, entityItems, syncSource } = sources;
 
 export interface WaveTrack {
@@ -57,7 +58,9 @@ export type WaveReason =
     | { kind: 'daily' }
     | { kind: 'forgotten' }
     | { kind: 'group'; name: string }
-    | { kind: 'version'; seed: string };
+    | { kind: 'version'; seed: string }
+    /** Позиция радара: why это готовая короткая причина из выпуска */
+    | { kind: 'radar'; why: string };
 export interface WaveCandidate {
     track: WaveTrack;
     reason: WaveReason;
@@ -76,8 +79,8 @@ export interface WaveFilter {
     /** «Не нравится» (с подтверждёнными копиями) и скрытые артисты: навсегда, в любом режиме */
     excludedTracks: Set<number>;
     excludedArtists: Set<number>;
-    /** «Скрыть другие версии»: семьи версий по разбору названия */
-    excludedFamilies: Set<string>;
+    /** «Скрыть другие версии»: семья по разбору названия и версии, которые в ней оставлены */
+    excludedFamilies: Map<string, Set<string>>;
 }
 export type WaveLinkKind = 'track' | 'artist' | 'playlist';
 
@@ -93,7 +96,14 @@ export type WaveTexts = Record<
     | 'toastLaterArtist' | 'toastUnlater'
     | 'lang' | 'shelf' | 'shelfDaily' | 'shelfForgotten' | 'shelfEmpty' | 'shelfFailed' | 'tracksCount' | 'groupAnd' | 'whyDaily' | 'whyForgotten' | 'whyGroup'
     | 'seedDaily' | 'seedForgotten' | 'seedGroup' | 'seedTracks' | 'menuPick' | 'menuUnpick' | 'toastPicked' | 'toastUnpicked' | 'toastPickFull'
-    | 'pickStart' | 'pickClear' | 'mixPlay' | 'mixClose' | 'mixLoading' | 'mixFailed' | 'mixEmpty' | 'whyVersion',
+    | 'pickStart' | 'pickClear' | 'mixPlay' | 'mixClose' | 'mixLoading' | 'mixFailed' | 'mixEmpty' | 'whyVersion'
+    | 'radar' | 'radarUploads' | 'radarUploadsHint' | 'radarHeard' | 'radarPartial' | 'radarCoverage' | 'radarComplete' | 'radarEmptyWeek'
+    | 'radarCollecting' | 'radarNoSession' | 'radarOffline' | 'radarError' | 'radarSoon' | 'radarFailed' | 'radarFound' | 'radarAll' | 'radarReleases'
+    | 'radarPosts' | 'radarHideHeard' | 'radarAfter' | 'radarRebuild' | 'radarBuildNow' | 'radarRebuilt' | 'radarBuilt' | 'radarWaiting' | 'radarArchive'
+    | 'radarRevision' | 'radarFoundEmpty' | 'radarNoMatch' | 'whyRadar' | 'whyRadarArtist' | 'whyRadarFollow' | 'whyRadarTag' | 'whyRadarTaste'
+    | 'menuVersions' | 'menuHideFamily' | 'menuShowFamily' | 'toastFamilyHidden' | 'toastFamilyShown' | 'versionsTitle' | 'versionsSame'
+    | 'versionsOther' | 'versionsLoading' | 'versionsEmpty' | 'versionsFailed' | 'versionsLink' | 'versionsUnlink' | 'versionsProbable'
+    | 'versionsConfirmed' | 'versionsThis' | 'toastLinked' | 'toastUnlinked' | 'dialogClose' | 'radarPost',
     string
 >;
 
@@ -116,9 +126,9 @@ export const WAVE_TEXTS: Record<'ru' | 'en', WaveTexts> = {
         seedTrack: 'Волна по треку {seed}', seedArtist: 'Волна по артисту {seed}', seedPlaylist: 'Волна по плейлисту {seed}',
         clearSeed: 'Вернуть обычную волну', emptySeed: 'Не нашлось похожих треков',
         menuWaveTrack: 'Волна по треку', menuWaveArtist: 'Волна по артисту', menuWavePlaylist: 'Волна по плейлисту',
-        menuDislike: 'Не нравится', menuUndislike: 'Вернуть в волну', menuHideArtist: 'Не показывать артиста', menuShowArtist: 'Показывать артиста',
+        menuDislike: 'Не нравится', menuUndislike: 'Вернуть в волну', menuHideArtist: 'Не показывать аккаунт', menuShowArtist: 'Показывать аккаунт',
         toastDisliked: 'Трек больше не попадёт в волну', toastUndisliked: 'Трек снова может попасть в волну',
-        toastHidden: 'Артист больше не попадёт в волну', toastShown: 'Артист снова может попасть в волну',
+        toastHidden: 'Аккаунт больше не попадёт в волну и радар', toastShown: 'Аккаунт снова может попасть в волну',
         toastFailed: 'Не получилось: SoundCloud не ответил', toastNotSaved: 'Отметка не сохранилась', toastEmpty: 'Не нашлось похожих треков',
         shake: 'Встряхнуть', history: 'История, Ctrl+H',
         whyTasteArtist: 'Ты часто дослушиваешь {artist}', whyTasteTag: 'В духе {genre}, который ты любишь',
@@ -136,6 +146,23 @@ export const WAVE_TEXTS: Record<'ru' | 'en', WaveTexts> = {
         mixPlay: 'Слушать подборку', mixClose: 'Свернуть', mixLoading: 'Загружаю треки', mixFailed: 'Треки не загрузились, нажми на карточку ещё раз',
         mixEmpty: 'Все треки подборки ты убрал из волны',
         whyVersion: 'Другая версия {seed}',
+        radar: 'Радар релизов', radarUploads: 'Новые загрузки',
+        radarUploadsHint: 'Свежие публикации без доказанной даты релиза: перезаливы и сборные каналы. В 50 релизов они не входят',
+        radarHeard: 'Уже слышал', radarPartial: 'неполный', radarCoverage: 'Проверено источников: {checked} из {total}', radarComplete: 'Все источники проверены',
+        radarEmptyWeek: 'За четыре недели новых релизов не нашлось', radarCollecting: 'Собираю выпуск', radarNoSession: 'Войди в SoundCloud, и радар соберётся',
+        radarOffline: 'Нет сети, соберу, когда она вернётся', radarError: 'Выпуск не собрался, попробую позже', radarSoon: 'Первый выпуск скоро',
+        radarFailed: 'Радар не загрузился', radarFound: 'Все найденные', radarAll: 'Все', radarReleases: 'Релизы', radarPosts: 'Загрузки',
+        radarHideHeard: 'Без «Уже слышал»', radarAfter: 'После выпуска', radarRebuild: 'Пересобрать', radarBuildNow: 'Собрать сейчас',
+        radarRebuilt: 'Выпуск пересобран, прежний остался в архиве', radarBuilt: 'Выпуск собран', radarWaiting: 'Каталог ещё собирается, выпуск выйдет позже',
+        radarArchive: 'Архив выпусков', radarRevision: 'пересборка {n}', radarFoundEmpty: 'Больше ничего не нашлось', radarNoMatch: 'Под фильтр ничего не подходит',
+        whyRadar: 'Радар релизов', whyRadarArtist: 'Новое у {name}', whyRadarFollow: 'Новое у {name}, ты подписан', whyRadarTag: 'Свежее в {tag}',
+        whyRadarTaste: 'Свежее в твоём вкусе',
+        menuVersions: 'Версии этого трека', menuHideFamily: 'Скрыть другие версии', menuShowFamily: 'Показывать другие версии',
+        toastFamilyHidden: 'Другие версии этой песни больше не попадут в волну и радар', toastFamilyShown: 'Другие версии снова могут попасть в волну',
+        versionsTitle: 'Версии: {title}', versionsSame: 'Эта же запись', versionsOther: 'Другие версии', versionsLoading: 'Ищу версии…',
+        versionsEmpty: 'Других версий не нашлось', versionsFailed: 'Поиск не удался: SoundCloud не ответил', versionsLink: 'Та же запись',
+        versionsUnlink: 'Другая запись', versionsProbable: 'похоже на копию', versionsConfirmed: 'подтверждено', versionsThis: 'этот трек',
+        toastLinked: 'Отмечено: та же запись', toastUnlinked: 'Отмечено: другая запись', dialogClose: 'Закрыть', radarPost: 'Новая загрузка',
     },
     en: {
         wave: 'My Wave', similar: 'Similar', fresh: 'New', anyGenre: 'Any genre', genreInput: 'Genres, comma separated', fromLikes: 'From your likes',
@@ -155,9 +182,9 @@ export const WAVE_TEXTS: Record<'ru' | 'en', WaveTexts> = {
         seedTrack: 'Wave from {seed}', seedArtist: 'Wave from artist {seed}', seedPlaylist: 'Wave from playlist {seed}',
         clearSeed: 'Back to My Wave', emptySeed: 'No similar tracks found',
         menuWaveTrack: 'Wave from track', menuWaveArtist: 'Wave from artist', menuWavePlaylist: 'Wave from playlist',
-        menuDislike: 'Dislike', menuUndislike: 'Allow in My Wave', menuHideArtist: 'Hide artist', menuShowArtist: 'Show artist',
+        menuDislike: 'Dislike', menuUndislike: 'Allow in My Wave', menuHideArtist: 'Hide account', menuShowArtist: 'Show account',
         toastDisliked: 'This track won’t play in My Wave', toastUndisliked: 'This track can play in My Wave again',
-        toastHidden: 'This artist won’t play in My Wave', toastShown: 'This artist can play in My Wave again',
+        toastHidden: 'This account won’t play in My Wave or the radar', toastShown: 'This account can play in My Wave again',
         toastFailed: 'Didn’t work: SoundCloud didn’t respond', toastNotSaved: 'Couldn’t save this', toastEmpty: 'No similar tracks found',
         shake: 'Shake up', history: 'History, Ctrl+H',
         whyTasteArtist: 'You often finish {artist}', whyTasteTag: 'The {genre} you love',
@@ -176,6 +203,23 @@ export const WAVE_TEXTS: Record<'ru' | 'en', WaveTexts> = {
         mixPlay: 'Play mix', mixClose: 'Collapse', mixLoading: 'Loading tracks', mixFailed: 'Couldn’t load tracks, click the card again',
         mixEmpty: 'You removed every track of this mix from My Wave',
         whyVersion: 'Another version of {seed}',
+        radar: 'Release Radar', radarUploads: 'New uploads',
+        radarUploadsHint: 'Fresh posts without a proven release date: reuploads and compilation channels. They don’t count toward the 50 releases',
+        radarHeard: 'Already heard', radarPartial: 'incomplete', radarCoverage: 'Sources checked: {checked} of {total}', radarComplete: 'All sources checked',
+        radarEmptyWeek: 'No new releases in the last four weeks', radarCollecting: 'Building the radar', radarNoSession: 'Sign in to SoundCloud to build the radar',
+        radarOffline: 'Offline, the radar will be built when you’re back', radarError: 'Couldn’t build the radar, will try again later', radarSoon: 'First edition coming soon',
+        radarFailed: 'Couldn’t load the radar', radarFound: 'All found', radarAll: 'All', radarReleases: 'Releases', radarPosts: 'Uploads',
+        radarHideHeard: 'Hide already heard', radarAfter: 'After release', radarRebuild: 'Rebuild', radarBuildNow: 'Build now',
+        radarRebuilt: 'Rebuilt, the previous edition is in the archive', radarBuilt: 'The radar is ready', radarWaiting: 'Still collecting, the radar will be ready later',
+        radarArchive: 'Past editions', radarRevision: 'rebuild {n}', radarFoundEmpty: 'Nothing else found', radarNoMatch: 'Nothing matches the filter',
+        whyRadar: 'Release Radar', whyRadarArtist: 'New from {name}', whyRadarFollow: 'New from {name}, you follow them', whyRadarTag: 'Fresh {tag}',
+        whyRadarTaste: 'Fresh in your taste',
+        menuVersions: 'Versions of this track', menuHideFamily: 'Hide other versions', menuShowFamily: 'Show other versions',
+        toastFamilyHidden: 'Other versions of this song won’t play in My Wave or the radar', toastFamilyShown: 'Other versions can play in My Wave again',
+        versionsTitle: 'Versions: {title}', versionsSame: 'Same recording', versionsOther: 'Other versions', versionsLoading: 'Looking for versions…',
+        versionsEmpty: 'No other versions found', versionsFailed: 'Search failed: SoundCloud didn’t respond', versionsLink: 'Mark as same',
+        versionsUnlink: 'Mark as different', versionsProbable: 'likely a copy', versionsConfirmed: 'confirmed', versionsThis: 'this track',
+        toastLinked: 'Marked as the same recording', toastUnlinked: 'Marked as a different recording', dialogClose: 'Close', radarPost: 'New upload',
     },
 };
 
@@ -298,7 +342,7 @@ export function isWaveEligible(track: WaveTrack): boolean {
 export function acceptCandidate(track: WaveTrack, filter: WaveFilter): boolean {
     if (!isWaveEligible(track) || filter.taken.has(track.id) || filter.skipped.has(copyKey(track))) return false;
     if (filter.excludedTracks.has(track.id) || filter.excludedArtists.has(trackArtist(track))) return false;
-    if (filter.excludedFamilies.size && filter.excludedFamilies.has(familyKey(track))) return false;
+    if (filter.excludedFamilies.size && !(filter.excludedFamilies.get(familyKey(track))?.has(versionKey(track)) ?? true)) return false;
     if (filter.mode === 'fresh') return !filter.heard.has(track.id) && !filter.liked.has(track.id);
     return !filter.recent.has(track.id);
 }
@@ -526,6 +570,7 @@ export function reasonText(reason: WaveReason, texts: WaveTexts): string {
         case 'forgotten': return texts.whyForgotten;
         case 'group': return fillText(texts.whyGroup, { name: reason.name });
         case 'version': return fillText(texts.whyVersion, { seed: reason.seed });
+        case 'radar': return reason.why || texts.whyRadar;
     }
 }
 
@@ -843,7 +888,7 @@ interface WaveJournalApi {
 }
 interface WaveExclusionsApi {
     load(userId: number): Promise<unknown>;
-    set(userId: number, kind: 'track' | 'artist' | 'later-track' | 'later-artist' | 'more', entry: object, excluded: boolean): Promise<unknown>;
+    set(userId: number, kind: 'track' | 'artist' | 'later-track' | 'later-artist' | 'more' | 'family', entry: object, excluded: boolean): Promise<unknown>;
 }
 export interface WaveWindow extends Window {
     __disposeWave?: () => void;
@@ -881,6 +926,13 @@ export interface WaveWindow extends Window {
             recordingLinks?(user: number): Promise<unknown>;
             radarPlan?(user: number): Promise<unknown>;
             catalogChecked?(user: number, key: string, label: string, status: string, error: string, found: number): Promise<unknown>;
+            setRecordingLink?(user: number, a: string, b: string, same: boolean): Promise<unknown>;
+        };
+        radar?: {
+            view(user: number, period?: string, revision?: number): Promise<unknown>;
+            found(user: number, period: string, revision?: number): Promise<unknown>;
+            rebuild(user: number): Promise<unknown>;
+            state(): Promise<unknown>;
         };
         reportWaveEmpty?(counts: { seen: number; artistTracks: number; moodTags: number }): void;
         sendTrackMeta?(meta: TrackMeta): void;
@@ -971,7 +1023,7 @@ export function installWave(config: WaveConfig, createPlayback: typeof installPl
     // Волна от трека, артиста или плейлиста из меню по ПКМ: зёрна вместо вкуса, жанр не действует.
     // own это треки самого артиста, они идут в подборку; derived это найденное, от него волна едет дальше.
     // У подборок полки и набора из меню own это сама подборка
-    type SeedKind = WaveLinkKind | 'daily' | 'forgotten' | 'group' | 'tracks';
+    type SeedKind = WaveLinkKind | 'daily' | 'forgotten' | 'group' | 'tracks' | 'radar';
     interface Seed {
         kind: SeedKind;
         title: string;
@@ -1008,10 +1060,14 @@ export function installWave(config: WaveConfig, createPlayback: typeof installPl
     const laterArtists = new Map<number, Excluded>();
     const moreTracks = new Map<number, MoreEntry>();
     // «Скрыть другие версии»: ключи семей по разбору названия отмеченной загрузки
-    const excludedFamilies = new Set<string>();
+    const excludedFamilies = new Map<string, Set<string>>();
+    // Сами отметки семей по id отмеченной загрузки: «Показывать другие версии» снимает все отметки этой семьи
+    const familyEntries = new Map<number, { key: string; version: string; url: string }>();
     // Подтверждённые связи записей (решение пользователя или ISRC той же версии): загрузка -> корень группы.
     // По ним «Не нравится» и «уже слышано» переходят на копии; вероятные копии так не переносятся
     let copyGroups = new Map<string, string>();
+    // Связи как есть: «Версии этого трека» показывает по ним решение пользователя
+    let recordingLinks: RecordingLink[] = [];
     let exclusionsRevision = 0;
     let exclusionsPromise: Promise<void> | null = null;
     // Профиль вкуса из main: порядок подборки и причины, живёт 30 минут
@@ -1487,16 +1543,26 @@ export function installWave(config: WaveConfig, createPlayback: typeof installPl
             });
         }
     }
-    // Семья считается разбором названия записи из main: название, имя и id загрузчика
+    // Семья и оставленная версия считаются разбором названия записи из main: название, имя и id загрузчика
     function fillFamilies(input: unknown): void {
+        familyEntries.clear();
+        if (Array.isArray(input))
+            for (const value of input) {
+                const entry = value as Record<string, unknown> | null;
+                if (!entry || typeof entry.id !== 'number' || typeof entry.title !== 'string') continue;
+                const uploader = typeof entry.artistId === 'number' ? entry.artistId : undefined;
+                const track: WaveTrack = { id: entry.id, title: entry.title, user_id: uploader, user: { id: uploader, username: typeof entry.artist === 'string' ? entry.artist : '' } };
+                const key = familyKey(track);
+                if (key) familyEntries.set(entry.id, { key, version: versionKey(track), url: typeof entry.url === 'string' ? entry.url : '' });
+            }
+        rebuildFamilies();
+    }
+    function rebuildFamilies(): void {
         excludedFamilies.clear();
-        if (!Array.isArray(input)) return;
-        for (const value of input) {
-            const entry = value as Record<string, unknown> | null;
-            if (!entry || typeof entry.id !== 'number' || typeof entry.title !== 'string') continue;
-            const uploader = typeof entry.artistId === 'number' ? entry.artistId : undefined;
-            const key = familyKey({ id: entry.id, title: entry.title, user_id: uploader, user: { id: uploader, username: typeof entry.artist === 'string' ? entry.artist : '' } });
-            if (key) excludedFamilies.add(key);
+        for (const entry of familyEntries.values()) {
+            const kept = excludedFamilies.get(entry.key) ?? new Set<string>();
+            kept.add(entry.version);
+            excludedFamilies.set(entry.key, kept);
         }
     }
     // Связи из хранилища недоверенные: берутся только пары ключей загрузок с признаком и источником.
@@ -1515,6 +1581,7 @@ export function installWave(config: WaveConfig, createPlayback: typeof installPl
         } catch (error) {
             console.warn('Волна: связи записей не загружены', error);
         }
+        recordingLinks = links;
         return confirmedGroups(links);
     }
     // Отметки нужны до подбора и до меню. Не загрузились: следующий подбор попробует снова
@@ -1568,7 +1635,7 @@ export function installWave(config: WaveConfig, createPlayback: typeof installPl
     };
     const isExcluded = (track: WaveTrack): boolean =>
         disliked().has(track.id) || excludedArtists.has(trackArtist(track)) || marked(laterTracks, track.id) || marked(laterArtists, trackArtist(track)) ||
-        (excludedFamilies.size > 0 && excludedFamilies.has(familyKey(track)));
+        (excludedFamilies.size > 0 && !(excludedFamilies.get(familyKey(track))?.has(versionKey(track)) ?? true));
     const liveKeys = (map: Map<number, Excluded>): number[] => [...map.keys()].filter((id) => marked(map, id));
     // «Больше такого» как зерно волны: для похожих хватает id, для жанра и причины нужны название и метки
     const moreSeeds = (): WaveTrack[] =>
@@ -1666,7 +1733,10 @@ export function installWave(config: WaveConfig, createPlayback: typeof installPl
             const current = seed;
             if (current.order) {
                 const reason: WaveReason = current.kind === 'daily' ? { kind: 'daily' } : current.kind === 'forgotten' ? { kind: 'forgotten' } : { kind: 'group', name: current.title };
-                for (const track of current.own) accept(ownQueue, { track, reason }, filter);
+                // Радар играет выпуск целиком: «Уже слышал» и недавно игравшее в нём остаются, запреты проверены при запуске
+                const ownFilter: WaveFilter = current.kind === 'radar' ? { ...filter, recent: new Set<number>() } : filter;
+                for (const track of current.own)
+                    accept(ownQueue, { track, reason: current.kind === 'radar' ? { kind: 'radar', why: radarReasons.get(track.id) ?? '' } : reason }, ownFilter);
                 // Подборка целиком впереди: похожие понадобятся, когда она кончится
                 if (current.order === 'fixed' && ownQueue.length >= BATCH) return ownQueue.length;
             } else for (const track of current.own) accept(found, { track, reason: { kind: 'artistTrack', artist: current.title } }, filter);
@@ -2105,6 +2175,7 @@ export function installWave(config: WaveConfig, createPlayback: typeof installPl
             case 'forgotten': return short ? T.shelfForgotten : T.seedForgotten;
             case 'group': return fillText(T.seedGroup, { seed: current.title });
             case 'tracks': return fillText(T.seedTracks, { seed: current.title });
+            case 'radar': return current.title;
         }
     }
     function waveLabel(): string {
@@ -2442,6 +2513,32 @@ export function installWave(config: WaveConfig, createPlayback: typeof installPl
     let openCard: number | null = null;
     const mixLists = new Map<number, WaveTrack[] | 'loading' | 'failed'>();
     const isId = (value: unknown): value is number => typeof value === 'number' && Number.isSafeInteger(value) && value > 0;
+    // Радар на полке: номера карточек отрицательные и не -1, -1 в обработчике кнопок значит «подборки нет»
+    const RADAR_CARD = -10;
+    const UPLOADS_CARD = -11;
+    const isRadarCard = (index: number | null | undefined): boolean => index === RADAR_CARD || index === UPLOADS_CARD;
+    interface RadarRow { id: number; title: string; artist: string; kind: 'release' | 'upload'; heard: boolean; reason: RadarReason; after: boolean }
+    interface RadarEditionView { period: string; revision: number; cutoff: number; status: 'complete' | 'partial'; checked: number; total: number; items: RadarRow[]; uploads: RadarRow[] }
+    interface RadarArchiveEntry { period: string; revision: number; cutoff: number; manual: boolean }
+    let radarEdition: RadarEditionView | null = null;
+    let radarArchive: RadarArchiveEntry[] = [];
+    let radarState: RadarState | null = null;
+    let radarLoaded = false;
+    let radarPromise: Promise<void> | null = null;
+    let radarFailedAt = 0;
+    let radarRequest = 0;
+    // Выпуск, выбранный в архиве; null это последний
+    let radarPinned: { period: string; revision: number } | null = null;
+    let radarFound: { key: string; rows: RadarRow[] | 'loading' | 'failed' } | null = null;
+    let radarShowFound = false;
+    let radarKind: 'all' | 'release' | 'upload' = 'all';
+    let radarHideHeard = false;
+    let radarBusy = false;
+    const radarArt = new Map<number, string[]>();
+    // Треки радара отдельно от полки: полка чистит свой кэш при пересборке в полночь
+    const radarTracks = new Map<number, WaveTrack>();
+    // Причины позиций играющего радара для строки «почему» у плеера
+    const radarReasons = new Map<number, string>();
 
     // Снимок из main уже проверен там; здесь только форма, чтобы не упасть на чужом
     function asShelf(value: unknown): Shelf | null {
@@ -2538,12 +2635,13 @@ export function installWave(config: WaveConfig, createPlayback: typeof installPl
         const day = localDay(Date.now());
         if (!bridge || shelfPromise || (shelf && shelf.day === day) || Date.now() - shelfFailedAt < 30000) return;
         // Полка прошлых суток сменилась: номер карточки у играющей волны больше ни на что не указывает
+        // Карточки радара от полки не зависят и остаются как были
         const replace = (next: Shelf): void => {
-            if (shelf && seed) seed.card = undefined;
+            if (shelf && seed && !isRadarCard(seed.card)) seed.card = undefined;
             shelf = next;
             shelfFailedAt = 0;
-            openCard = null;
-            mixLists.clear();
+            if (!isRadarCard(openCard)) openCard = null;
+            for (const index of [...mixLists.keys()]) if (!isRadarCard(index)) mixLists.delete(index);
         };
         shelfPromise = (async () => {
             const id = await ensureUser();
@@ -2664,6 +2762,284 @@ export function installWave(config: WaveConfig, createPlayback: typeof installPl
             showToast(T.toastFailed);
         });
     }
+    // ===== Пятничный радар: выпуск из worker, карточки на полке, архив, «Все найденные», пересборка =====
+    // Ответ main уже проверен там; здесь только форма, чтобы не упасть на чужом
+    function asRadarRows(list: unknown): RadarRow[] {
+        if (!Array.isArray(list)) return [];
+        const text = (value: unknown): string => (typeof value === 'string' ? value : '');
+        return list.flatMap((value): RadarRow[] => {
+            const item = value && typeof value === 'object' ? (value as Record<string, unknown>) : null;
+            if (!item || !isId(item.id)) return [];
+            const source = item.reason && typeof item.reason === 'object' ? (item.reason as Record<string, unknown>) : {};
+            const reason: RadarReason = source.kind === 'artist' || source.kind === 'follow'
+                ? { kind: source.kind, name: text(source.name) }
+                : source.kind === 'tag' ? { kind: 'tag', tag: text(source.tag) } : { kind: 'taste' };
+            return [{ id: item.id, title: text(item.title), artist: text(item.artist), kind: item.kind === 'upload' ? 'upload' : 'release', heard: item.heard === true, reason, after: item.after === true }];
+        });
+    }
+    function asRadarState(value: unknown): RadarState | null {
+        const source = value && typeof value === 'object' ? (value as Record<string, unknown>) : null;
+        const phases = ['idle', 'offline', 'no-session', 'collecting', 'published', 'error'];
+        if (!source || typeof source.phase !== 'string' || !phases.includes(source.phase)) return null;
+        return {
+            phase: source.phase as RadarState['phase'], period: typeof source.period === 'string' ? source.period : '',
+            error: typeof source.error === 'string' ? source.error : '', updated: typeof source.updated === 'number' ? source.updated : 0,
+        };
+    }
+    const radarKey = (edition: RadarEditionView): string => edition.period + '|' + edition.revision;
+    function applyRadarView(value: unknown): void {
+        const source = value && typeof value === 'object' ? (value as { edition?: unknown; editions?: unknown }) : {};
+        const edition = source.edition && typeof source.edition === 'object' ? (source.edition as Record<string, unknown>) : null;
+        const number = (item: unknown): number => (typeof item === 'number' && Number.isFinite(item) ? item : 0);
+        const coverage = edition?.coverage && typeof edition.coverage === 'object' ? (edition.coverage as Record<string, unknown>) : {};
+        const next: RadarEditionView | null = edition && typeof edition.period === 'string' ? {
+            period: edition.period, revision: number(edition.revision), cutoff: number(edition.cutoff), status: edition.status === 'complete' ? 'complete' : 'partial',
+            checked: number(coverage.checked) + number(coverage.searchesDone), total: number(coverage.accounts) + number(coverage.searches),
+            items: asRadarRows(edition.items), uploads: asRadarRows(edition.uploads),
+        } : null;
+        const same = !!next && !!radarEdition && radarKey(next) === radarKey(radarEdition);
+        // Играет прежний выпуск: карточка нового больше не «играющая»
+        if (!same && radarEdition && seed && isRadarCard(seed.card)) seed.card = undefined;
+        radarEdition = next;
+        radarArchive = (Array.isArray(source.editions) ? source.editions : []).flatMap((item): RadarArchiveEntry[] => {
+            const entry = item && typeof item === 'object' ? (item as Record<string, unknown>) : null;
+            return entry && typeof entry.period === 'string' && isId(entry.revision)
+                ? [{ period: entry.period, revision: entry.revision, cutoff: number(entry.cutoff), manual: entry.manual === true }]
+                : [];
+        });
+        // Тот же выпуск перечитан ради отметок «Уже слышал»: раскрытый список и найденное остаются
+        if (same) return;
+        mixLists.delete(RADAR_CARD);
+        mixLists.delete(UPLOADS_CARD);
+        radarFound = null;
+        radarShowFound = false;
+        radarArt.clear();
+        void loadRadarArt();
+        if (isRadarCard(openCard) && openCard !== null) loadRadarTracks(openCard);
+    }
+    // Выпуск и состояние сбора; пока открыт архивный выпуск, перечитывается он же
+    function loadRadar(): void {
+        const bridge = host.soundcloudAPI?.radar;
+        if (!bridge || disposed) return;
+        const request = ++radarRequest;
+        const pinned = radarPinned;
+        radarPromise = (async () => {
+            const id = await ensureUser();
+            if (!id) throw new Error('Пользователь не определён');
+            const [state, view] = await Promise.all([bridge.state(), bridge.view(id, pinned?.period, pinned?.revision)]);
+            if (request !== radarRequest || disposed) return;
+            radarState = asRadarState(state) ?? radarState;
+            applyRadarView(view);
+            radarLoaded = true;
+            radarFailedAt = 0;
+        })().catch((error: unknown) => {
+            if (request === radarRequest) radarFailedAt = Date.now();
+            console.warn('Радар: выпуск не загружен', error);
+        }).finally(() => {
+            if (request === radarRequest) radarPromise = null;
+            render();
+        });
+    }
+    function ensureRadar(): void {
+        if (!host.soundcloudAPI?.radar || radarPromise || radarLoaded || Date.now() - radarFailedAt < 30000) return;
+        loadRadar();
+    }
+    // main сообщает о каждом проходе планировщика: выпуск перечитывается только после новой публикации
+    host.__scRadarChanged = (value: unknown): void => {
+        const next = asRadarState(value);
+        if (!next || disposed) return;
+        const before = radarState;
+        radarState = next;
+        const published = next.phase === 'published' && (!radarEdition || before?.phase !== 'published' || before.period !== next.period);
+        if (published && !radarPinned && radarLoaded) loadRadar();
+        else render();
+    };
+    async function radarTracksOf(ids: number[]): Promise<WaveTrack[]> {
+        const missing = ids.filter((id) => !radarTracks.has(id));
+        if (missing.length) for (const track of await tracksByIds(missing)) radarTracks.set(track.id, track);
+        return ids.map((id) => radarTracks.get(id)).filter((track): track is WaveTrack => !!track);
+    }
+    async function loadRadarArt(): Promise<void> {
+        const edition = radarEdition;
+        if (!edition) return;
+        try {
+            await radarTracksOf([...edition.items.slice(0, 4), ...edition.uploads.slice(0, 4)].map((row) => row.id));
+            if (radarEdition !== edition) return;
+            const covers = (rows: RadarRow[]): string[] => coversOf(rows.slice(0, 4).map((row) => radarTracks.get(row.id)).filter((track): track is WaveTrack => !!track));
+            radarArt.set(RADAR_CARD, covers(edition.items));
+            radarArt.set(UPLOADS_CARD, covers(edition.uploads));
+            render();
+        } catch (error) {
+            console.warn('Радар: обложки не загружены', error);
+        }
+    }
+    // Позиции карточки: выпуск, «Новые загрузки» или «Все найденные» с фильтрами
+    function radarRows(index: number): RadarRow[] {
+        const edition = radarEdition;
+        if (!edition) return [];
+        if (index === UPLOADS_CARD) return edition.uploads;
+        if (!radarShowFound) return edition.items;
+        const found = radarFound?.key === radarKey(edition) && Array.isArray(radarFound.rows) ? radarFound.rows : [];
+        return found.filter((row) => (radarKind === 'all' || row.kind === radarKind) && !(radarHideHeard && row.heard));
+    }
+    function loadRadarTracks(index: number): void {
+        const ids = radarRows(index).map((row) => row.id);
+        if (ids.every((id) => radarTracks.has(id))) {
+            mixLists.set(index, ids.map((id) => radarTracks.get(id)).filter((track): track is WaveTrack => !!track && isWaveEligible(track)));
+            return;
+        }
+        mixLists.set(index, 'loading');
+        const key = radarEdition ? radarKey(radarEdition) : '';
+        void radarTracksOf(ids).then((tracks) => {
+            if (radarEdition && radarKey(radarEdition) === key) mixLists.set(index, tracks.filter(isWaveEligible));
+        }, (error: unknown) => {
+            console.warn('Радар: треки выпуска не загружены', error);
+            if (radarEdition && radarKey(radarEdition) === key) mixLists.set(index, 'failed');
+        }).finally(render);
+    }
+    function toggleRadar(index: number): void {
+        if (openCard === index) {
+            openCard = null;
+            render();
+            return;
+        }
+        openCard = index;
+        if (!radarLoaded) loadRadar();
+        else if (radarEdition) {
+            loadRadarTracks(index);
+            // Отметки «Уже слышал» на сейчас: тот же выпуск перечитывается тихо
+            loadRadar();
+        }
+        render();
+    }
+    function toggleFound(): void {
+        const edition = radarEdition;
+        const bridge = host.soundcloudAPI?.radar;
+        if (!edition || !bridge) return;
+        radarShowFound = !radarShowFound;
+        const key = radarKey(edition);
+        if (radarShowFound && radarFound?.key !== key) {
+            radarFound = { key, rows: 'loading' };
+            void (async () => {
+                const id = await ensureUser();
+                const rows = asRadarRows(await bridge.found(id, edition.period, edition.revision));
+                if (radarFound?.key === key) radarFound = { key, rows };
+                if (openCard === RADAR_CARD && radarShowFound) loadRadarTracks(RADAR_CARD);
+            })().catch((error: unknown) => {
+                console.warn('Радар: найденное не загружено', error);
+                if (radarFound?.key === key) radarFound = { key, rows: 'failed' };
+            }).finally(render);
+        } else loadRadarTracks(RADAR_CARD);
+        render();
+    }
+    function selectRadarEdition(value: string): void {
+        const [period, revision] = value.split('|');
+        const latest = radarArchive[0];
+        radarPinned = latest && latest.period === period && String(latest.revision) === revision ? null : { period, revision: Number(revision) };
+        loadRadar();
+    }
+    // Ручная пересборка: новая ревизия того же периода, прежняя остаётся в архиве и в играющей очереди
+    async function rebuildRadar(): Promise<void> {
+        const bridge = host.soundcloudAPI?.radar;
+        if (!bridge || radarBusy) return;
+        radarBusy = true;
+        render();
+        try {
+            const id = await ensureUser();
+            if (!id) throw new Error('Пользователь не определён');
+            const outcome = (await bridge.rebuild(id)) as { published?: unknown; edition?: { revision?: unknown } | null } | null;
+            if (outcome?.published === true) {
+                radarPinned = null;
+                showToast(typeof outcome.edition?.revision === 'number' && outcome.edition.revision > 1 ? T.radarRebuilt : T.radarBuilt);
+                loadRadar();
+            } else showToast(T.radarWaiting);
+        } catch (error) {
+            console.warn('Радар: пересборка не удалась', error);
+            showToast(T.toastFailed);
+        } finally {
+            radarBusy = false;
+            render();
+        }
+    }
+    const radarDate = (at: number): string => new Intl.DateTimeFormat(T.lang, { day: 'numeric', month: 'long' }).format(at);
+    // Причина позиции: тег показывается так, как он написан у самого трека
+    function radarWhy(row: RadarRow): string {
+        const reason = row.reason;
+        if (reason.kind === 'artist') return fillText(T.whyRadarArtist, { name: reason.name });
+        if (reason.kind === 'follow') return fillText(T.whyRadarFollow, { name: reason.name });
+        if (reason.kind === 'tag') {
+            const track = radarTracks.get(row.id);
+            const labels = track ? [track.genre ?? '', ...Array.from((track.tag_list ?? '').matchAll(/"([^"]+)"|(\S+)/g), (match) => match[1] ?? match[2] ?? '')] : [];
+            const label = labels.find((item) => normalizeTag(item) === reason.tag);
+            return fillText(T.whyRadarTag, { tag: (label ?? reason.tag).trim().toLowerCase() });
+        }
+        return T.whyRadarTaste;
+    }
+    function radarStateText(): string {
+        if (!radarLoaded && radarFailedAt) return T.radarFailed;
+        switch (radarState?.phase) {
+            case 'collecting': return T.radarCollecting;
+            case 'no-session': return T.radarNoSession;
+            case 'offline': return T.radarOffline;
+            case 'error': return T.radarError;
+            default: return T.radarSoon;
+        }
+    }
+    interface RadarCard { index: number; title: string; sub: string; art: string[]; playable: boolean; wait: boolean }
+    function radarCardList(): RadarCard[] {
+        if (!host.soundcloudAPI?.radar) return [];
+        if (!radarLoaded) {
+            if (radarPromise) return [{ index: RADAR_CARD, title: '', sub: '', art: [], playable: false, wait: true }];
+            return radarFailedAt ? [{ index: RADAR_CARD, title: T.radar, sub: T.radarFailed, art: [], playable: false, wait: false }] : [];
+        }
+        const edition = radarEdition;
+        if (!edition) return [{ index: RADAR_CARD, title: T.radar, sub: radarStateText(), art: [], playable: false, wait: false }];
+        const sub = edition.items.length
+            ? [radarDate(edition.cutoff), countText(edition.items.length, T.tracksCount, T.lang), ...(edition.status === 'partial' ? [T.radarPartial] : [])].join(' · ')
+            : T.radarEmptyWeek;
+        const cards: RadarCard[] = [{ index: RADAR_CARD, title: T.radar, sub, art: radarArt.get(RADAR_CARD) ?? [], playable: edition.items.length > 0, wait: false }];
+        if (edition.uploads.length)
+            cards.push({ index: UPLOADS_CARD, title: T.radarUploads, sub: countText(edition.uploads.length, T.tracksCount, T.lang), art: radarArt.get(UPLOADS_CARD) ?? [], playable: true, wait: false });
+        return cards;
+    }
+    // Подпись под названием раскрытого радара: число, полнота обхода, ревизия, идущий сбор новой недели
+    function radarStatusLine(index: number, edition: RadarEditionView): string {
+        if (index === UPLOADS_CARD) return countText(edition.uploads.length, T.tracksCount, T.lang);
+        const parts = [countText(edition.items.length, T.tracksCount, T.lang)];
+        parts.push(edition.status === 'complete' ? T.radarComplete : fillText(T.radarCoverage, { checked: String(edition.checked), total: String(edition.total) }));
+        if (edition.revision > 1) parts.push(fillText(T.radarRevision, { n: String(edition.revision) }));
+        if (radarState?.phase === 'collecting' && radarState.period !== edition.period) parts.push(T.radarCollecting);
+        return parts.join(' · ');
+    }
+    // Волна от выпуска: позиции по порядку впереди похожего; запреты и доступность проверяются перед запуском
+    async function startRadar(index: number, fromId = 0): Promise<void> {
+        const edition = radarEdition;
+        const rows = radarRows(index);
+        if (!edition || !rows.length) return;
+        const request = ++seedRequest;
+        try {
+            await Promise.all([ensureProfile(), ensureExclusions()]);
+            const tracks = await radarTracksOf(rows.map((row) => row.id));
+            if (request !== seedRequest || disposed) return;
+            let own = tracks.filter((track) => isWaveEligible(track) && !isExcluded(track));
+            if (!own.length) {
+                showToast(T.toastEmpty);
+                return;
+            }
+            const at = fromId ? own.findIndex((track) => track.id === fromId) : -1;
+            const first = at >= 0 ? own[at] : null;
+            if (at >= 0) own = [...own.slice(at + 1), ...own.slice(0, at)];
+            radarReasons.clear();
+            for (const row of rows) radarReasons.set(row.id, radarWhy(row));
+            const title = index === UPLOADS_CARD ? T.radarUploads : T.radar + ', ' + radarDate(edition.cutoff);
+            await beginSeed(request, { seed: { kind: 'radar', title, own, tracks: own.slice(), order: 'fixed', mode: 'similar', card: index }, first });
+        } catch (error) {
+            if (request !== seedRequest) return;
+            console.warn('Радар: выпуск не запустился', error);
+            showToast(T.toastFailed);
+        }
+    }
+
     // Переход внутри сайта без перезагрузки: клик по ссылке ловит роутер сайта.
     // Пути те же, что пропускает sitePagePath в main: пользователь, трек, плейлист и запрос после них
     function navigate(path: string): boolean {
@@ -2821,6 +3197,260 @@ export function installWave(config: WaveConfig, createPlayback: typeof installPl
             showToast(T.toastFailed);
         }
     }
+    // Семья трека скрыта: по ключу семьи, а без названия по ссылке самой отмеченной загрузки
+    function familyHidden(target: MenuTarget): boolean {
+        const key = target.track ? familyKey(target.track) : '';
+        if (key) return excludedFamilies.has(key);
+        const url = canonicalUrl(target.url);
+        return !!url && [...familyEntries.values()].some((entry) => entry.url === url);
+    }
+    // «Скрыть другие версии»: семья уходит из волны и радара, версия, на которой нажали, остаётся.
+    // «Показывать другие версии» снимает все отметки этой семьи, с какой бы её версии их ни ставили
+    async function setFamily(target: MenuTarget, hide: boolean): Promise<void> {
+        try {
+            await ensureExclusions();
+            const marked = await trackOf(target);
+            const key = marked ? familyKey(marked) : '';
+            const id = await ensureUser();
+            const bridge = host.soundcloudAPI?.waveExclusions;
+            if (!marked || !key || !id || !bridge) {
+                showToast(T.toastFailed);
+                return;
+            }
+            const url = canonicalUrl(marked.permalink_url) || canonicalUrl(target.url);
+            const ids = hide ? [marked.id] : [...familyEntries].filter(([, entry]) => entry.key === key).map(([entryId]) => entryId);
+            for (const entryId of ids) {
+                const payload = hide ? { id: entryId, title: (marked.title ?? '').trim(), artist: artistName(marked), url, artistId: trackArtist(marked) } : { id: entryId };
+                if ((await bridge.set(id, 'family', payload, hide)) !== true) {
+                    showToast(T.toastNotSaved);
+                    rebuildFamilies();
+                    return;
+                }
+                if (hide) familyEntries.set(entryId, { key, version: versionKey(marked), url });
+                else familyEntries.delete(entryId);
+            }
+            rebuildFamilies();
+            exclusionsRevision++;
+            showToast(hide ? T.toastFamilyHidden : T.toastFamilyShown);
+            if (hide) purgeExcluded();
+            else render();
+        } catch (error) {
+            console.warn('Волна: отметка версий не поставлена', error);
+            showToast(T.toastFailed);
+        }
+    }
+
+    // ===== «Версии этого трека»: текстовый поиск по разным аккаунтам, точный выбор загрузки и решение «та же запись» =====
+    let versionsBox: HTMLElement | null = null;
+    let versionsRequest = 0;
+    let versionsReturn: HTMLElement | null = null;
+    let versionsTrack: WaveTrack | null = null;
+    let versionsFound: WaveTrack[] = [];
+    function closeVersions(): void {
+        versionsRequest++;
+        versionsBox?.remove();
+        versionsBox = null;
+        versionsTrack = null;
+        versionsFound = [];
+        document.removeEventListener('keydown', onVersionsKey, true);
+        const back = versionsReturn;
+        versionsReturn = null;
+        if (back?.isConnected) back.focus();
+    }
+    // Esc закрывает, Tab ходит по кругу внутри диалога
+    function onVersionsKey(event: KeyboardEvent): void {
+        if (!versionsBox) return;
+        if (event.key === 'Escape') {
+            event.preventDefault();
+            event.stopPropagation();
+            closeVersions();
+            return;
+        }
+        if (event.key !== 'Tab') return;
+        const items = [...versionsBox.querySelectorAll<HTMLElement>('button:not(:disabled)')];
+        if (!items.length) return;
+        const at = items.indexOf(document.activeElement as HTMLElement);
+        const next = event.shiftKey ? (at <= 0 ? items.length - 1 : at - 1) : (at < 0 || at === items.length - 1 ? 0 : at + 1);
+        event.preventDefault();
+        items[next].focus();
+    }
+    // Та же запись: подтверждённая группа (пользователь главнее каталога), иначе разбор пары
+    function versionLevel(track: WaveTrack, other: WaveTrack): MatchLevel {
+        const a = copyGroups.get('sc:track:' + track.id);
+        if (other.id !== track.id && a && a === copyGroups.get('sc:track:' + other.id)) return 'confirmed';
+        return matchLevel(track, other, recordingLinks);
+    }
+    function versionsStatus(text: string): HTMLElement {
+        const line = el('div', 'scw-hint', text);
+        line.setAttribute('role', 'status');
+        return line;
+    }
+    function renderVersions(): void {
+        const body = versionsBox?.querySelector<HTMLElement>('.scw-dialog-body');
+        const track = versionsTrack;
+        if (!body || !track) return;
+        const focused = document.activeElement instanceof HTMLElement && body.contains(document.activeElement)
+            ? (document.activeElement.dataset.act ?? '') + '|' + (document.activeElement.dataset.track ?? '')
+            : '';
+        body.textContent = '';
+        const same: Array<[WaveTrack, MatchLevel]> = [[track, 'same-upload']];
+        const other: Array<[WaveTrack, MatchLevel]> = [];
+        for (const found of versionsFound) {
+            if (found.id === track.id) continue;
+            const level = versionLevel(track, found);
+            if (level === 'confirmed' || level === 'probable') same.push([found, level]);
+            else if (level === 'version') other.push([found, level]);
+        }
+        const section = (title: string, rows: Array<[WaveTrack, MatchLevel]>, empty: string): void => {
+            body.append(el('div', 'scw-dialog-h', title));
+            if (!rows.length) {
+                body.append(el('div', 'scw-hint', empty));
+                return;
+            }
+            const list = el('div', 'scw-vlist');
+            for (const [item, level] of rows) {
+                const line = el('div', 'scw-vrow');
+                const play = el('button', 'scw-vplay');
+                play.type = 'button';
+                play.dataset.act = 'version-play';
+                play.dataset.track = String(item.id);
+                const cover = el('div', 'scw-art');
+                art(cover, item, 't300x300');
+                const text = el('div', 'scw-row-t');
+                text.append(el('b', '', (item.title ?? '').trim() || '…'), el('span', '', artistName(item)));
+                play.append(cover, text);
+                const end = el('div', 'scw-row-e');
+                const badge = level === 'same-upload' ? T.versionsThis : level === 'confirmed' ? T.versionsConfirmed : level === 'probable' ? T.versionsProbable : '';
+                if (badge) end.append(el('span', 'scw-badge', badge));
+                end.append(el('span', 'scw-row-d', formatTime(item.full_duration || item.duration || 0)));
+                line.append(play, end);
+                // Решение пользователя: подтверждённую пару можно разъединить, остальные объединить
+                if (level !== 'same-upload') {
+                    const link = el('button', 'scw-btn', level === 'confirmed' ? T.versionsUnlink : T.versionsLink);
+                    link.type = 'button';
+                    link.dataset.act = level === 'confirmed' ? 'version-unlink' : 'version-link';
+                    link.dataset.track = String(item.id);
+                    line.append(link);
+                }
+                list.append(line);
+            }
+            body.append(list);
+        };
+        section(T.versionsSame, same, T.versionsEmpty);
+        section(T.versionsOther, other, T.versionsEmpty);
+        if (focused) {
+            const [act, id] = focused.split('|');
+            body.querySelector<HTMLElement>('[data-act="' + act + '"][data-track="' + id + '"]')?.focus();
+        }
+    }
+    async function openVersions(target: MenuTarget): Promise<void> {
+        closeVersions();
+        ensureStyle();
+        const request = versionsRequest;
+        versionsReturn = document.activeElement instanceof HTMLElement ? document.activeElement : null;
+        const back = el('div', 'scw-dialog-back');
+        const dialog = el('div', 'scw-dialog');
+        dialog.setAttribute('role', 'dialog');
+        dialog.setAttribute('aria-modal', 'true');
+        dialog.setAttribute('aria-labelledby', 'scw-versions-title');
+        const head = el('div', 'scw-dialog-top');
+        const title = el('b', '', T.menuVersions);
+        title.id = 'scw-versions-title';
+        const close = button('scw-icon', 'versions-close', T.dialogClose, 'x');
+        close.title = T.dialogClose;
+        head.append(title, close);
+        const body = el('div', 'scw-dialog-body');
+        body.append(versionsStatus(T.versionsLoading));
+        dialog.append(head, body);
+        back.append(dialog);
+        back.addEventListener('click', onVersionsClick);
+        document.body.append(back);
+        document.addEventListener('keydown', onVersionsKey, true);
+        versionsBox = back;
+        close.focus();
+        try {
+            const [track] = await Promise.all([trackOf(target), ensureExclusions()]);
+            if (request !== versionsRequest) return;
+            if (!track) throw new Error('Трек не распознан');
+            title.textContent = fillText(T.versionsTitle, { title: (track.title ?? '').trim() || '…' });
+            // Для явного действия только текстовый поиск этой версии и других версий песни
+            const queries = searchQueries(track).filter((query) => query.purpose !== 'songs');
+            let failed = 0;
+            const lists = await Promise.all(queries.map((query) => searchTracks(query.q).catch((error: unknown) => {
+                failed++;
+                console.warn('Версии: поиск не удался', error);
+                return [] as WaveTrack[];
+            })));
+            if (request !== versionsRequest) return;
+            if (queries.length && failed === queries.length) throw new Error('Поиск не ответил');
+            const seen = new Set<number>();
+            versionsTrack = track;
+            versionsFound = lists.flat().filter((item) => !seen.has(item.id) && !!seen.add(item.id));
+            renderVersions();
+        } catch (error) {
+            if (request !== versionsRequest) return;
+            console.warn('Версии: список не собран', error);
+            body.textContent = '';
+            body.append(versionsStatus(T.versionsFailed));
+        }
+    }
+    function onVersionsClick(event: MouseEvent): void {
+        const target = event.target instanceof Element ? event.target : null;
+        if (!target) return;
+        if (!target.closest('.scw-dialog')) {
+            closeVersions();
+            return;
+        }
+        const control = target.closest<HTMLElement>('[data-act]');
+        const id = Number(control?.dataset.track);
+        switch (control?.dataset.act) {
+            case 'versions-close':
+                closeVersions();
+                return;
+            case 'version-play': {
+                // Играет ровно выбранная загрузка, страница сайта не меняется
+                const item = [versionsTrack, ...versionsFound].find((track) => track?.id === id);
+                const path = item ? trackPath(item.permalink_url) : '';
+                if (!path) {
+                    showToast(T.toastFailed);
+                    return;
+                }
+                void openTrack(path, false).then((result) => {
+                    if (result !== 'played' && result !== 'superseded') showToast(T.toastFailed);
+                }, (error: unknown) => {
+                    console.warn('Версии: трек не включился', error);
+                    showToast(T.toastFailed);
+                });
+                return;
+            }
+            case 'version-link':
+            case 'version-unlink':
+                void linkVersion(id, control.dataset.act === 'version-link');
+                return;
+        }
+    }
+    async function linkVersion(id: number, same: boolean): Promise<void> {
+        const track = versionsTrack;
+        const request = versionsRequest;
+        if (!track || !isId(id)) return;
+        try {
+            const user = await ensureUser();
+            const saved = user ? await host.soundcloudAPI?.recommend?.setRecordingLink?.(user, 'sc:track:' + track.id, 'sc:track:' + id, same) : false;
+            if (saved !== true) {
+                showToast(T.toastNotSaved);
+                return;
+            }
+            // Связи перечитываются: запреты и слышанное сразу переходят на подтверждённые копии
+            copyGroups = await loadCopyGroups(user);
+            exclusionsRevision++;
+            showToast(same ? T.toastLinked : T.toastUnlinked);
+            if (request === versionsRequest) renderVersions();
+            render();
+        } catch (error) {
+            console.warn('Версии: решение не сохранено', error);
+            showToast(T.toastFailed);
+        }
+    }
     // Исключённое уходит из подборки и из очереди впереди; играющий трек волны сразу сменяется следующим
     function purgeExcluded(): void {
         pool = pool.filter((item) => !isExcluded(item.track));
@@ -2969,7 +3599,10 @@ export function installWave(config: WaveConfig, createPlayback: typeof installPl
         '.scw-card:hover .scw-art::before,.scw-card:focus-within .scw-art::before,.scw-card.open .scw-art::before,.scw-card.on .scw-art::before,.scw-card.on .scw-art::after{opacity:1}',
         // Раскрытая подборка: плашка под полкой с уголком под своей карточкой (6 колонок, промежуток 20 px)
         '.scw-mix{position:relative;margin-top:16px;padding:16px 16px 8px;border-radius:6px;background:var(--scw-film)}',
-        '.scw-mix::before{content:"";position:absolute;top:-8px;left:calc((100% - 100px) / 6 * (var(--scw-at) + .5) + 20px * var(--scw-at) - 8px);border:8px solid transparent;border-top:0;border-bottom-color:var(--scw-film)}',
+        '.scw-mix::before{content:"";position:absolute;top:-8px;left:calc((100% - 100px) / 6 * (var(--scw-at6) + .5) + 20px * var(--scw-at6) - 8px);border:8px solid transparent;border-top:0;border-bottom-color:var(--scw-film)}',
+        // Внутри сетки полки список занимает всю строку под своей карточкой; при 4 колонках свои строка и уголок
+        '.scw-shelf>.scw-mix{grid-column:1/-1;grid-row:var(--scw-row6);margin-top:0}',
+        '@media(max-width:1200px){#sc-wave .scw-shelf>.scw-mix{grid-row:var(--scw-row4)}#sc-wave .scw-mix::before{left:calc((100% - 60px) / 4 * (var(--scw-at4) + .5) + 20px * var(--scw-at4) - 8px)}}',
         '.scw-mix-head{display:flex;align-items:center;gap:12px;margin-bottom:8px}',
         '#sc-wave .scw-mix-play{width:40px;height:40px;border-radius:50%;background:var(--scw-btn);display:grid;place-items:center;flex:none;transition:filter .12s,transform .12s}',
         '#sc-wave .scw-mix-play:hover{filter:brightness(.9);transform:scale(1.06)}',
@@ -2989,6 +3622,23 @@ export function installWave(config: WaveConfig, createPlayback: typeof installPl
         '.scw-row-t span{color:var(--scw-muted);font-size:12px;line-height:16px}',
         '.scw-row-d{color:var(--scw-faint);font-size:12px;font-variant-numeric:tabular-nums}',
         '.scw-row[aria-current="true"] .scw-row-t b{color:#ff5500}',
+        // Радар: инструменты в шапке списка, фильтры «Всех найденных», метки строк, заготовка карточки
+        '.scw-mix-tools{display:flex;align-items:center;gap:8px;flex-wrap:wrap}',
+        '.scw-mix-tools.scw-filters{margin:0 0 8px}',
+        '#sc-wave .scw-chip{height:28px;padding:0 12px;border-radius:14px;background:var(--scw-surface);color:var(--scw-muted);font-weight:600;white-space:nowrap}',
+        '#sc-wave .scw-chip:hover{color:inherit}',
+        '#sc-wave .scw-chip[aria-pressed="true"]{background:var(--scw-btn);color:var(--scw-btn-ink)}',
+        '#sc-wave .scw-btn:disabled{opacity:.5;cursor:default}',
+        '.scw-select{height:32px;max-width:220px;padding:0 8px;border-radius:4px;border:0;background:var(--scw-surface);color:inherit;font:inherit;cursor:pointer}',
+        '.scw-row-e{display:flex;align-items:center;gap:6px;min-width:0}',
+        '.scw-badge{font-size:11px;line-height:16px;padding:0 6px;border-radius:8px;box-shadow:inset 0 0 0 1px var(--scw-film-strong);color:var(--scw-muted);white-space:nowrap}',
+        '.scw-art.scw-radar-art{display:grid;place-items:center;background:radial-gradient(ellipse at 70% 20%,#ff550016,transparent 65%),#191919;color:#f50}',
+        '.scw-radar-art svg{width:42%;height:42%}',
+        '.scw-card.scw-wait{pointer-events:none}',
+        '.scw-card.scw-wait .scw-t1,.scw-card.scw-wait .scw-t2{position:relative}',
+        '.scw-card.scw-wait .scw-t1::after,.scw-card.scw-wait .scw-t2::after{content:"";position:absolute;left:0;top:22%;bottom:22%;border-radius:3px;background:var(--scw-film)}',
+        '.scw-card.scw-wait .scw-t1::after{width:70%}',
+        '.scw-card.scw-wait .scw-t2::after{width:45%}',
         '.scw-genre .scw-go{display:flex;align-items:center;gap:6px;min-width:0;font-weight:600}',
         '.scw-tip{position:fixed;z-index:2147483000;max-width:300px;padding:6px 8px;border-radius:4px;background:#303030;color:#fff;box-shadow:0 4px 12px rgba(0,0,0,.45);font-size:12px;line-height:16px;pointer-events:none;opacity:0;transition:opacity .12s}',
         '.scw-tip.on{opacity:1}',
@@ -3005,6 +3655,24 @@ export function installWave(config: WaveConfig, createPlayback: typeof installPl
         '.scw-menu .scw-mi:focus-visible{outline:2px solid currentColor;outline-offset:-2px}',
         '.scw-toast{position:fixed;left:50%;bottom:72px;z-index:2147483000;transform:translateX(-50%);max-width:420px;padding:8px 12px;border-radius:4px;background:#303030;color:#fff;box-shadow:0 4px 12px rgba(0,0,0,.45);font-size:14px;line-height:20px;pointer-events:none;opacity:0;transition:opacity .15s}',
         '.scw-toast.on{opacity:1}',
+        // «Версии этого трека»: окно поверх страницы, вне блока волны, поэтому переменные и сброс кнопок свои
+        '.scw-dialog-back{--scw-surface:#303030;--scw-muted:#999;--scw-faint:#757575;--scw-film:rgba(255,255,255,.06);--scw-film-strong:rgba(255,255,255,.1);--scw-tile:rgba(255,255,255,.06);position:fixed;inset:0;z-index:2147482000;display:grid;place-items:center;background:rgba(0,0,0,.6);font-size:14px;line-height:20px}',
+        '.scw-dialog{width:min(640px,calc(100vw - 32px));max-height:min(640px,calc(100vh - 64px));display:flex;flex-direction:column;border-radius:8px;background:#1f1f1f;color:#fff;box-shadow:0 12px 40px rgba(0,0,0,.6)}',
+        '.scw-dialog button{font:inherit;color:inherit;background:none;border:0;cursor:pointer;padding:0}',
+        '.scw-dialog :focus-visible{outline:2px solid currentColor;outline-offset:2px}',
+        '.scw-dialog svg{display:block}',
+        '.scw-dialog-top{display:flex;align-items:center;gap:12px;padding:16px 16px 8px}',
+        '.scw-dialog-top b{flex:1;min-width:0;font-size:16px;line-height:22px;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}',
+        '.scw-dialog .scw-icon{width:32px;height:32px;border-radius:6px;background:var(--scw-surface);display:grid;place-items:center;flex:none}',
+        '.scw-dialog .scw-icon svg{width:16px;height:16px;fill:currentColor}',
+        '.scw-dialog-body{overflow-y:auto;padding:0 16px 16px;scrollbar-width:thin;scrollbar-color:rgba(255,255,255,.2) transparent}',
+        '.scw-dialog-h{color:var(--scw-muted);font-size:12px;line-height:16px;margin:16px 0 4px}',
+        '.scw-dialog .scw-hint{color:var(--scw-muted);padding:4px 0}',
+        '.scw-vrow{display:flex;align-items:center;gap:8px;min-width:0;border-radius:4px}',
+        '.scw-vrow:hover{background:var(--scw-film)}',
+        '.scw-dialog .scw-vplay{flex:1;min-width:0;display:grid;grid-template-columns:40px minmax(0,1fr);align-items:center;gap:12px;height:48px;padding:4px 8px;text-align:left}',
+        '.scw-vplay .scw-art{width:40px;height:40px;margin:0}',
+        '.scw-dialog .scw-btn{height:28px;padding:0 10px;border-radius:4px;background:var(--scw-surface);font-weight:600;white-space:nowrap;flex:none;margin-right:8px}',
         '@media (prefers-reduced-motion:reduce){.scw-tip,.scw-toast,.scw-card .scw-art::before,.scw-card .scw-art::after,#sc-wave .scw-card-play,#sc-wave .scw-mix-play{transition:none}.scw-menu{animation:none}#sc-wave .scw-card .scw-card-play,#sc-wave .scw-mix-play{transform:none!important}}',
         'html.scm-reduce #sc-wave .scw-card .scw-card-play,html.scm-reduce #sc-wave .scw-mix-play{transition:none;transform:none!important}',
         // «Меньше анимаций» в F1: без масштаба меню, растворения остаются
@@ -3018,8 +3686,10 @@ export function installWave(config: WaveConfig, createPlayback: typeof installPl
         undo: '<svg viewBox="0 0 16 16" aria-hidden="true"><path d="M4.6 3.4 5.7 4.5 4.1 6H10a4.5 4.5 0 0 1 0 9H6v-1.5h4a3 3 0 0 0 0-6H4.1l1.6 1.5-1.1 1.1L1.2 6.75z"/></svg>',
         more: '<svg viewBox="0 0 16 16" aria-hidden="true"><path d="M7.25 2h1.5v5.25H14v1.5H8.75V14h-1.5V8.75H2v-1.5h5.25z"/></svg>',
         later: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12.34 2.02C6.59 1.82 2 6.42 2 12c0 5.52 4.48 10 10 10 3.71 0 6.93-2.02 8.66-5.02-7.51-.25-12.09-8.43-8.32-14.96z"/></svg>',
+        // Стопка слоёв: версии одной песни
+        versions: '<svg viewBox="0 0 16 16" aria-hidden="true"><path d="M8 1.2 15 5 8 8.8 1 5zM2.7 7.4 8 10.3l5.3-2.9L15 8.3 8 12.1 1 8.3zm0 3.3L8 13.6l5.3-2.9 1.7.9L8 15.4 1 11.6z"/></svg>',
         // Список с плюсом: трек в набор
-        pick: '<svg viewBox="0 0 16 16" aria-hidden="true"><path d="M1 2.5h10V4H1zM1 6.25h10v1.5H1zM1 10h6v1.5H1zM11.25 9h1.5v2.25H15v1.5h-2.25V15h-1.5v-2.25H9v-1.5h2.25z"/></svg>',
+        pick:'<svg viewBox="0 0 16 16" aria-hidden="true"><path d="M1 2.5h10V4H1zM1 6.25h10v1.5H1zM1 10h6v1.5H1zM11.25 9h1.5v2.25H15v1.5h-2.25V15h-1.5v-2.25H9v-1.5h2.25z"/></svg>',
     };
     function ensureStyle(): void {
         if (document.getElementById('sc-wave-style')) return;
@@ -3241,56 +3911,214 @@ export function installWave(config: WaveConfig, createPlayback: typeof installPl
     const cardTitle = (card: ShelfCard): string => (card.kind === 'daily' ? T.shelfDaily : card.kind === 'forgotten' ? T.shelfForgotten : card.title);
     // Полка подборок: коллаж обложек, название, число треков или главные артисты; играющая карточка с оранжевой кромкой.
     // Нажатие на карточку раскрывает её треки под полкой, кнопка на обложке сразу включает волну подборки
-    function renderShelf(): HTMLElement[] {
-        if (!host.soundcloudAPI?.waveShelf || state === 'unavailable') return [];
-        const current = shelf;
-        if (!current && !shelfPromise && !shelfFailedAt) return [];
-        const headline = el('div', 'scw-shelf-h', T.shelf);
-        if (!current && !shelfPromise && shelfFailedAt) {
-            const error = el('div', 'scw-shelf-error'); error.setAttribute('role', 'status');
-            error.append(el('span', 'scw-hint', T.shelfFailed), textButton('shelf-retry', T.retry));
-            return [headline, error];
-        }
-        if (current && !current.cards.length) return [headline, el('div', 'scw-hint', T.shelfEmpty)];
-        const grid = el('div', 'scw-tiles scw-shelf' + (current ? '' : ' wait held'));
-        const cards = current?.cards ?? Array.from({ length: 4 }, (): ShelfCard | null => null);
-        cards.forEach((card, index) => {
-            const node = el('div', 'scw-card');
-            const cover = el('div', 'scw-art');
-            if (!card) {
-                node.append(cover, el('div', 'scw-t1', ' '), el('div', 'scw-t2', ' '));
-                grid.append(node);
-                return;
+    // Карточка полки: общая для подборок и радара; кнопки «слушать» нет, пока слушать нечего
+    function cardNode(index: number, title: string, sub: string, cover: string[], playable: boolean): HTMLElement {
+        const node = el('div', 'scw-card');
+        const artBox = el('div', 'scw-art');
+        const playing = !!seed && seed.card === index && active;
+        const shown = playing && !!player?.isPlaying();
+        node.dataset.card = String(index);
+        node.classList.toggle('on', playing);
+        node.classList.toggle('open', openCard === index);
+        const open = el('button', 'scw-card-open');
+        open.type = 'button';
+        open.dataset.act = 'shelf-open';
+        open.dataset.card = String(index);
+        open.setAttribute('aria-expanded', String(openCard === index));
+        if (cover.length >= 4) {
+            artBox.classList.add('scw-quad');
+            for (const url of cover.slice(0, 4)) {
+                const cell = el('span', '');
+                paintArt(cell, url, '');
+                artBox.append(cell);
             }
-            const playing = !!seed && seed.card === index && active;
-            const shown = playing && !!player?.isPlaying();
-            node.dataset.card = String(index);
-            node.classList.toggle('on', playing);
-            node.classList.toggle('open', openCard === index);
-            const open = el('button', 'scw-card-open');
-            open.type = 'button';
-            open.dataset.act = 'shelf-open';
-            open.dataset.card = String(index);
-            open.setAttribute('aria-expanded', String(openCard === index));
-            if (card.art.length >= 4) {
-                cover.classList.add('scw-quad');
-                for (const url of card.art.slice(0, 4)) {
-                    const cell = el('span', '');
-                    paintArt(cell, url, '');
-                    cover.append(cell);
-                }
-            } else if (card.art[0]) paintArt(cover, card.art[0], '');
-            open.append(cover, el('div', 'scw-t1', cardTitle(card)), el('div', 'scw-t2', card.kind === 'group' && card.sub ? card.sub : countText(card.ids.length, T.tracksCount, T.lang)));
+        } else if (cover[0]) paintArt(artBox, cover[0], '');
+        else if (isRadarCard(index)) {
+            // Выпуска ещё нет: вместо серой заготовки значок радара, как пустая обложка волны
+            artBox.classList.add('scw-radar-art');
+            artBox.setAttribute('aria-hidden', 'true');
+            artBox.innerHTML = '<svg viewBox="0 0 48 48" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><circle cx="24" cy="24" r="3.5" fill="currentColor" stroke="none"/><path d="M15.5 32.5a12 12 0 0 1 0-17M32.5 15.5a12 12 0 0 1 0 17" opacity=".75"/><path d="M9.9 38.1a20 20 0 0 1 0-28.2M38.1 9.9a20 20 0 0 1 0 28.2" opacity=".4"/></svg>';
+        }
+        open.append(artBox, el('div', 'scw-t1', title), el('div', 'scw-t2', sub));
+        node.append(open);
+        if (playable) {
             const over = el('div', 'scw-card-over');
             const play = button('scw-card-play', 'shelf-play', shown ? T.pause : T.mixPlay, shown ? 'pause' : 'play');
             play.dataset.card = String(index);
             play.setAttribute('aria-pressed', String(playing));
             over.append(play);
-            node.append(open, over);
+            node.append(over);
+        }
+        return node;
+    }
+    function waitCard(): HTMLElement {
+        const node = el('div', 'scw-card scw-wait');
+        node.append(el('div', 'scw-art'), el('div', 'scw-t1', ' '), el('div', 'scw-t2', ' '));
+        return node;
+    }
+    function renderShelf(): HTMLElement[] {
+        if (state === 'unavailable') return [];
+        const radar = radarCardList();
+        const shelfOn = !!host.soundcloudAPI?.waveShelf;
+        const current = shelfOn ? shelf : null;
+        const shelfWait = shelfOn && !current && !!shelfPromise;
+        const shelfError = shelfOn && !current && !shelfPromise && !!shelfFailedAt;
+        if (!radar.length && !current && !shelfWait && !shelfError) return [];
+        const headline = el('div', 'scw-shelf-h', T.shelf);
+        const error = el('div', 'scw-shelf-error');
+        error.setAttribute('role', 'status');
+        error.append(el('span', 'scw-hint', T.shelfFailed), textButton('shelf-retry', T.retry));
+        const empty = !!current && !current.cards.length;
+        // Без радара полка как прежде: ошибка или пустота вместо сетки
+        if (!radar.length && shelfError) return [headline, error];
+        if (!radar.length && empty) return [headline, el('div', 'scw-hint', T.shelfEmpty)];
+        const grid = el('div', 'scw-tiles scw-shelf' + (!radar.length && shelfWait ? ' wait held' : ''));
+        // Уголок раскрытого списка ставится под место карточки в сетке, а не под её номер
+        let openAt = -1;
+        const add = (node: HTMLElement, index: number | null): void => {
+            if (index !== null && index === openCard) openAt = grid.childElementCount;
             grid.append(node);
-        });
-        const list = current && openCard !== null ? renderMix(openCard) : null;
-        return list ? [headline, grid, list] : [headline, grid];
+        };
+        for (const card of radar) add(card.wait ? waitCard() : cardNode(card.index, card.title, card.sub, card.art, card.playable), card.wait ? null : card.index);
+        if (current) current.cards.forEach((card, index) => add(cardNode(index, cardTitle(card), card.kind === 'group' && card.sub ? card.sub : countText(card.ids.length, T.tracksCount, T.lang), card.art, true), index));
+        else if (shelfWait) for (let i = 0; i < 4; i++) add(waitCard(), null);
+        const parts: HTMLElement[] = [headline, grid];
+        if (shelfError) parts.push(error);
+        else if (empty) parts.push(el('div', 'scw-hint', T.shelfEmpty));
+        // Список встаёт в сетку строкой сразу под карточкой: с радаром карточек больше шести, строк две.
+        // Колонок 6 или 4 по ширине окна, поэтому строка и уголок заданы для обоих вариантов
+        const list = openCard === null || openAt < 0 ? null : isRadarCard(openCard) ? renderRadarMix(openCard) : renderMix(openCard);
+        if (list) {
+            for (const columns of [6, 4]) {
+                list.style.setProperty('--scw-at' + columns, String(openAt % columns));
+                list.style.setProperty('--scw-row' + columns, String(Math.floor(openAt / columns) + 2));
+            }
+            grid.append(list);
+        }
+        return parts;
+    }
+    // Раскрытый радар: шапка со статусом и архивом, фильтры «Всех найденных», метки у строк
+    function renderRadarMix(index: number): HTMLElement {
+        const edition = radarEdition;
+        const uploads = index === UPLOADS_CARD;
+        const title = uploads ? T.radarUploads : edition ? T.radar + ', ' + radarDate(edition.cutoff) : T.radar;
+        const box = el('div', 'scw-mix');
+        box.setAttribute('role', 'region');
+        box.setAttribute('aria-label', title);
+        const head = el('div', 'scw-mix-head');
+        const rows = radarRows(index);
+        const loaded = mixLists.get(index);
+        if (edition && rows.length) {
+            const playing = !!seed && seed.card === index && active && !!player?.isPlaying();
+            const play = button('scw-mix-play', 'mix-play', playing ? T.pause : T.mixPlay, playing ? 'pause' : 'play');
+            play.title = playing ? T.pause : T.mixPlay;
+            head.append(play);
+        }
+        const titles = el('div', 'scw-mix-title');
+        const status = el('span', '', edition ? radarStatusLine(index, edition) : radarStateText());
+        status.setAttribute('role', 'status');
+        titles.append(el('b', '', title), status);
+        head.append(titles);
+        if (!uploads) {
+            const tools = el('div', 'scw-mix-tools');
+            if (radarArchive.length > 1) {
+                const select = el('select', 'scw-select');
+                select.dataset.role = 'radar-archive';
+                select.setAttribute('aria-label', T.radarArchive);
+                select.title = T.radarArchive;
+                for (const entry of radarArchive) {
+                    const option = el('option', '', radarDate(entry.cutoff) + (entry.revision > 1 ? ' · ' + fillText(T.radarRevision, { n: String(entry.revision) }) : ''));
+                    option.value = entry.period + '|' + entry.revision;
+                    option.selected = !!edition && option.value === radarKey(edition);
+                    select.append(option);
+                }
+                tools.append(select);
+            }
+            if (edition) {
+                const found = el('button', 'scw-chip', T.radarFound);
+                found.type = 'button';
+                found.dataset.act = 'radar-found';
+                found.setAttribute('aria-pressed', String(radarShowFound));
+                tools.append(found);
+            }
+            // Пересобирается только последний выпуск; из архива сначала вернуться к нему
+            if (!radarPinned) {
+                const rebuild = textButton('radar-rebuild', edition ? T.radarRebuild : T.radarBuildNow);
+                rebuild.disabled = radarBusy || radarState?.phase === 'collecting';
+                tools.append(rebuild);
+            }
+            head.append(tools);
+        }
+        const close = button('scw-icon', 'mix-close', T.mixClose, 'x');
+        close.title = T.mixClose;
+        head.append(close);
+        box.append(head);
+        if (uploads) box.append(el('div', 'scw-hint', T.radarUploadsHint));
+        if (!uploads && radarShowFound) {
+            const chips = el('div', 'scw-mix-tools scw-filters');
+            const kinds: Array<[typeof radarKind, string]> = [['all', T.radarAll], ['release', T.radarReleases], ['upload', T.radarPosts]];
+            for (const [kind, label] of kinds) {
+                const chip = el('button', 'scw-chip', label);
+                chip.type = 'button';
+                chip.dataset.act = 'radar-kind';
+                chip.dataset.kind = kind;
+                chip.setAttribute('aria-pressed', String(radarKind === kind));
+                chips.append(chip);
+            }
+            const heard = el('button', 'scw-chip', T.radarHideHeard);
+            heard.type = 'button';
+            heard.dataset.act = 'radar-heard';
+            heard.setAttribute('aria-pressed', String(radarHideHeard));
+            chips.append(heard);
+            box.append(chips);
+        }
+        const hint = (text: string): HTMLElement => {
+            const line = el('div', 'scw-hint', text);
+            line.setAttribute('role', 'status');
+            return line;
+        };
+        if (!edition) return box;
+        const foundRows = radarShowFound && radarFound?.key === radarKey(edition) ? radarFound.rows : null;
+        if (radarShowFound && !Array.isArray(foundRows)) {
+            box.append(hint(foundRows === 'failed' ? T.mixFailed : T.mixLoading));
+            return box;
+        }
+        if (!rows.length) {
+            box.append(hint(radarShowFound ? (foundRows?.length ? T.radarNoMatch : T.radarFoundEmpty) : T.radarEmptyWeek));
+            return box;
+        }
+        if (!Array.isArray(loaded)) {
+            box.append(hint(loaded === 'failed' ? T.mixFailed : T.mixLoading));
+            return box;
+        }
+        const tracks = loaded.filter((track) => !isExcluded(track));
+        if (!tracks.length) {
+            box.append(hint(T.mixEmpty));
+            return box;
+        }
+        const byId = new Map(rows.map((row) => [row.id, row]));
+        const list = el('div', 'scw-mix-rows');
+        const now = active ? player?.getCurrentSound()?.id ?? 0 : 0;
+        for (const track of tracks) {
+            const item = byId.get(track.id);
+            const row = el('button', 'scw-row');
+            row.type = 'button';
+            row.dataset.track = String(track.id);
+            if (track.id === now) row.setAttribute('aria-current', 'true');
+            const cover = el('div', 'scw-art');
+            art(cover, track, 't300x300');
+            const text = el('div', 'scw-row-t');
+            text.append(el('b', '', (track.title ?? '').trim() || '…'), el('span', '', artistName(track)));
+            const end = el('div', 'scw-row-e');
+            if (item?.after) end.append(el('span', 'scw-badge', T.radarAfter));
+            if (item?.kind === 'upload' && !uploads) end.append(el('span', 'scw-badge', T.radarPost));
+            if (item?.heard) end.append(el('span', 'scw-badge', T.radarHeard));
+            end.append(el('span', 'scw-row-d', formatTime(track.full_duration || track.duration || 0)));
+            row.append(cover, text, end);
+            list.append(row);
+        }
+        box.append(list);
+        return box;
     }
     // Треки раскрытой подборки: обложка, название, артист, длительность; играющий трек выделен
     function renderMix(index: number): HTMLElement | null {
@@ -3299,7 +4127,6 @@ export function installWave(config: WaveConfig, createPlayback: typeof installPl
         const box = el('div', 'scw-mix');
         box.setAttribute('role', 'region');
         box.setAttribute('aria-label', cardTitle(card));
-        box.style.setProperty('--scw-at', String(index));
         const head = el('div', 'scw-mix-head');
         const playing = !!seed && seed.card === index && active && !!player?.isPlaying();
         const play = button('scw-mix-play', 'mix-play', playing ? T.pause : T.mixPlay, playing ? 'pause' : 'play');
@@ -3588,7 +4415,8 @@ export function installWave(config: WaveConfig, createPlayback: typeof installPl
                 player.setCurrentItem(item, {});
                 if (!player.isPlaying()) player.playCurrent({ userInitiated: true });
                 setTimeout(render, 150);
-            } else void startShelf(openCard, id);
+            } else if (isRadarCard(openCard)) void startRadar(openCard, id);
+            else void startShelf(openCard, id);
             return;
         }
         const control = target.closest<HTMLElement>('[data-act], [data-mode], [data-genre]');
@@ -3613,8 +4441,24 @@ export function installWave(config: WaveConfig, createPlayback: typeof installPl
             case 'clear-seed':
                 clearSeed();
                 return;
-            case 'shelf-open':
-                toggleMix(Number(control.dataset.card));
+            case 'shelf-open': {
+                const index = Number(control.dataset.card);
+                if (isRadarCard(index)) toggleRadar(index);
+                else toggleMix(index);
+                return;
+            }
+            case 'radar-found':
+                toggleFound();
+                return;
+            case 'radar-rebuild':
+                void rebuildRadar();
+                return;
+            case 'radar-kind':
+            case 'radar-heard':
+                if (control.dataset.act === 'radar-heard') radarHideHeard = !radarHideHeard;
+                else radarKind = control.dataset.kind === 'release' || control.dataset.kind === 'upload' ? control.dataset.kind : 'all';
+                loadRadarTracks(RADAR_CARD);
+                render();
                 return;
             case 'shelf-retry':
                 shelfFailedAt = 0; profileRetryAt = 0; ensureShelf();
@@ -3632,7 +4476,8 @@ export function installWave(config: WaveConfig, createPlayback: typeof installPl
                     if (player.isPlaying()) player.pauseCurrent({ userInitiated: true });
                     else player.playCurrent({ userInitiated: true });
                     setTimeout(render, 150);
-                } else if (index >= 0) void startShelf(index);
+                } else if (isRadarCard(index)) void startRadar(index);
+                else if (index >= 0) void startShelf(index);
                 return;
             }
             case 'pick-start':
@@ -3689,6 +4534,10 @@ export function installWave(config: WaveConfig, createPlayback: typeof installPl
         }
     }
     function onInput(event: Event): void {
+        if (event.target instanceof HTMLSelectElement && event.target.dataset.role === 'radar-archive') {
+            selectRadarEdition(event.target.value);
+            return;
+        }
         if (!(event.target instanceof HTMLInputElement) || event.target.dataset.role !== 'genre-input') return;
         popQuery = event.target.value;
         render();
@@ -3864,6 +4713,8 @@ export function installWave(config: WaveConfig, createPlayback: typeof installPl
             items.push(trackMarked(moreTracks, target) ? ['unmore', T.menuUnmore, 'undo'] : ['more', T.more, 'more']);
             items.push(trackMarked(laterTracks, target) ? ['unlater', T.menuUnlater, 'undo'] : ['later', T.later, 'later']);
             items.push(trackExcluded(target) ? ['undislike', T.menuUndislike, 'undo'] : ['dislike', T.menuDislike, 'block']);
+            items.push(['versions', T.menuVersions, 'versions']);
+            items.push(familyHidden(target) ? ['show-family', T.menuShowFamily, 'undo'] : ['hide-family', T.menuHideFamily, 'block']);
         }
         if (target.kind === 'artist') items.push(artistMarked(laterArtists, target) ? ['unlater-artist', T.menuUnlater, 'undo'] : ['later-artist', T.later, 'later']);
         if (hasArtist) items.push(artistExcluded(target) ? ['show-artist', T.menuShowArtist, 'undo'] : ['hide-artist', T.menuHideArtist, 'hide']);
@@ -3890,6 +4741,9 @@ export function installWave(config: WaveConfig, createPlayback: typeof installPl
             case 'unlater': void setExcluded('later-track', target, act === 'later'); return;
             case 'later-artist':
             case 'unlater-artist': void setExcluded('later-artist', target, act === 'later-artist'); return;
+            case 'versions': void openVersions(target); return;
+            case 'hide-family':
+            case 'show-family': void setFamily(target, act === 'hide-family'); return;
         }
     }
 
@@ -4055,6 +4909,8 @@ export function installWave(config: WaveConfig, createPlayback: typeof installPl
         if (state === 'idle' && !active && !preview.length && player && isVisible()) void preparePreview();
         // Подборки собираются, когда блок виден и сайт готов, и пересобираются после местной полуночи
         if (player && api && state !== 'loading' && isVisible()) ensureShelf();
+        // Выпуск радара собирает main по расписанию, страница только читает готовый
+        if (player && api && isVisible()) ensureRadar();
     }
 
     let frame = 0;
@@ -4171,6 +5027,9 @@ export function installWave(config: WaveConfig, createPlayback: typeof installPl
         delete host.__scSaveSession;
         delete host.__scResume;
         delete host.__scRadarCollect;
+        delete host.__scRadarChanged;
+        radarRequest++;
+        closeVersions();
     };
     host.__disposeWave = dispose;
     // Выход из приложения: main забирает недописанное вместе с текущим прослушиванием,

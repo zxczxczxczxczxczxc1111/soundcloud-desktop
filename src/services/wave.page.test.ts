@@ -234,7 +234,7 @@ it('ПКМ по треку в списке: меню и волна от этог
 
     const event = rightClick(row.querySelector('.soundTitle__title')!);
     expect(event.defaultPrevented).toBe(true);
-    expect(menuActs()).toEqual(['wave-track', 'wave-artist', 'queue-next', 'queue-last', 'pick', 'more', 'later', 'dislike', 'hide-artist']);
+    expect(menuActs()).toEqual(['wave-track', 'wave-artist', 'queue-next', 'queue-last', 'pick', 'more', 'later', 'dislike', 'versions', 'hide-family', 'hide-artist']);
     choose('wave-track');
     expect(document.querySelector('.scw-menu')).toBeNull();
     await vi.advanceTimersByTimeAsync(100);
@@ -1346,4 +1346,248 @@ it('P6: сбор радара не пишет чужому аккаунту и �
     await vi.advanceTimersByTimeAsync(5000);
     expect(await pending).toEqual({ user: 77, checked: 0, remaining: 2, stopped: 'auth' });
     expect(recommend.catalogChecked.mock.calls).toEqual([[77, 'user:5', '', 'failed', 'auth', 0]]);
+});
+
+// Выпуск радара как его отдаёт worker: позиции с причиной и отметкой «Уже слышал», новые загрузки отдельно
+const radarCutoff = Date.UTC(2026, 8, 25, 6);
+const radarItem = (id: number, extra: object = {}): object => ({
+    key: 'sc:track:' + id, id, title: 'Fresh ' + id, artist: 'A', kind: 'release', at: radarCutoff - 1000, heard: false,
+    score: 0.5, base: 0.5, bonus: 0, penalty: 0, direction: 'a', reason: { kind: 'taste' }, ...extra,
+});
+const radarEditionOf = (period: string, revision: number, cutoff: number): object => ({
+    period, revision, created: cutoff, cutoff, status: 'partial', algorithm: 1, taste: 1,
+    coverage: { accounts: 10, checked: 8, failed: 0, searches: 2, searchesDone: 2 },
+    items: [
+        radarItem(8001, { reason: { kind: 'artist', name: 'Alpha' } }),
+        radarItem(8002, { heard: true, reason: { kind: 'follow', name: 'Beta' } }),
+        radarItem(8003, { reason: { kind: 'tag', tag: 'techno' } }),
+    ],
+    uploads: [radarItem(8101, { kind: 'upload' })],
+});
+const radarTracks: WaveTrack[] = [8001, 8002, 8003, 8101, 8201].map((id) => ({
+    id, kind: 'track', title: 'Fresh ' + id, duration: 200000, user_id: id, user: { id, username: 'Maker ' + id }, genre: id === 8003 ? 'Techno' : '',
+}));
+const radarEditions = [
+    { period: '2026-09-25', revision: 1, created: radarCutoff, cutoff: radarCutoff, status: 'partial', manual: false, items: 3, uploads: 1 },
+    { period: '2026-09-18', revision: 1, created: radarCutoff - 7 * 86400000, cutoff: radarCutoff - 7 * 86400000, status: 'complete', manual: false, items: 3, uploads: 1 },
+];
+const radarDay = (at: number): string => new Intl.DateTimeFormat('en', { day: 'numeric', month: 'long' }).format(at);
+
+it('P7: радар первым на полке, список с «Already heard», волна по порядку выпуска с причиной, пересборка и архив', async () => {
+    let revision = 1;
+    const radar = {
+        view: vi.fn(async (_user: number, period?: string) => period === '2026-09-18'
+            ? { edition: radarEditionOf('2026-09-18', 1, radarCutoff - 7 * 86400000), editions: radarEditions }
+            : { edition: radarEditionOf('2026-09-25', revision, radarCutoff), editions: radarEditions }),
+        found: vi.fn(async () => []),
+        rebuild: vi.fn(async () => {
+            revision = 2;
+            return { published: true, waiting: false, edition: { revision: 2 } };
+        }),
+        state: vi.fn(async () => ({ phase: 'published', period: '2026-09-25', error: '', updated: 1 })),
+    };
+    Object.assign(window, { soundcloudAPI: { radar } });
+    const site = fakeSite(relatedTracks, (name, _path, query) => (name === 'trackBatch' ? batchOf(radarTracks)(query) : undefined));
+    window.eval(waveScript());
+    await vi.advanceTimersByTimeAsync(100);
+    const section = document.getElementById('sc-wave')!;
+    expect(radar.view).toHaveBeenCalledWith(77, undefined, undefined);
+    const cards = section.querySelectorAll<HTMLElement>('.scw-card[data-card]');
+    expect([...cards].map((card) => card.dataset.card)).toEqual(['-10', '-11']);
+    expect(cards[0].querySelector('.scw-t1')?.textContent).toBe('Release Radar');
+    expect(cards[0].querySelector('.scw-t2')?.textContent).toBe(radarDay(radarCutoff) + ' · 3 tracks · incomplete');
+    expect(cards[1].querySelector('.scw-t2')?.textContent).toBe('1 track');
+
+    section.querySelector<HTMLButtonElement>('[data-act="shelf-open"][data-card="-10"]')!.click();
+    await vi.advanceTimersByTimeAsync(100);
+    const rows = section.querySelectorAll<HTMLElement>('.scw-mix .scw-row[data-track]');
+    expect([...rows].map((row) => row.dataset.track)).toEqual(['8001', '8002', '8003']);
+    expect([...rows].map((row) => [...row.querySelectorAll('.scw-badge')].map((badge) => badge.textContent))).toEqual([[], ['Already heard'], []]);
+    expect(section.querySelector('.scw-mix-title span')?.textContent).toBe('3 tracks · Sources checked: 10 of 12');
+    expect([...section.querySelectorAll<HTMLOptionElement>('[data-role="radar-archive"] option')].map((option) => option.value)).toEqual(['2026-09-25|1', '2026-09-18|1']);
+    expect(site.player.replaceQueue).not.toHaveBeenCalled();
+
+    section.querySelector<HTMLButtonElement>('[data-act="mix-play"]')!.click();
+    await vi.advanceTimersByTimeAsync(100);
+    const queued = (site.player.replaceQueue.mock.calls[site.player.replaceQueue.mock.calls.length - 1][0] as FakeItem[]).map((item) => item.sound.id);
+    expect(queued.slice(0, 3)).toEqual([8001, 8002, 8003]);
+    expect(section.querySelector('.scw-why')?.textContent).toBe('New from Alpha');
+    expect(section.querySelector('[data-act="shelf-play"][data-card="-10"]')?.getAttribute('aria-pressed')).toBe('true');
+
+    // Причина тегом: слово как у самого трека
+    section.querySelector<HTMLButtonElement>('.scw-row[data-track="8003"]')!.click();
+    await vi.advanceTimersByTimeAsync(200);
+    expect(section.querySelector('.scw-why')?.textContent).toBe('Fresh techno');
+
+    section.querySelector<HTMLButtonElement>('[data-act="radar-rebuild"]')!.click();
+    await vi.advanceTimersByTimeAsync(100);
+    expect(radar.rebuild).toHaveBeenCalledWith(77);
+    expect(document.querySelector('.scw-toast')?.textContent).toBe('Rebuilt, the previous edition is in the archive');
+    expect(section.querySelector('.scw-mix-title span')?.textContent).toBe('3 tracks · Sources checked: 10 of 12 · rebuild 2');
+    // Играет прежняя ревизия: карточка новой не отмечена играющей
+    expect(section.querySelector('[data-act="shelf-play"][data-card="-10"]')?.getAttribute('aria-pressed')).toBe('false');
+
+    const select = section.querySelector<HTMLSelectElement>('[data-role="radar-archive"]')!;
+    select.value = '2026-09-18|1';
+    select.dispatchEvent(new Event('input', { bubbles: true }));
+    await vi.advanceTimersByTimeAsync(100);
+    expect(radar.view).toHaveBeenLastCalledWith(77, '2026-09-18', 1);
+    expect(section.querySelector('.scw-mix-title b')?.textContent).toBe('Release Radar, ' + radarDay(radarCutoff - 7 * 86400000));
+    // Архивный выпуск не пересобирается
+    expect(section.querySelector('[data-act="radar-rebuild"]')).toBeNull();
+});
+
+it('P7: «Все найденные» с фильтрами вида и «Уже слышал», метки «После выпуска» и «Новая загрузка»', async () => {
+    const radar = {
+        view: vi.fn(async () => ({ edition: radarEditionOf('2026-09-25', 1, radarCutoff), editions: radarEditions.slice(0, 1) })),
+        found: vi.fn(async () => [radarItem(8001), radarItem(8002, { heard: true }), radarItem(8201, { kind: 'upload', after: true })]),
+        rebuild: vi.fn(async () => ({ published: false, waiting: true, edition: null })),
+        state: vi.fn(async () => ({ phase: 'published', period: '2026-09-25', error: '', updated: 1 })),
+    };
+    Object.assign(window, { soundcloudAPI: { radar } });
+    fakeSite(relatedTracks, (name, _path, query) => (name === 'trackBatch' ? batchOf(radarTracks)(query) : undefined));
+    window.eval(waveScript());
+    await vi.advanceTimersByTimeAsync(100);
+    const section = document.getElementById('sc-wave')!;
+    const shown = (): string[] => [...section.querySelectorAll<HTMLElement>('.scw-mix .scw-row[data-track]')].map((row) => row.dataset.track ?? '');
+    section.querySelector<HTMLButtonElement>('[data-act="shelf-open"][data-card="-10"]')!.click();
+    await vi.advanceTimersByTimeAsync(100);
+    // Одного выпуска в архиве мало для выбора
+    expect(section.querySelector('[data-role="radar-archive"]')).toBeNull();
+
+    section.querySelector<HTMLButtonElement>('[data-act="radar-found"]')!.click();
+    await vi.advanceTimersByTimeAsync(100);
+    expect(radar.found).toHaveBeenCalledWith(77, '2026-09-25', 1);
+    expect(section.querySelector('[data-act="radar-found"]')?.getAttribute('aria-pressed')).toBe('true');
+    expect(shown()).toEqual(['8001', '8002', '8201']);
+    expect([...section.querySelectorAll('.scw-row[data-track="8201"] .scw-badge')].map((badge) => badge.textContent)).toEqual(['After release', 'New upload']);
+
+    section.querySelector<HTMLButtonElement>('[data-act="radar-kind"][data-kind="upload"]')!.click();
+    await vi.advanceTimersByTimeAsync(100);
+    expect(shown()).toEqual(['8201']);
+    section.querySelector<HTMLButtonElement>('[data-act="radar-kind"][data-kind="all"]')!.click();
+    section.querySelector<HTMLButtonElement>('[data-act="radar-heard"]')!.click();
+    await vi.advanceTimersByTimeAsync(100);
+    expect(shown()).toEqual(['8001', '8201']);
+    section.querySelector<HTMLButtonElement>('[data-act="radar-kind"][data-kind="release"]')!.click();
+    section.querySelector<HTMLButtonElement>('[data-act="radar-heard"]')!.click();
+    await vi.advanceTimersByTimeAsync(100);
+    expect(shown()).toEqual(['8001', '8002']);
+
+    // Обратно к выпуску; пересборка без готового каталога честно говорит, что выпуск позже
+    section.querySelector<HTMLButtonElement>('[data-act="radar-found"]')!.click();
+    await vi.advanceTimersByTimeAsync(100);
+    expect(shown()).toEqual(['8001', '8002', '8003']);
+    section.querySelector<HTMLButtonElement>('[data-act="radar-rebuild"]')!.click();
+    await vi.advanceTimersByTimeAsync(100);
+    expect(document.querySelector('.scw-toast')?.textContent).toBe('Still collecting, the radar will be ready later');
+});
+
+it('P7: радар без выпуска: заготовка, состояние сбора, «Собрать сейчас» закрыто на время сбора; публикация перечитывает выпуск', async () => {
+    let release: (value: unknown) => void = () => undefined;
+    let published = false;
+    const radar = {
+        view: vi.fn(() => published
+            ? Promise.resolve({ edition: radarEditionOf('2026-09-25', 1, radarCutoff), editions: radarEditions.slice(0, 1) })
+            : new Promise((resolve) => { release = resolve; })),
+        found: vi.fn(async () => []),
+        rebuild: vi.fn(async () => ({ published: false, waiting: true, edition: null })),
+        state: vi.fn(async () => ({ phase: 'collecting', period: '2026-09-25', error: '', updated: 1 })),
+    };
+    Object.assign(window, { soundcloudAPI: { radar } });
+    fakeSite(relatedTracks, (name, _path, query) => (name === 'trackBatch' ? batchOf(radarTracks)(query) : undefined));
+    window.eval(waveScript());
+    await vi.advanceTimersByTimeAsync(100);
+    const section = document.getElementById('sc-wave')!;
+    expect(section.querySelectorAll('.scw-card.scw-wait')).toHaveLength(1);
+    release({ edition: null, editions: [] });
+    await vi.advanceTimersByTimeAsync(100);
+    const card = section.querySelector<HTMLElement>('.scw-card[data-card="-10"]')!;
+    expect(card.querySelector('.scw-t2')?.textContent).toBe('Building the radar');
+    expect(card.querySelector('[data-act="shelf-play"]')).toBeNull();
+    section.querySelector<HTMLButtonElement>('[data-act="shelf-open"][data-card="-10"]')!.click();
+    await vi.advanceTimersByTimeAsync(100);
+    const build = section.querySelector<HTMLButtonElement>('[data-act="radar-rebuild"]')!;
+    expect(build.textContent).toBe('Build now');
+    expect(build.disabled).toBe(true);
+
+    published = true;
+    (window as unknown as { __scRadarChanged(state: object): void }).__scRadarChanged({ phase: 'published', period: '2026-09-25', error: '', updated: 2 });
+    await vi.advanceTimersByTimeAsync(100);
+    expect(section.querySelector('.scw-card[data-card="-10"] .scw-t2')?.textContent).toBe(radarDay(radarCutoff) + ' · 3 tracks · incomplete');
+    expect(section.querySelectorAll('.scw-mix .scw-row[data-track]')).toHaveLength(3);
+});
+
+it('P7: «Версии этого трека»: та же запись и другие версии с разных аккаунтов, играет точный id, решение уходит в хранилище', async () => {
+    const copy: WaveTrack = { id: 556, kind: 'track', title: 'Art - Song', duration: 200000, user_id: 901, user: { id: 901, username: 'Mirror' }, permalink_url: 'https://soundcloud.com/mirror/song' };
+    const slowed: WaveTrack = { id: 557, kind: 'track', title: 'Art - Song (Slowed)', duration: 260000, user_id: 902, user: { id: 902, username: 'Slow' }, permalink_url: 'https://soundcloud.com/slow/song-slowed' };
+    const other: WaveTrack = { id: 558, kind: 'track', title: 'Other', duration: 200000, user_id: 903, user: { id: 903, username: 'Else' } };
+    const site = fakeSite(relatedTracks, (name, path, query) => {
+        if (name === 'searchCategory' && query.q === 'Song') return { collection: [song, copy, slowed, other] };
+        if (name === 'resolve' && query.url === 'https://soundcloud.com/slow/song-slowed') return slowed;
+        return siteExtra(name, path, query);
+    });
+    let links: object[] = [];
+    const recommend = {
+        ...radarBridge([]),
+        recordingLinks: vi.fn(async () => links),
+        setRecordingLink: vi.fn(async (_user: number, a: string, b: string, same: boolean) => {
+            links = [{ a, b, same, source: 'user', at: 1 }];
+            return true;
+        }),
+    };
+    const exclusions = { load: vi.fn(async () => ({})), set: vi.fn(async () => true) };
+    Object.assign(window, { soundcloudAPI: { waveExclusions: exclusions, recommend } });
+    const row = listRow();
+    window.eval(waveScript());
+    await vi.advanceTimersByTimeAsync(100);
+    rightClick(row.querySelector('.soundTitle__title')!);
+    choose('versions');
+    await vi.advanceTimersByTimeAsync(100);
+    const dialog = document.querySelector<HTMLElement>('.scw-dialog')!;
+    expect(dialog.getAttribute('role')).toBe('dialog');
+    expect(dialog.querySelector('#scw-versions-title')?.textContent).toBe('Versions: Song');
+    expect([...dialog.querySelectorAll('.scw-dialog-h')].map((node) => node.textContent)).toEqual(['Same recording', 'Other versions']);
+    const lists = dialog.querySelectorAll('.scw-vlist');
+    const ids = (list: Element): string[] => [...list.querySelectorAll<HTMLElement>('[data-act="version-play"]')].map((node) => node.dataset.track ?? '');
+    expect(ids(lists[0])).toEqual(['555', '556']);
+    expect(ids(lists[1])).toEqual(['557']);
+    expect([...lists[0].querySelectorAll('.scw-badge')].map((node) => node.textContent)).toEqual(['this track', 'likely a copy']);
+
+    // Играет ровно выбранная загрузка, окно остаётся открытым
+    dialog.querySelector<HTMLButtonElement>('[data-act="version-play"][data-track="557"]')!.click();
+    await vi.advanceTimersByTimeAsync(100);
+    const queued = site.player.replaceQueue.mock.calls[site.player.replaceQueue.mock.calls.length - 1][0] as FakeItem[];
+    expect(queued.map((item) => item.sound.id)).toEqual([557]);
+    expect(document.querySelector('.scw-dialog')).not.toBeNull();
+
+    dialog.querySelector<HTMLButtonElement>('[data-act="version-link"][data-track="556"]')!.click();
+    await vi.advanceTimersByTimeAsync(100);
+    expect(recommend.setRecordingLink).toHaveBeenCalledWith(77, 'sc:track:555', 'sc:track:556', true);
+    expect(document.querySelector('.scw-toast')?.textContent).toBe('Marked as the same recording');
+    expect([...document.querySelectorAll('.scw-dialog .scw-vlist')[0].querySelectorAll('.scw-badge')].map((node) => node.textContent)).toEqual(['this track', 'confirmed']);
+    expect(document.querySelector('.scw-dialog [data-act="version-unlink"][data-track="556"]')?.textContent).toBe('Mark as different');
+
+    document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
+    expect(document.querySelector('.scw-dialog')).toBeNull();
+});
+
+it('P7: «Скрыть другие версии» пишет семью с загрузчиком, меню меняется на «Показывать другие версии» и снимает отметку', async () => {
+    fakeSite(relatedTracks, siteExtra);
+    const bridge = fakeExclusions();
+    const row = listRow();
+    window.eval(waveScript());
+    await vi.advanceTimersByTimeAsync(100);
+    rightClick(row.querySelector('.soundTitle__title')!);
+    choose('hide-family');
+    await vi.advanceTimersByTimeAsync(100);
+    expect(bridge.set).toHaveBeenCalledWith(77, 'family', { id: 555, title: 'Song', artist: 'Art', url: 'https://soundcloud.com/art/song', artistId: 900 }, true);
+    expect(document.querySelector('.scw-toast')?.textContent).toBe('Other versions of this song won’t play in My Wave or the radar');
+    rightClick(row.querySelector('.soundTitle__title')!);
+    expect(menuActs()).toContain('show-family');
+    choose('show-family');
+    await vi.advanceTimersByTimeAsync(100);
+    expect(bridge.set).toHaveBeenLastCalledWith(77, 'family', { id: 555 }, false);
+    rightClick(row.querySelector('.soundTitle__title')!);
+    expect(menuActs()).toContain('hide-family');
 });

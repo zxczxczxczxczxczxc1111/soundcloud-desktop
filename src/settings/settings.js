@@ -273,7 +273,33 @@ async function initializeSettings() {
         new MutationObserver(sync).observe(select, { childList: true, subtree: true, characterData: true });
         sync();
     }
-    for (const id of ['accountSelector', 'siteLanguage', 'gpuCompatibilityMode']) {
+    // Радар релизов: день и время слота в выбранной зоне. main проверяет значение и пересчитывает расписание
+    const radarDay = document.getElementById('radarDay');
+    const radarTime = document.getElementById('radarTime');
+    const radarZone = document.getElementById('radarZone');
+    radarDay.value = String(initial.radarDay ?? 5);
+    const zones = typeof Intl.supportedValuesOf === 'function' ? Intl.supportedValuesOf('timeZone') : [];
+    for (const zone of new Set([initial.radarZone, ...zones].filter((item) => typeof item === 'string' && item))) {
+        const option = document.createElement('option');
+        option.value = zone;
+        option.textContent = zone.replace(/_/g, ' ');
+        radarZone.appendChild(option);
+    }
+    radarZone.value = initial.radarZone || '';
+    radarDay.addEventListener('change', () => ipcRenderer.send('setting-changed', { key: 'radarDay', value: Number(radarDay.value) }));
+    radarZone.addEventListener('change', () => ipcRenderer.send('setting-changed', { key: 'radarZone', value: radarZone.value }));
+    let radarTimeSaved = radarTime.value;
+    radarTime.addEventListener('change', () => {
+        // Пустое или неполное время не сохраняется, поле возвращается к прежнему
+        if (!/^(?:[01]\d|2[0-3]):[0-5]\d$/.test(radarTime.value)) {
+            radarTime.value = radarTimeSaved;
+            return;
+        }
+        radarTimeSaved = radarTime.value;
+        ipcRenderer.send('setting-changed', { key: 'radarTime', value: radarTime.value });
+    });
+
+    for (const id of ['accountSelector', 'siteLanguage', 'gpuCompatibilityMode', 'radarDay', 'radarZone']) {
         const select = document.getElementById(id);
         if (select) enhanceSelect(select);
     }
@@ -445,6 +471,7 @@ async function initializeSettings() {
             ].sort((a, b) => (b.at || 0) - (a.at || 0));
             renderExcluded('waveLater', 'later-track', later);
             renderExcluded('waveMore', 'more', Array.isArray(data?.more) ? data.more : [], 'Убрать');
+            renderExcluded('waveFamilies', 'family', Array.isArray(data?.families) ? data.families : []);
         } catch (error) {
             console.error('Не удалось загрузить исключения волны:', error);
         }

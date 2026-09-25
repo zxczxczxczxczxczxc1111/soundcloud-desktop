@@ -9,7 +9,7 @@ afterEach(() => {
 
 async function openSettings(
     state: Record<string, unknown>,
-    exclusions: { tracks: object[]; artists: object[] } = { tracks: [], artists: [] },
+    exclusions: { tracks: object[]; artists: object[]; families?: object[] } = { tracks: [], artists: [] },
 ): Promise<{ send: ReturnType<typeof vi.fn>; invoke: ReturnType<typeof vi.fn>; emit: (channel: string, ...args: unknown[]) => void }> {
     const html = readFileSync(resolve('src/settings/settings.html'), 'utf8');
     document.documentElement.innerHTML = html.replace(/<!doctype html>/i, '');
@@ -246,6 +246,40 @@ it('скачанное обновление можно поставить из F
     await vi.waitFor(() => expect(invoke).toHaveBeenCalledWith('install-update-now'));
     emit('update-state', { ...updateState('ru'), mode: 'installer', canInstall: false });
     expect(install.hidden).toBe(true);
+});
+
+it('радар: день, время и часовой пояс уходят в main, неполное время не сохраняется; «Только эта версия» снимается', async () => {
+    const exclusions = { tracks: [], artists: [], families: [{ id: 555, title: 'Song', artist: 'Art', url: '', at: 1, artistId: 900 }] };
+    const { send, invoke } = await openSettings({ siteLanguage: 'en', radarDay: 5, radarTime: '09:00', radarZone: 'Europe/Moscow' }, exclusions);
+    const day = document.getElementById('radarDay') as HTMLSelectElement;
+    const time = document.getElementById('radarTime') as HTMLInputElement;
+    const zone = document.getElementById('radarZone') as HTMLSelectElement;
+    expect(day.closest('section')?.id).toBe('wave');
+    expect(day.value).toBe('5');
+    expect(day.parentElement?.querySelector('.dropdown-label')?.textContent).toBe('Friday');
+    expect(time.value).toBe('09:00');
+    expect(zone.value).toBe('Europe/Moscow');
+
+    day.value = '0';
+    day.dispatchEvent(new Event('change', { bubbles: true }));
+    expect(send).toHaveBeenCalledWith('setting-changed', { key: 'radarDay', value: 0 });
+    time.value = '18:30';
+    time.dispatchEvent(new Event('change', { bubbles: true }));
+    expect(send).toHaveBeenCalledWith('setting-changed', { key: 'radarTime', value: '18:30' });
+    time.value = '';
+    time.dispatchEvent(new Event('change', { bubbles: true }));
+    expect(time.value).toBe('18:30');
+    expect(send.mock.calls.filter(([, change]) => (change as { key?: string })?.key === 'radarTime')).toHaveLength(1);
+    zone.value = 'Asia/Tokyo';
+    zone.dispatchEvent(new Event('change', { bubbles: true }));
+    expect(send).toHaveBeenCalledWith('setting-changed', { key: 'radarZone', value: 'Asia/Tokyo' });
+
+    const families = document.getElementById('waveFamilies') as HTMLElement;
+    await vi.waitFor(() => expect(families.querySelector('.excluded-title')?.textContent).toBe('Song'));
+    expect(document.getElementById('waveFamiliesCount')?.textContent).toBe('1');
+    families.querySelector('button')?.click();
+    expect(invoke).toHaveBeenCalledWith('remove-wave-exclusion', 'family', 555);
+    expect(russianLeft()).toEqual([]);
 });
 
 it('волна на главной включается с вкладки «Моя волна»', async () => {
