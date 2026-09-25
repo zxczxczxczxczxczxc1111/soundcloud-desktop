@@ -261,6 +261,7 @@ it('A26: копия другого аккаунта видна в сводке �
     expect(new WaveSignals(mine.directory).load(USER).map((signal) => signal.id)).toEqual([1, 2, 3]);
 });
 
+// Четыре восстановления с записью на диск: локально полсекунды, на раннере GitHub Windows больше пяти
 it('A26: сбой посреди восстановления возвращает журнал, вкус, подборки, хранилище и индекс к состоянию до него', () => {
     const laptop = profile();
     seed(laptop);
@@ -290,7 +291,7 @@ it('A26: сбой посреди восстановления возвращае
     const healthy = profile();
     seed(healthy);
     expect(restoreAll(healthy, file).restored.accounts[0]).toMatchObject({ plays: 1, tasteRemoved: 1, mixes: 2, editions: 1 });
-});
+}, 30000);
 
 it('A26: откат отметок волны и журнала «Нового» в главном процессе возвращает прежние списки', () => {
     const p = profile();
