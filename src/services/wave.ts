@@ -1409,9 +1409,10 @@ export function installWave(config: WaveConfig, createPlayback: typeof installPl
                 return state.status === 'complete' ? since(state.completed) > 12 * 3600000 : since(state.updated) > 10 * 60000;
             };
             const bulk = new Set<string>();
+            // Подписки первыми: это главный источник радара, и обходятся они одной страницей
             const plans: sources.SyncPlan[] = [
-                { source: 'likes', first: { limit: 200 }, fetch: (query) => backgroundCall('userTrackLikes', { id: user }, query), items: (body) => likeItems(body, bulk) },
                 { source: 'followings', first: { limit: 5000 }, fetch: (query) => backgroundCall('myFollowingsIds', { userId: user }, query), items: (body) => entityItems(body, 'user') },
+                { source: 'likes', first: { limit: 200 }, fetch: (query) => backgroundCall('userTrackLikes', { id: user }, query), items: (body) => likeItems(body, bulk) },
                 { source: 'playlists', first: { limit: 50 }, fetch: (query) => backgroundCall('userPlaylistsWithoutAlbums', { id: user }, query), items: (body) => entityItems(body, 'playlist') },
                 { source: 'playlist-likes', first: { limit: 200 }, fetch: (query) => backgroundCall('playlistLikesIds', {}, query), items: (body) => entityItems(body, 'playlist') },
             ];
@@ -1447,6 +1448,13 @@ export function installWave(config: WaveConfig, createPlayback: typeof installPl
         const user = await ensureUser();
         result.user = user;
         if (!user) return { ...result, stopped: 'auth' };
+        // Источники радара это подписки и вкус из лайков. Обход библиотеки запускается и после загрузки профиля волны,
+        // но при восстановленной на паузе очереди профиль может не грузиться вовсе: без этого ожидания выпуск
+        // собрался бы без подписок. Обход сам пропускает пройденное меньше 12 часов назад; дольше минуты
+        // и половины своего времени радар не ждёт, остальное обход допишет фоном
+        let syncWait: ReturnType<typeof setTimeout> | undefined;
+        await Promise.race([syncLibrary(), new Promise<void>((resolve) => { syncWait = setTimeout(resolve, Math.min(60000, Math.max(0, deadline - Date.now()) / 2)); })]);
+        clearTimeout(syncWait);
         const loaded = await bridge.radarPlan(user);
         const plan = (Array.isArray(loaded) ? loaded : []).flatMap((value) => {
             const item = value && typeof value === 'object' ? (value as Record<string, unknown>) : {};
@@ -1471,8 +1479,8 @@ export function installWave(config: WaveConfig, createPlayback: typeof installPl
         } catch (error) {
             return { ...result, stopped: classifyFailure(error, Date.now()).kind === 'auth' ? 'auth' : '' };
         }
-        // Окно радара 28 дней до слота, слот не старше недели: каталог листается до загрузок старше 35 дней
-        const from = Date.now() - 35 * 86400000;
+        // Окно радара 7 дней до слота, слот не старше недели: каталог листается до загрузок старше 14 дней
+        const from = Date.now() - 14 * 86400000;
         for (const source of due) {
             if (disposed || Date.now() >= deadline) break;
             let label = source.label;
@@ -1507,12 +1515,16 @@ export function installWave(config: WaveConfig, createPlayback: typeof installPl
         }
         return tracks;
     }
-    // Свежее за неделю по имени любимого участника по всему каталогу, без привязки к аккаунту
+    // Свежее за неделю по имени любимого участника по всему каталогу, без привязки к аккаунту. Поиск текстовый:
+    // по имени находится и всё, где это слово просто есть в названии, поэтому пишутся только треки, где участник
+    // правда указан, загрузчиком или в титрах
     async function freshSearch(q: string): Promise<WaveTrack[]> {
         const body = await backgroundCall('searchCategory', { category: 'tracks' }, { q, limit: 50, 'filter.created_at': 'last_week' });
         const list = (body as { collection?: unknown } | null)?.collection;
         if (!Array.isArray(list)) throw new Error('Неожиданный ответ searchCategory');
-        return list.map(asTrack).filter((track): track is WaveTrack => !!track);
+        const wanted = nameKey(q);
+        return list.map(asTrack).filter((track): track is WaveTrack => !!track
+            && (nameKey(track.user?.username) === wanted || trackCredits(track).some((credit) => credit.key === wanted)));
     }
 
     // Текстовый поиск треков по всему каталогу, без привязки к аккаунту; ответ живёт в кэше, ошибка не кэшируется

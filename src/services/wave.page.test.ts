@@ -1265,8 +1265,8 @@ it('P3: фоном обходит лайки с датами, подписки �
     expect(recommend.syncStart).not.toHaveBeenCalled();
     await vi.advanceTimersByTimeAsync(60000);
     expect(calls).toEqual([
-        ['start', 'likes'], ['page', 'likes', [{ key: 'sc:track:41', added: Date.parse('2026-09-20T10:00:00Z') }], { offset: 'p2', limit: '200' }], ['finish', 'likes', 'partial', 'rate 429'],
         ['start', 'followings'], ['page', 'followings', [{ key: 'sc:user:5', added: 0 }, { key: 'sc:user:6', added: 0 }], null], ['finish', 'followings', 'complete', ''],
+        ['start', 'likes'], ['page', 'likes', [{ key: 'sc:track:41', added: Date.parse('2026-09-20T10:00:00Z') }], { offset: 'p2', limit: '200' }], ['finish', 'likes', 'partial', 'rate 429'],
         ['start', 'playlists'], ['page', 'playlists', [{ key: 'sc:playlist:8', added: Date.parse('2026-01-01T00:00:00Z') }], null], ['finish', 'playlists', 'complete', ''],
         ['start', 'playlist-likes'], ['page', 'playlist-likes', [{ key: 'sc:playlist:9', added: 0 }], null], ['finish', 'playlist-likes', 'complete', ''],
     ]);
@@ -1323,13 +1323,18 @@ it('P6: сбор радара обходит несвежие источники
         if (name === 'userTracks' && id === 5 && !query.offset) return {
             collection: [
                 { id: 51, kind: 'track', title: 'New', user: { id: 5, username: 'Five' }, created_at: iso(now - 86400000) },
-                { id: 52, kind: 'track', title: 'Older', user: { id: 5, username: 'Five' }, created_at: iso(now - 20 * 86400000) },
+                { id: 52, kind: 'track', title: 'Older', user: { id: 5, username: 'Five' }, created_at: iso(now - 10 * 86400000) },
             ],
             next_href: 'https://api-v2.soundcloud.com/users/5/tracks?offset=2&limit=50&client_id=secret',
         };
         if (name === 'userTracks' && id === 5) return { collection: [{ id: 53, kind: 'track', title: 'Old', user: { id: 5, username: 'Five' }, created_at: iso(now - 60 * 86400000) }], next_href: 'https://api-v2.soundcloud.com/x?offset=3' };
         if (name === 'userTracks' && id === 7) return Promise.reject({ status: 404, headers: {} });
-        if (name === 'searchCategory' && query['filter.created_at'] === 'last_week') return { collection: [{ id: 61, kind: 'track', title: 'Fresh Find' }] };
+        // Поиск по имени находит и трек участника, и чужой трек, где имя просто есть в названии: пишется только первый
+        if (name === 'searchCategory' && query['filter.created_at'] === 'last_week') return { collection: [
+            { id: 61, kind: 'track', title: 'Artist Name - Fresh Find', user: { id: 9, username: 'Label' } },
+            { id: 62, kind: 'track', title: 'Sweet Artist Name Vibes', user: { id: 10, username: 'Stranger' } },
+            { id: 63, kind: 'track', title: 'Own Upload', user: { id: 11, username: 'Artist Name' } },
+        ] };
         return undefined;
     });
     window.eval(waveScript());
@@ -1341,10 +1346,30 @@ it('P6: сбор радара обходит несвежие источники
     const userTracks = site.api.callEndpoint.mock.calls.filter(([name]) => name === 'userTracks').map(([, path, query]) => [path, query]);
     expect(userTracks).toEqual([[{ id: 5 }, { limit: 50 }], [{ id: 5 }, { offset: '2', limit: '50' }], [{ id: 7 }, { limit: 50 }]]);
     expect(site.api.callEndpoint).toHaveBeenCalledWith('searchCategory', { category: 'tracks' }, { q: 'Artist Name', limit: 50, 'filter.created_at': 'last_week' });
-    expect(recommend.recordUploads.mock.calls.map(([, tracks]) => tracks.map((track) => (track as { id: number }).id))).toEqual([[51, 52, 53], [61]]);
+    expect(recommend.recordUploads.mock.calls.map(([, tracks]) => tracks.map((track) => (track as { id: number }).id))).toEqual([[51, 52, 53], [61, 63]]);
     expect(recommend.catalogChecked.mock.calls).toEqual([
-        [77, 'user:5', 'Five', 'ok', '', 3], [77, 'search:artistname', 'Artist Name', 'ok', '', 1], [77, 'user:7', 'Seven', 'gone', 'missing', 0],
+        [77, 'user:5', 'Five', 'ok', '', 3], [77, 'search:artistname', 'Artist Name', 'ok', '', 2], [77, 'user:7', 'Seven', 'gone', 'missing', 0],
     ]);
+});
+
+it('P6: сбор радара сначала догоняет обход подписок, даже если волна ещё не загружала профиль', async () => {
+    const order: string[] = [];
+    let run = 0;
+    const recommend = {
+        ...radarBridge([{ key: 'user:5', kind: 'user', id: 5, q: '', label: '', checked: 0, status: '', weight: 1 }]),
+        syncStart: vi.fn(async (_user: number, source: string) => { order.push('start:' + source); return { run: ++run, cursor: null }; }),
+        radarPlan: vi.fn(async () => { order.push('plan'); return [{ key: 'user:5', kind: 'user', id: 5, q: '', label: '', checked: 0, status: '', weight: 1 }]; }),
+    };
+    Object.assign(window, { soundcloudAPI: { recommend } });
+    fakeSite(relatedTracks, (name) => (name === 'myFollowingsIds' ? { collection: [5, 6] } : undefined));
+    window.eval(waveScript());
+    await vi.advanceTimersByTimeAsync(100);
+    const collect = (window as unknown as { __scRadarCollect: RadarCollect }).__scRadarCollect;
+    const pending = collect(60000, Date.now());
+    await vi.advanceTimersByTimeAsync(15000);
+    await pending;
+    expect(order.indexOf('start:followings')).toBeGreaterThanOrEqual(0);
+    expect(order.indexOf('start:followings')).toBeLessThan(order.indexOf('plan'));
 });
 
 it('P6: сбор радара не пишет чужому аккаунту и останавливается при потере входа', async () => {

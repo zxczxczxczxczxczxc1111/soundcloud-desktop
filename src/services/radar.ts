@@ -13,13 +13,25 @@ const DAY = 86400000;
 
 /** Параметры радара; version растёт при каждом изменении их смысла и попадает в выпуск */
 export const RADAR_PARAMS = {
-    version: 1,
-    /** Окно свежести версии, дни до отсечки */
-    windowDays: 28,
+    version: 2,
+    /** Окно свежести версии, дни до отсечки. Неделя между выпусками (решение владельца 25.09.2026, было 28) */
+    windowDays: 7,
     /** Последние дни окна получают небольшую прибавку (приоритет последней неделе внутри разных вкусов) */
     recentDays: 7,
     recentBonus: 0.05,
     size: 50,
+    /** Потолок одного аккаунта в основном списке (решение владельца 25.09.2026): остальное видно в «Всех найденных» */
+    perUploader: 3,
+    /** Пачка (решение владельца 25.09.2026): больше bulkSize записей аккаунта без даты релиза за bulkDays это выгрузка
+     *  каталога, а не релизы; релизами остаются bulkKeep лучших, прочее уходит в «Новые загрузки» */
+    bulkSize: 6,
+    bulkDays: 7,
+    bulkKeep: 2,
+    /** Открытия (решение владельца 25.09.2026): записи без связи со вкусом, только по жанру, занимают в конце
+     *  основного списка не больше стольких мест; остальное место у связанных */
+    discoveries: 10,
+    /** Аккаунт или участник связан со вкусом с этого веса: один лайк или одно прослушивание дают около 0.1 */
+    linkWeight: 0.3,
     /** Сколько «Новых загрузок» показывать отдельно */
     uploadsSize: 30,
     /** «Все найденные»: не больше */
@@ -91,6 +103,9 @@ export interface RadarCandidate {
     kind: Freshness;
     at: number;
     heard: boolean;
+    /** Связь со вкусом: подписка, аккаунт или участник из вкуса, сама запись или другая версия любимой песни.
+     *  Без неё запись это открытие по жанру */
+    linked: boolean;
     reason: RadarReason;
 }
 export interface RadarPick extends RadarCandidate {
@@ -121,18 +136,20 @@ export function scoreUpload(upload: StoredUpload, kind: Freshness, at: number, m
                 : score.tagKey
                     ? { kind: 'tag', tag: score.tagKey }
                     : { kind: 'taste' };
+    const linked = followed || score.artist >= RADAR_PARAMS.linkWeight || score.creditBest >= RADAR_PARAMS.linkWeight || score.track > 0 || score.family > 0;
     return {
         key: upload.key, id: upload.id, base, direction: score.tagKey || tagKeys(upload.genre, upload.tags)[0] || '', family: familyKey(track) || upload.key,
-        uploader: upload.uploader, kind, at, heard, reason,
+        uploader: upload.uploader, kind, at, heard, linked, reason,
     };
 }
 
 /** Отбор с мягким разнообразием (раздел 6.2): на каждом шаге среди записей не ниже лучшей оставшейся на diversityWindow
  *  берётся максимум базовой оценки плюс прибавка недопредставленному направлению минус ограниченный штраф повтора.
- *  history: направления прошлых выпусков. Квот и потолков жанра нет; один ввод даёт один результат */
-export function selectRadar(candidates: RadarCandidate[], history: string[][], size: number = RADAR_PARAMS.size): RadarPick[] {
+ *  history: направления прошлых выпусков. Квот и потолков жанра нет; perUploader: потолок одного аккаунта в списке,
+ *  его остаток список не добивает. Один ввод даёт один результат */
+export function selectRadar(candidates: RadarCandidate[], history: string[][], size: number = RADAR_PARAMS.size, perUploader = Infinity): RadarPick[] {
     const P = RADAR_PARAMS;
-    const rest = candidates.slice().sort((a, b) => b.base - a.base || a.id - b.id);
+    let rest = candidates.slice().sort((a, b) => b.base - a.base || a.id - b.id);
     const past = new Map<string, number>();
     for (const edition of history) for (const direction of edition) past.set(direction, (past.get(direction) ?? 0) + 1 / Math.max(1, edition.length));
     const directions = new Map<string, number>();
@@ -158,13 +175,30 @@ export function selectRadar(candidates: RadarCandidate[], history: string[][], s
             }
         }
         if (!chosenPick || chosen < 0) break;
+        const pick = chosenPick;
         rest.splice(chosen, 1);
-        picked.push(chosenPick);
-        directions.set(chosenPick.direction, (directions.get(chosenPick.direction) ?? 0) + 1);
-        families.set(chosenPick.family, (families.get(chosenPick.family) ?? 0) + 1);
-        uploaders.set(chosenPick.uploader, (uploaders.get(chosenPick.uploader) ?? 0) + 1);
+        picked.push(pick);
+        directions.set(pick.direction, (directions.get(pick.direction) ?? 0) + 1);
+        families.set(pick.family, (families.get(pick.family) ?? 0) + 1);
+        const count = (uploaders.get(pick.uploader) ?? 0) + 1;
+        uploaders.set(pick.uploader, count);
+        // Аккаунт набрал свой потолок: остальные его записи в этом списке больше не рассматриваются
+        if (count >= perUploader) rest = rest.filter((item) => item.uploader !== pick.uploader);
     }
     return picked;
+}
+
+/** Основной список выпуска (решение владельца 25.09.2026): сначала записи со связью со вкусом, в конце не больше
+ *  discoveries открытий по жанру, которые всегда ниже связанных. Потолок аккаунта общий для обеих частей */
+export function selectEdition(releases: RadarCandidate[], history: string[][]): RadarPick[] {
+    const P = RADAR_PARAMS;
+    const open = releases.filter((candidate) => !candidate.linked);
+    const reserve = Math.min(P.discoveries, open.length);
+    const linked = selectRadar(releases.filter((candidate) => candidate.linked), history, P.size - reserve, P.perUploader);
+    const used = new Map<number, number>();
+    for (const pick of linked) used.set(pick.uploader, (used.get(pick.uploader) ?? 0) + 1);
+    const discoveries = selectRadar(open.filter((candidate) => (used.get(candidate.uploader) ?? 0) < P.perUploader), history, Math.min(P.discoveries, P.size - linked.length), P.perUploader);
+    return [...linked, ...discoveries];
 }
 
 /** Слышано ли по доле покрытия: от 70%, у записей короче 30 секунд от 80% */
@@ -399,7 +433,36 @@ export function radarCandidates(input: RadarInput, from: number, to: number): Ra
         for (const rival of rivals) for (const key of rival.centers) if (index.get(key) === rival) index.delete(key);
         for (const key of entry.centers) index.set(key, entry);
     }
-    return [...new Set(index.values())].map((entry) => entry.candidate);
+    return demoteBulk([...new Set(index.values())].map((entry) => entry.candidate), input.uploads);
+}
+
+/** Пачка без дат релиза (решение владельца 25.09.2026): аккаунт, выложивший за bulkDays больше bulkSize записей, чья
+ *  свежесть доказана только публикацией, скорее выгружает старый каталог. Релизами остаются bulkKeep лучших по оценке,
+ *  остальные становятся «Новыми загрузками». Записи с датой релиза в счёт не идут и не трогаются */
+export function demoteBulk(candidates: RadarCandidate[], uploads: StoredUpload[]): RadarCandidate[] {
+    const P = RADAR_PARAMS;
+    const dated = new Set(uploads.filter((upload) => /^\d{4}-\d{2}-\d{2}$/.test(upload.releaseDay)).map((upload) => upload.key));
+    const undated = new Map<number, RadarCandidate[]>();
+    for (const candidate of candidates) {
+        if (candidate.kind !== 'release' || dated.has(candidate.key)) continue;
+        const list = undated.get(candidate.uploader) ?? [];
+        list.push(candidate);
+        undated.set(candidate.uploader, list);
+    }
+    const demoted = new Set<string>();
+    for (const list of undated.values()) {
+        if (list.length <= P.bulkSize) continue;
+        const times = list.map((candidate) => candidate.at).sort((a, b) => a - b);
+        let bulk = false;
+        for (let start = 0, end = 0; end < times.length && !bulk; end++) {
+            while (times[end] - times[start] > P.bulkDays * DAY) start++;
+            bulk = end - start + 1 > P.bulkSize;
+        }
+        if (!bulk) continue;
+        const ranked = list.slice().sort((a, b) => b.base - a.base || a.id - b.id);
+        for (const candidate of ranked.slice(P.bulkKeep)) demoted.add(candidate.key);
+    }
+    return candidates.map((candidate): RadarCandidate => (demoted.has(candidate.key) ? { ...candidate, kind: 'upload' } : candidate));
 }
 
 /** Выпуск целиком: релизы окна до 50 и отдельно новые загрузки. null, если релизов нет, а обход не завершён:
@@ -425,7 +488,7 @@ export function buildRadar(input: RadarInput): RadarEdition | null {
         coverage: input.coverage,
         algorithm: P.version,
         taste: input.tasteVersion,
-        items: selectRadar(releases, input.history).map(item).filter((entry): entry is RadarItem => entry !== null),
+        items: selectEdition(releases, input.history).map(item).filter((entry): entry is RadarItem => entry !== null),
         uploads: selectRadar(fresh, [], P.uploadsSize).map(item).filter((entry): entry is RadarItem => entry !== null),
     };
 }

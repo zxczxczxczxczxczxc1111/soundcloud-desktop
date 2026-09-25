@@ -4,7 +4,7 @@ import { join } from 'node:path';
 import { afterEach, expect, it } from 'vitest';
 import {
     RADAR_PARAMS, RadarService, buildRadar, cleanRadarItem, coverageComplete, creditNames, exclusionFilter, freshness, heardIds, radarCoverage, radarSources,
-    selectRadar, type RadarCandidate, type RadarCoverage, type RadarInput,
+    selectEdition, selectRadar, type RadarCandidate, type RadarCoverage, type RadarInput,
 } from './radar';
 import { RecommendStore, type StoredUpload } from './recommendStore';
 import { HistoryIndex } from './historyIndex';
@@ -15,7 +15,7 @@ import type { WaveExclusionList } from './waveExclusions';
 
 const DAY = 86400000;
 const CUTOFF = Date.parse('2026-09-25T06:00:00Z');
-const FROM = CUTOFF - 28 * DAY;
+const FROM = CUTOFF - RADAR_PARAMS.windowDays * DAY;
 const FULL: RadarCoverage = { accounts: 3, checked: 3, failed: 0, searches: 1, searchesDone: 1 };
 const PARTIAL: RadarCoverage = { accounts: 3, checked: 1, failed: 1, searches: 1, searchesDone: 0 };
 
@@ -110,7 +110,7 @@ it('«Не нравится» с подтверждёнными копиями, 
 });
 
 const candidate = (id: number, base: number, direction: string, extra: Partial<RadarCandidate> = {}): RadarCandidate => ({
-    key: 'sc:track:' + id, id, base, direction, family: 'f' + id, uploader: id, kind: 'release', at: CUTOFF - DAY, heard: false, reason: { kind: 'taste' }, ...extra,
+    key: 'sc:track:' + id, id, base, direction, family: 'f' + id, uploader: id, kind: 'release', at: CUTOFF - DAY, heard: false, linked: true, reason: { kind: 'taste' }, ...extra,
 });
 
 it('A12: редкий устойчивый вкус получает место при сопоставимом качестве, слабое ради разнообразия не подставляется', () => {
@@ -131,11 +131,68 @@ it('A12: редкий устойчивый вкус получает место 
     expect(selectRadar(shuffled, []).map((item) => item.id)).toEqual(picked.map((item) => item.id));
 });
 
-it('A13 и A01: 50 релизов одного направления и одного аккаунта входят все, штраф повтора ограничен', () => {
-    const picked = selectRadar(Array.from({ length: 70 }, (_, i) => candidate(i + 1, 0.9 - i * 0.001, 'phonk', { uploader: 1 })), []);
+it('A13: 50 релизов одного направления от разных аккаунтов входят все, штраф повтора семьи ограничен', () => {
+    const picked = selectRadar(Array.from({ length: 70 }, (_, i) => candidate(i + 1, 0.9 - i * 0.001, 'phonk', { family: 'same' })), []);
     expect(picked).toHaveLength(50);
     expect(new Set(picked.map((item) => item.direction))).toEqual(new Set(['phonk']));
     expect(Math.max(...picked.map((item) => item.penalty))).toBe(RADAR_PARAMS.repeatCap);
+});
+
+it('потолок аккаунта (решение владельца 25.09.2026): в основном списке до 3 записей одного аккаунта, выпуск не добивается его остатком', () => {
+    const pool = [
+        ...Array.from({ length: 10 }, (_, i) => candidate(i + 1, 0.9 - i * 0.001, 'phonk', { uploader: 1 })),
+        ...Array.from({ length: 5 }, (_, i) => candidate(100 + i, 0.4, 'jazz')),
+    ];
+    const picked = selectRadar(pool, [], RADAR_PARAMS.size, RADAR_PARAMS.perUploader);
+    expect(picked.filter((item) => item.uploader === 1).map((item) => item.id)).toEqual([1, 2, 3]);
+    expect(picked).toHaveLength(8);
+    // Без потолка, как в «Новых загрузках», аккаунт не ограничен
+    expect(selectRadar(pool, []).filter((item) => item.uploader === 1)).toHaveLength(10);
+});
+
+it('связь плюс 10 открытий (решение владельца 25.09.2026): сначала связанные со вкусом, открытия по жанру не больше 10 и всегда ниже', () => {
+    const linked = Array.from({ length: 45 }, (_, i) => candidate(i + 1, 0.5 - i * 0.001, 'phonk'));
+    const open = Array.from({ length: 30 }, (_, i) => candidate(100 + i, 0.99 - i * 0.001, 'pop', { linked: false }));
+    const picked = selectEdition([...open, ...linked], []);
+    expect(picked).toHaveLength(50);
+    expect(picked.slice(0, 40).every((item) => item.linked)).toBe(true);
+    expect(picked.slice(40).map((item) => item.id)).toEqual(Array.from({ length: 10 }, (_, i) => 100 + i));
+    // Связанных мало: выпуск короче 50, открытий всё равно не больше 10
+    const short = selectEdition([...open, ...linked.slice(0, 5)], []);
+    expect(short.map((item) => item.linked)).toEqual([...Array(5).fill(true), ...Array(10).fill(false)]);
+});
+
+it('связь со вкусом: подписка, аккаунт и участник из вкуса связаны; чужой трек по жанру и аккаунт с одним прослушиванием нет', () => {
+    const edition = buildRadar(input([
+        upload(1, 'Night Drive', 1, 'Artist'),
+        upload(2, 'Artist - Collab', 50, 'Label', { releaseDay: '2026-09-23' }),
+        upload(3, 'Genre Only', 60, 'Stranger'),
+        upload(4, 'Followed', 70, 'Friend', { genre: 'country' }),
+        upload(5, 'Barely', 80, 'Once'),
+    ], {
+        follows: [70],
+        profile: { artists: [[1, 3], [3, 2], [80, 0.1]], credits: [['artist', 2]], tags: [['phonk', 1], ['jazz', 0.6]], families: [], markers: [], tracks: [] },
+    }))!;
+    const linked = new Map(edition.items.map((item) => [item.id, item.reason.kind]));
+    // Связанные первыми, открытия по жанру после них в своём порядке оценки
+    expect([...linked.keys()]).toEqual([1, 2, 4, 5, 3]);
+    expect(linked.get(3)).toBe('tag');
+});
+
+it('пачка без дат релиза (решение владельца 25.09.2026): больше 6 за неделю это выгрузка каталога, релизами остаются 2 лучших', () => {
+    const bulk = Array.from({ length: 9 }, (_, i) => upload(11 + i, 'Pack ' + i, 1, 'Artist', { createdAt: CUTOFF - 4 * DAY + i * 3600000 }));
+    const dated = upload(20, 'Single', 1, 'Artist', { releaseDay: '2026-09-24', createdAt: CUTOFF - 2 * DAY });
+    const spread = Array.from({ length: 7 }, (_, i) => upload(31 + i, 'Slow ' + i, 3, 'Other', { createdAt: CUTOFF - (1 + i * 3) * DAY }));
+    const edition = buildRadar(input([...bulk, dated, ...spread]))!;
+    const byUploader = (list: Array<{ id: number }>, from: number, to: number): number[] => list.map((item) => item.id).filter((id) => id >= from && id <= to);
+    // Два лучших из пачки и релиз с датой; потолок аккаунта 3
+    expect(byUploader(edition.items, 11, 20)).toEqual(expect.arrayContaining([11, 12, 20]));
+    expect(byUploader(edition.items, 11, 20)).toHaveLength(3);
+    expect(byUploader(edition.uploads, 11, 19).sort((a, b) => a - b)).toEqual([13, 14, 15, 16, 17, 18, 19]);
+    expect(edition.uploads.filter((item) => item.id <= 19).every((item) => item.kind === 'upload')).toBe(true);
+    // Семь записей за три недели это не пачка: все релизы, но в основном списке тоже до трёх
+    expect(byUploader(edition.items, 31, 37)).toHaveLength(3);
+    expect(byUploader(edition.uploads, 31, 37)).toHaveLength(0);
 });
 
 it('история выпусков: направление, которого давно не было, получает большую прибавку', () => {
