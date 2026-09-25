@@ -1039,7 +1039,7 @@ async function initializeSettings() {
             const progressFill = document.getElementById('progressFillPreview');
             const currentTimeEl = document.getElementById('currentTimePreview');
 
-            if (progressFill) progressFill.style.width = `${progress}%`;
+            if (progressFill) progressFill.style.transform = `scaleX(${progress / 100})`;
             if (currentTimeEl) currentTimeEl.textContent = formatTime(currentElapsed);
 
             if (progress >= 100) clearInterval(progressInterval);

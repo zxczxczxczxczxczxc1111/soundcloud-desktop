@@ -2988,6 +2988,8 @@ export function installWave(config: WaveConfig, createPlayback: typeof installPl
         }
     }
     const radarDate = (at: number): string => new Intl.DateTimeFormat(T.lang, { day: 'numeric', month: 'long' }).format(at);
+    // Дата выпуска на обложке карточки: коротко, месяц сокращённо
+    const radarStamp = (at: number): string => new Intl.DateTimeFormat(T.lang, { day: 'numeric', month: 'short' }).format(at);
     // Причина позиции: тег показывается так, как он написан у самого трека
     function radarWhy(row: RadarRow): string {
         const reason = row.reason;
@@ -3011,21 +3013,23 @@ export function installWave(config: WaveConfig, createPlayback: typeof installPl
             default: return T.radarSoon;
         }
     }
-    interface RadarCard { index: number; title: string; sub: string; art: string[]; playable: boolean; wait: boolean }
+    interface RadarCard { index: number; title: string; sub: string; art: string[]; playable: boolean; wait: boolean; stamp: string }
     function radarCardList(): RadarCard[] {
         if (!host.soundcloudAPI?.radar) return [];
         if (!radarLoaded) {
-            if (radarPromise) return [{ index: RADAR_CARD, title: '', sub: '', art: [], playable: false, wait: true }];
-            return radarFailedAt ? [{ index: RADAR_CARD, title: T.radar, sub: T.radarFailed, art: [], playable: false, wait: false }] : [];
+            if (radarPromise) return [{ index: RADAR_CARD, title: '', sub: '', art: [], playable: false, wait: true, stamp: '' }];
+            return radarFailedAt ? [{ index: RADAR_CARD, title: T.radar, sub: T.radarFailed, art: [], playable: false, wait: false, stamp: '' }] : [];
         }
         const edition = radarEdition;
-        if (!edition) return [{ index: RADAR_CARD, title: T.radar, sub: radarStateText(), art: [], playable: false, wait: false }];
+        if (!edition) return [{ index: RADAR_CARD, title: T.radar, sub: radarStateText(), art: [], playable: false, wait: false, stamp: '' }];
+        // Дата выпуска стоит на обложке, поэтому подпись начинается с числа треков и не обрезает его
         const sub = edition.items.length
-            ? [radarDate(edition.cutoff), countText(edition.items.length, T.tracksCount, T.lang), ...(edition.status === 'partial' ? [T.radarPartial] : [])].join(' · ')
+            ? [countText(edition.items.length, T.tracksCount, T.lang), ...(edition.status === 'partial' ? [T.radarPartial] : [])].join(' · ')
             : T.radarEmptyWeek;
-        const cards: RadarCard[] = [{ index: RADAR_CARD, title: T.radar, sub, art: radarArt.get(RADAR_CARD) ?? [], playable: edition.items.length > 0, wait: false }];
+        const stamp = radarStamp(edition.cutoff);
+        const cards: RadarCard[] = [{ index: RADAR_CARD, title: T.radar, sub, art: radarArt.get(RADAR_CARD) ?? [], playable: edition.items.length > 0, wait: false, stamp }];
         if (edition.uploads.length)
-            cards.push({ index: UPLOADS_CARD, title: T.radarUploads, sub: countText(edition.uploads.length, T.tracksCount, T.lang), art: radarArt.get(UPLOADS_CARD) ?? [], playable: true, wait: false });
+            cards.push({ index: UPLOADS_CARD, title: T.radarUploads, sub: countText(edition.uploads.length, T.tracksCount, T.lang), art: radarArt.get(UPLOADS_CARD) ?? [], playable: true, wait: false, stamp });
         return cards;
     }
     // Подпись под названием раскрытого радара: число, полнота обхода, ревизия, идущий сбор новой недели
@@ -3618,6 +3622,15 @@ export function installWave(config: WaveConfig, createPlayback: typeof installPl
         '@media(hover:none){#sc-wave .scw-card .scw-card-play{opacity:1;transform:none}}',
         '.scw-art.scw-quad{display:grid;grid-template-columns:1fr 1fr;grid-template-rows:1fr 1fr}',
         '.scw-art.scw-quad>span{position:relative;background:var(--scw-tile)}',
+        // Лицо карточки полки: название поверх обложки, размер от ширины карточки (6 или 4 колонки)
+        '.scw-card .scw-art{container-type:inline-size}',
+        '.scw-face{position:absolute;z-index:1;inset:0;display:flex;flex-direction:column;align-items:flex-start;padding:9cqi;color:#fff;pointer-events:none;background:linear-gradient(180deg,rgba(0,0,0,.8) 0%,rgba(0,0,0,.5) 45%,transparent 78%)}',
+        '.scw-face b{max-width:100%;font-size:max(13px,14cqi);line-height:1.08;font-weight:700;letter-spacing:-.01em;overflow-wrap:break-word;display:-webkit-box;-webkit-line-clamp:3;-webkit-box-orient:vertical;overflow:hidden;text-shadow:0 1px 6px rgba(0,0,0,.4)}',
+        // Радар и новые загрузки: обесцвеченный коллаж под фирменным оранжевым, это главный акцент полки
+        '.scw-face-radar .scw-img{filter:grayscale(1) contrast(1.1)}',
+        '.scw-tint{position:absolute;inset:0;background:linear-gradient(155deg,#ff7a33 0%,#f50 40%,#7a2600 100%);mix-blend-mode:multiply}',
+        '.scw-face-radar .scw-face{background:linear-gradient(180deg,rgba(77,24,0,.7) 0%,rgba(77,24,0,.32) 45%,transparent 75%)}',
+        '.scw-stamp{position:absolute;z-index:1;left:max(6px,6cqi);bottom:max(6px,6cqi);padding:1px 6px;border-radius:3px;background:rgba(0,0,0,.62);color:#fff;font-size:11px;line-height:16px;font-weight:600;white-space:nowrap;pointer-events:none}',
         // Наведение плёнкой поверх обложки, играющая подборка кромкой 3 px снизу
         '.scw-card .scw-art::before,.scw-card .scw-art::after{content:"";position:absolute;z-index:1;left:0;right:0;opacity:0;transition:opacity .15s cubic-bezier(.2,0,0,1)}',
         '.scw-card .scw-art::before{top:0;bottom:0;background:linear-gradient(180deg,transparent 25%,#0008)}',
@@ -3650,6 +3663,10 @@ export function installWave(config: WaveConfig, createPlayback: typeof installPl
         '.scw-row-t span{color:var(--scw-muted);font-size:12px;line-height:16px}',
         '.scw-row-d{color:var(--scw-faint);font-size:12px;font-variant-numeric:tabular-nums}',
         '.scw-row[aria-current="true"] .scw-row-t b{color:#ff5500}',
+        // Строка списка и окна версий играет по нажатию: при наведении на обложке значок «слушать»
+        '#sc-wave .scw-row .scw-art::before,.scw-vplay .scw-art::before{content:"";position:absolute;z-index:1;inset:0;background:rgba(0,0,0,.5);opacity:0;transition:opacity .12s}',
+        '#sc-wave .scw-row .scw-art::after,.scw-vplay .scw-art::after{content:"";position:absolute;z-index:1;left:50%;top:50%;width:12px;height:14px;margin:-7px 0 0 -5px;background:#fff;clip-path:polygon(0 0,100% 50%,0 100%);opacity:0;transition:opacity .12s}',
+        '#sc-wave .scw-row:hover .scw-art::before,#sc-wave .scw-row:hover .scw-art::after,#sc-wave .scw-row:focus-visible .scw-art::before,#sc-wave .scw-row:focus-visible .scw-art::after,.scw-vplay:hover .scw-art::before,.scw-vplay:hover .scw-art::after,.scw-vplay:focus-visible .scw-art::before,.scw-vplay:focus-visible .scw-art::after{opacity:1}',
         // Радар: инструменты в шапке списка, фильтры «Всех найденных», метки строк, заготовка карточки
         '.scw-mix-tools{display:flex;align-items:center;gap:8px;flex-wrap:wrap}',
         '.scw-mix-tools.scw-filters{margin:0 0 8px}',
@@ -3660,8 +3677,9 @@ export function installWave(config: WaveConfig, createPlayback: typeof installPl
         '.scw-select{height:32px;max-width:220px;padding:0 8px;border-radius:4px;border:0;background:var(--scw-surface);color:inherit;font:inherit;cursor:pointer}',
         '.scw-row-e{display:flex;align-items:center;gap:6px;min-width:0}',
         '.scw-badge{font-size:11px;line-height:16px;padding:0 6px;border-radius:8px;box-shadow:inset 0 0 0 1px var(--scw-film-strong);color:var(--scw-muted);white-space:nowrap}',
-        '.scw-art.scw-radar-art{display:grid;place-items:center;background:radial-gradient(ellipse at 70% 20%,#ff550016,transparent 65%),#191919;color:#f50}',
-        '.scw-radar-art svg{width:42%;height:42%}',
+        // Выпуска ещё нет: большой значок в углу, сверху название, как у остальных карточек
+        '.scw-art.scw-radar-art{display:grid;place-items:end;background:radial-gradient(ellipse at 70% 20%,#ff550016,transparent 65%),#191919;color:#f50}',
+        '.scw-radar-art>svg{width:40%;height:40%;margin:0 9cqi 9cqi 0}',
         '.scw-card.scw-wait{pointer-events:none}',
         '.scw-card.scw-wait .scw-t1,.scw-card.scw-wait .scw-t2{position:relative}',
         '.scw-card.scw-wait .scw-t1::after,.scw-card.scw-wait .scw-t2::after{content:"";position:absolute;left:0;top:22%;bottom:22%;border-radius:3px;background:var(--scw-film)}',
@@ -3701,6 +3719,9 @@ export function installWave(config: WaveConfig, createPlayback: typeof installPl
         '.scw-dialog .scw-vplay{flex:1;min-width:0;display:grid;grid-template-columns:40px minmax(0,1fr);align-items:center;gap:12px;height:48px;padding:4px 8px;text-align:left}',
         '.scw-vplay .scw-art{width:40px;height:40px;margin:0}',
         '.scw-dialog .scw-btn{height:28px;padding:0 10px;border-radius:4px;background:var(--scw-surface);font-weight:600;white-space:nowrap;flex:none;margin-right:8px}',
+        // Решение о версии нужно редко: кнопка тихая и проявляется у строки под курсором или фокусом
+        '.scw-dialog .scw-vrow .scw-btn{background:transparent;color:var(--scw-muted);box-shadow:inset 0 0 0 1px var(--scw-film-strong);transition:background-color .12s,color .12s}',
+        '.scw-dialog .scw-vrow:hover .scw-btn,.scw-dialog .scw-vrow:focus-within .scw-btn{background:var(--scw-surface);color:#fff;box-shadow:none}',
         '@media (prefers-reduced-motion:reduce){.scw-tip,.scw-toast,.scw-card .scw-art::before,.scw-card .scw-art::after,#sc-wave .scw-card-play,#sc-wave .scw-mix-play{transition:none}.scw-menu{animation:none}#sc-wave .scw-card .scw-card-play,#sc-wave .scw-mix-play{transform:none!important}}',
         'html.scm-reduce #sc-wave .scw-card .scw-card-play,html.scm-reduce #sc-wave .scw-mix-play{transition:none;transform:none!important}',
         // «Меньше анимаций» в F1: без масштаба меню, растворения остаются
@@ -3719,6 +3740,7 @@ export function installWave(config: WaveConfig, createPlayback: typeof installPl
         // Список с плюсом: трек в набор
         pick:'<svg viewBox="0 0 16 16" aria-hidden="true"><path d="M1 2.5h10V4H1zM1 6.25h10v1.5H1zM1 10h6v1.5H1zM11.25 9h1.5v2.25H15v1.5h-2.25V15h-1.5v-2.25H9v-1.5h2.25z"/></svg>',
     };
+    type CardKind = 'radar' | 'uploads' | 'daily' | 'forgotten' | 'group';
     function ensureStyle(): void {
         if (document.getElementById('sc-wave-style')) return;
         const style = el('style', '', CSS);
@@ -3939,8 +3961,10 @@ export function installWave(config: WaveConfig, createPlayback: typeof installPl
     const cardTitle = (card: ShelfCard): string => (card.kind === 'daily' ? T.shelfDaily : card.kind === 'forgotten' ? T.shelfForgotten : card.title);
     // Полка подборок: коллаж обложек, название, число треков или главные артисты; играющая карточка с оранжевой кромкой.
     // Нажатие на карточку раскрывает её треки под полкой, кнопка на обложке сразу включает волну подборки
-    // Карточка полки: общая для подборок и радара; кнопки «слушать» нет, пока слушать нечего
-    function cardNode(index: number, title: string, sub: string, cover: string[], playable: boolean): HTMLElement {
+    // Карточка полки: общая для подборок и радара; кнопки «слушать» нет, пока слушать нечего.
+    // Лицо обложки как у собственных подборок SoundCloud: название крупно поверх коллажа,
+    // у радара и новых загрузок коллаж обесцвечен и залит фирменным оранжевым, дата выпуска на обложке
+    function cardNode(index: number, title: string, sub: string, cover: string[], playable: boolean, kind: CardKind, stamp = ''): HTMLElement {
         const node = el('div', 'scw-card');
         const artBox = el('div', 'scw-art');
         const playing = !!seed && seed.card === index && active;
@@ -3967,6 +3991,16 @@ export function installWave(config: WaveConfig, createPlayback: typeof installPl
             artBox.setAttribute('aria-hidden', 'true');
             artBox.innerHTML = '<svg viewBox="0 0 48 48" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><circle cx="24" cy="24" r="3.5" fill="currentColor" stroke="none"/><path d="M15.5 32.5a12 12 0 0 1 0-17M32.5 15.5a12 12 0 0 1 0 17" opacity=".75"/><path d="M9.9 38.1a20 20 0 0 1 0-28.2M38.1 9.9a20 20 0 0 1 0 28.2" opacity=".4"/></svg>';
         }
+        const radarKind = kind === 'radar' || kind === 'uploads';
+        if (radarKind && cover.length) artBox.append(el('div', 'scw-tint'));
+        artBox.classList.add(radarKind ? 'scw-face-radar' : 'scw-face-mix');
+        // Лицо повторяет название под обложкой, поэтому скрыто от чтения с экрана; дата выпуска читается.
+        // Наложения блоками div: клетки коллажа это span, и правило сетки их не задевает
+        const face = el('div', 'scw-face');
+        face.setAttribute('aria-hidden', 'true');
+        face.append(el('b', '', title));
+        artBox.append(face);
+        if (stamp) artBox.append(el('div', 'scw-stamp', stamp));
         open.append(artBox, el('div', 'scw-t1', title), el('div', 'scw-t2', sub));
         node.append(open);
         if (playable) {
@@ -4007,7 +4041,7 @@ export function installWave(config: WaveConfig, createPlayback: typeof installPl
             if (index !== null && index === openCard) openAt = grid.childElementCount;
             grid.append(node);
         };
-        for (const card of radar) add(card.wait ? waitCard() : cardNode(card.index, card.title, card.sub, card.art, card.playable), card.wait ? null : card.index);
+        for (const card of radar) add(card.wait ? waitCard() : cardNode(card.index, card.title, card.sub, card.art, card.playable, card.index === UPLOADS_CARD ? 'uploads' : 'radar', card.stamp), card.wait ? null : card.index);
         if (current) {
             // Жанры, которые не дают последнему ряду заполниться, прячутся в своей раскладке: 6 или 4 колонки
             const genres = current.cards.filter((card) => card.kind === 'group').length;
@@ -4015,7 +4049,7 @@ export function installWave(config: WaveConfig, createPlayback: typeof installPl
             const shown = { 6: shelfGenres(fixed, genres, 6), 4: shelfGenres(fixed, genres, 4) };
             let genre = 0;
             current.cards.forEach((card, index) => {
-                const node = cardNode(index, cardTitle(card), card.kind === 'group' && card.sub ? card.sub : countText(card.ids.length, T.tracksCount, T.lang), card.art, true);
+                const node = cardNode(index, cardTitle(card), card.kind === 'group' && card.sub ? card.sub : countText(card.ids.length, T.tracksCount, T.lang), card.art, true, card.kind);
                 if (card.kind === 'group') {
                     node.classList.toggle('scw-over6', genre >= shown[6]);
                     node.classList.toggle('scw-over4', genre >= shown[4]);

@@ -764,9 +764,12 @@ textarea.input {
 }
 .progress-bar-fill-preview {
     height: 100%;
-    width: 0%;
+    width: 100%;
     background: #5865f2;
-    transition: width 0.3s linear;
+    /* Полоса растёт сдвигом, а не шириной: без пересчёта раскладки каждую секунду */
+    transform: scaleX(0);
+    transform-origin: left;
+    transition: transform 0.3s linear;
 }
 .time-display-preview {
     display: flex;

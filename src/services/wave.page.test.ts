@@ -957,6 +957,11 @@ it('полка из снимка дня: находки играют первы�
     expect(cards).toHaveLength(2);
     expect(cards[0].querySelector('.scw-t1')?.textContent).toBe('Daily finds');
     expect(cards[0].querySelector('.scw-t2')?.textContent).toBe('12 tracks');
+    expect(cards[0].querySelector('.scw-art')?.classList.contains('scw-face-mix')).toBe(true);
+    expect(cards[1].querySelector('.scw-face b')?.textContent).toBe('Techno and Industrial');
+    // На лице только название, без значков
+    expect(section.querySelectorAll('.scw-face svg')).toHaveLength(0);
+    expect(cards[0].querySelector('.scw-stamp')).toBeNull();
     expect(cards[0].querySelectorAll('.scw-quad > span')).toHaveLength(4);
     expect(cards[1].querySelector('.scw-t2')?.textContent).toBe('A, B');
     expect(section.querySelector('.scw-seg')).not.toBeNull();
@@ -1423,6 +1428,7 @@ const radarEditions = [
     { period: '2026-09-18', revision: 1, created: radarCutoff - 7 * 86400000, cutoff: radarCutoff - 7 * 86400000, status: 'complete', manual: false, items: 3, uploads: 1 },
 ];
 const radarDay = (at: number): string => new Intl.DateTimeFormat('en', { day: 'numeric', month: 'long' }).format(at);
+const radarStamp = (at: number): string => new Intl.DateTimeFormat('en', { day: 'numeric', month: 'short' }).format(at);
 
 it('P7: радар первым на полке, список с «Already heard», волна по порядку выпуска с причиной, пересборка и архив', async () => {
     let revision = 1;
@@ -1446,8 +1452,14 @@ it('P7: радар первым на полке, список с «Already heard
     const cards = section.querySelectorAll<HTMLElement>('.scw-card[data-card]');
     expect([...cards].map((card) => card.dataset.card)).toEqual(['-10', '-11']);
     expect(cards[0].querySelector('.scw-t1')?.textContent).toBe('Release Radar');
-    expect(cards[0].querySelector('.scw-t2')?.textContent).toBe(radarDay(radarCutoff) + ' · 3 tracks · incomplete');
+    // Дата выпуска на обложке, подпись начинается с числа треков; лицо обложки повторяет название и скрыто от чтения
+    expect(cards[0].querySelector('.scw-t2')?.textContent).toBe('3 tracks · incomplete');
+    expect(cards[0].querySelector('.scw-stamp')?.textContent).toBe(radarStamp(radarCutoff));
+    expect(cards[0].querySelector('.scw-art')?.classList.contains('scw-face-radar')).toBe(true);
+    expect(cards[0].querySelector('.scw-face')?.getAttribute('aria-hidden')).toBe('true');
+    expect(cards[0].querySelector('.scw-face b')?.textContent).toBe('Release Radar');
     expect(cards[1].querySelector('.scw-t2')?.textContent).toBe('1 track');
+    expect(cards[1].querySelector('.scw-stamp')?.textContent).toBe(radarStamp(radarCutoff));
 
     section.querySelector<HTMLButtonElement>('[data-act="shelf-open"][data-card="-10"]')!.click();
     await vi.advanceTimersByTimeAsync(100);
@@ -1565,7 +1577,7 @@ it('P7: радар без выпуска: заготовка, состояние
     published = true;
     (window as unknown as { __scRadarChanged(state: object): void }).__scRadarChanged({ phase: 'published', period: '2026-09-25', error: '', updated: 2 });
     await vi.advanceTimersByTimeAsync(100);
-    expect(section.querySelector('.scw-card[data-card="-10"] .scw-t2')?.textContent).toBe(radarDay(radarCutoff) + ' · 3 tracks · incomplete');
+    expect(section.querySelector('.scw-card[data-card="-10"] .scw-t2')?.textContent).toBe('3 tracks · incomplete');
     expect(section.querySelectorAll('.scw-mix .scw-row[data-track]')).toHaveLength(3);
 });
 
