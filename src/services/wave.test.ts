@@ -3,7 +3,7 @@ import {
     WAVE_TEXTS, acceptCandidate, artworkUrl, canonicalUrl, classifyLink, formatGenres, genreKeys, genreKeysFor, isWaveEligible,
     moodTags, normalizeTag, trackPath, parseGenres, pickSpaced, reasonText, shapeSamples, topGenres, trackMatchesGenre,
     applyTasteReasons, tagKeys, tasteMaps, tasteOrder, tasteReason, tasteScore, type TasteMaps, type WaveCandidate, type WaveFilter, type WaveTrack,
-    countText, forgottenPicks, localDay, pickFinds, tasteGroups, artistNames, isNewArtist, spreadBy,
+    countText, forgottenPicks, localDay, pickFinds, tasteGroups, shelfGenres, artistNames, isNewArtist, spreadBy,
 } from './wave';
 import { copyKeys, familyKey, versionKey } from './trackIdentity';
 
@@ -275,6 +275,19 @@ describe('подборки', () => {
         expect(groups.flatMap((group) => group.tracks).some((entry) => entry.id === 300)).toBe(false);
         expect(tasteGroups(items, 4, 11)).toHaveLength(1);
         expect(tasteGroups([], 4, 1)).toEqual([]);
+    });
+
+    it('жанры полки добираются до полного ряда: лишние самые лёгкие прячутся, один ряд показывается целиком', () => {
+        // Радар, находки, давно не слушал и четыре жанра: седьмая карточка одна во втором ряду не встаёт
+        expect(shelfGenres(3, 4, 6)).toBe(3);
+        expect(shelfGenres(3, 9, 6)).toBe(9);
+        expect(shelfGenres(3, 6, 6)).toBe(3);
+        expect(shelfGenres(3, 4, 4)).toBe(1);
+        expect(shelfGenres(4, 8, 4)).toBe(8);
+        // Всё в один ряд или добрать нечем: показываются все
+        expect(shelfGenres(2, 3, 6)).toBe(3);
+        expect(shelfGenres(7, 2, 6)).toBe(2);
+        expect(shelfGenres(0, 0, 6)).toBe(0);
     });
 
     it('сборный канал не раздаёт свой жанр чужим песням без тегов, своя песня артиста наследует', () => {

@@ -909,6 +909,32 @@ it('ошибка подборок видна, повтор восстанавл�
     expect(document.querySelector('.scw-card .scw-t1')?.textContent).toBe('Techno');
 });
 
+it('полка добирает жанры до полного ряда отдельно для 6 и 4 колонок: лишние самые лёгкие помечены и спрятаны', async () => {
+    fakeSite(relatedTracks);
+    const art = ['https://i1.sndcdn.com/artworks-0-t300x300.jpg'];
+    const group = (i: number) => ({ kind: 'group', title: 'Genre ' + i, sub: '', ids: [5200 + i], seeds: [], keys: ['g' + i], art });
+    const snapshot = {
+        day: localDay(Date.now()),
+        cards: [
+            { kind: 'daily', title: '', sub: '', ids: [5101], seeds: [], keys: [], art },
+            { kind: 'forgotten', title: '', sub: '', ids: [5102], seeds: [], keys: [], art },
+            ...[0, 1, 2, 3, 4].map(group),
+        ],
+    };
+    const shelf = { load: vi.fn(async () => ({ snapshot, recent: [] })), save: vi.fn(async () => true) };
+    Object.assign(window, { soundcloudAPI: { waveShelf: shelf } });
+    window.eval(waveScript());
+    await vi.advanceTimersByTimeAsync(100);
+    const cards = [...document.querySelectorAll<HTMLElement>('#sc-wave .scw-shelf > .scw-card[data-card]')];
+    expect(cards).toHaveLength(7);
+    // 6 колонок: две постоянные и четыре жанра; 4 колонки: две и два
+    expect(cards.map((card) => card.classList.contains('scw-over6'))).toEqual([false, false, false, false, false, false, true]);
+    expect(cards.map((card) => card.classList.contains('scw-over4'))).toEqual([false, false, false, false, true, true, true]);
+    const css = document.getElementById('sc-wave-style')?.textContent ?? '';
+    expect(css).toContain('@media(width>1200px){#sc-wave .scw-shelf>.scw-over6{display:none}}');
+    expect(css).toContain('@media(max-width:1200px){#sc-wave .scw-shelf>.scw-over4{display:none}}');
+});
+
 it('полка из снимка дня: находки играют первыми по порядку, карточка отмечена, режим скрыт', async () => {
     const finds = Array.from({ length: 12 }, (_, i): WaveTrack => ({ id: 5001 + i, kind: 'track', user_id: 600 + i, duration: 200000, title: 'Find ' + i }));
     const site = fakeSite(relatedTracks, (name, _path, query) => (name === 'trackBatch' ? batchOf(finds)(query) : undefined));

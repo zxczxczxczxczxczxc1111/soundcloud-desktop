@@ -716,6 +716,15 @@ export function tasteGroups(items: Array<{ track: WaveTrack; weight: number }>, 
             };
         });
 }
+/**
+ * Сколько жанровых подборок показать, чтобы последний ряд полки был полным (решение владельца 25.09.2026):
+ * лишними считаются самые лёгкие жанры. Всё помещается в один ряд или ряд не заполнить: показываются все
+ */
+export function shelfGenres(fixed: number, genres: number, columns: number): number {
+    if (fixed + genres <= columns) return genres;
+    for (let shown = genres; shown >= 0; shown--) if ((fixed + shown) % columns === 0) return shown;
+    return genres;
+}
 // «Давно не слушал»: лайки, которых нет среди прослушанного за последние недели. Сначала то, что модель вкуса
 // ценит выше (дослушивал, переслушивал), дальше лайки постарше. liked идёт от новых лайков к старым
 export function forgottenPicks(liked: WaveTrack[], recent: Set<number>, weights: Map<number, number> | null, limit: number): WaveTrack[] {
@@ -2609,7 +2618,8 @@ export function installWave(config: WaveConfig, createPlayback: typeof installPl
         const forgotten = forgottenPicks(liked, confirmedCopies([...p.recent, ...recentMain], copyGroups), weights, 60);
         if (forgotten.length >= 8) cards.push({ kind: 'forgotten', title: '', sub: '', ids: forgotten.map((track) => track.id), seeds: [], keys: [], art: coversOf(forgotten) });
 
-        const groups = tasteGroups(liked.map((track) => ({ track, weight: 1 + Math.max(0, weights?.get(track.id) ?? 0) })), 4, 8);
+        // До 9 жанров: сколько из них видно, решает полнота ряда при отрисовке (shelfGenres)
+        const groups = tasteGroups(liked.map((track) => ({ track, weight: 1 + Math.max(0, weights?.get(track.id) ?? 0) })), 9, 8);
         for (const group of groups) {
             const [a, b] = group.labels.map(capital);
             const artists = new Map<string, number>();
@@ -3606,6 +3616,8 @@ export function installWave(config: WaveConfig, createPlayback: typeof installPl
         '.scw-mix::before{content:"";position:absolute;top:-8px;left:calc((100% - 100px) / 6 * (var(--scw-at6) + .5) + 20px * var(--scw-at6) - 8px);border:8px solid transparent;border-top:0;border-bottom-color:var(--scw-film)}',
         // Внутри сетки полки список занимает всю строку под своей карточкой; при 4 колонках свои строка и уголок
         '.scw-shelf>.scw-mix{grid-column:1/-1;grid-row:var(--scw-row6);margin-top:0}',
+        '@media(width>1200px){#sc-wave .scw-shelf>.scw-over6{display:none}}',
+        '@media(max-width:1200px){#sc-wave .scw-shelf>.scw-over4{display:none}}',
         '@media(max-width:1200px){#sc-wave .scw-shelf>.scw-mix{grid-row:var(--scw-row4)}#sc-wave .scw-mix::before{left:calc((100% - 60px) / 4 * (var(--scw-at4) + .5) + 20px * var(--scw-at4) - 8px)}}',
         '.scw-mix-head{display:flex;align-items:center;gap:12px;margin-bottom:8px}',
         '#sc-wave .scw-mix-play{width:40px;height:40px;border-radius:50%;background:var(--scw-btn);display:grid;place-items:center;flex:none;transition:filter .12s,transform .12s}',
@@ -3984,7 +3996,22 @@ export function installWave(config: WaveConfig, createPlayback: typeof installPl
             grid.append(node);
         };
         for (const card of radar) add(card.wait ? waitCard() : cardNode(card.index, card.title, card.sub, card.art, card.playable), card.wait ? null : card.index);
-        if (current) current.cards.forEach((card, index) => add(cardNode(index, cardTitle(card), card.kind === 'group' && card.sub ? card.sub : countText(card.ids.length, T.tracksCount, T.lang), card.art, true), index));
+        if (current) {
+            // Жанры, которые не дают последнему ряду заполниться, прячутся в своей раскладке: 6 или 4 колонки
+            const genres = current.cards.filter((card) => card.kind === 'group').length;
+            const fixed = radar.length + current.cards.length - genres;
+            const shown = { 6: shelfGenres(fixed, genres, 6), 4: shelfGenres(fixed, genres, 4) };
+            let genre = 0;
+            current.cards.forEach((card, index) => {
+                const node = cardNode(index, cardTitle(card), card.kind === 'group' && card.sub ? card.sub : countText(card.ids.length, T.tracksCount, T.lang), card.art, true);
+                if (card.kind === 'group') {
+                    node.classList.toggle('scw-over6', genre >= shown[6]);
+                    node.classList.toggle('scw-over4', genre >= shown[4]);
+                    genre++;
+                }
+                add(node, index);
+            });
+        }
         else if (shelfWait) for (let i = 0; i < 4; i++) add(waitCard(), null);
         const parts: HTMLElement[] = [headline, grid];
         if (shelfError) parts.push(error);
@@ -5073,7 +5100,7 @@ export function installWave(config: WaveConfig, createPlayback: typeof installPl
 // Помощники идут на страницу объявлениями рядом со скриптом: так они видны installWave и друг другу
 const pageHelpers = [
     normalizeTag, tagKeys, genreKeys, parseGenres, formatGenres, genreKeysFor, classifyLink, canonicalUrl, trackMatchesGenre, trackArtist,
-    isWaveEligible, acceptCandidate, pickSpaced, tasteMaps, tasteScore, tasteOrder, tasteReason, applyTasteReasons, shuffleInPlace, topGenres, fillText, reasonText, shapeSamples,
+    isWaveEligible, acceptCandidate, pickSpaced, tasteMaps, tasteScore, tasteOrder, tasteReason, applyTasteReasons, shuffleInPlace, topGenres, fillText, reasonText, shapeSamples, shelfGenres,
     artworkUrl, formatTime, playEnd, siteSource, moodTags, trackPath, localDay, countText, tasteGroups, forgottenPicks, artistNames, isNewArtist, spreadBy, pickFinds,
     ...identity.identityHelpers, ...sources.sourceHelpers, installPlaybackPage, installPlaybackRecovery,
 ];
