@@ -1,7 +1,12 @@
-const { execFileSync } = require('node:child_process');
+const { execFileSync, spawnSync } = require('node:child_process');
 const files = execFileSync('git', ['ls-files', '-z'], { encoding: 'utf8' }).split('\0').filter(Boolean);
-const forbidden = files.filter(file => /(^|\/)(docs|pamyat|analysis|artifacts|node_modules|build|tsc|\.codex|\.claude)(\/|$)/i.test(file) ||
-    /(^|\/)(AGENTS|PLAN|STATE|BACKLOG|RAZBOR)\.md$/i.test(file) || /(^|\/)\.env($|\.)/i.test(file) ||
+// Проверяем и принудительно добавленные файлы, учитывая общие и локальные исключения Git.
+const ignored = spawnSync('git', ['check-ignore', '--no-index', '--stdin', '-z'], { input: files.join('\0') + '\0', encoding: 'utf8' });
+if (ignored.error) throw ignored.error;
+if (ignored.status !== 0 && ignored.status !== 1) throw new Error(ignored.stderr || 'Не удалось проверить исключения Git');
+const excluded = new Set(ignored.stdout.split('\0').filter(Boolean));
+const forbidden = files.filter(file => excluded.has(file) || /(^|\/)(docs|node_modules|build|tsc)(\/|$)/i.test(file) ||
+    /(^|\/)\.env($|\.)/i.test(file) ||
     (/\.(md|txt)$/i.test(file) && !/^(README\.md|LICENSE(?:\.txt)?)$/i.test(file)) || /\.(pem|pfx|p12|key|log)$/i.test(file));
 if (forbidden.length) { console.error('Лишние файлы в репозитории:\n' + forbidden.join('\n')); process.exitCode = 1; }
 else console.log('Состав репозитория проверен');

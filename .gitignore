@@ -4,16 +4,6 @@ build
 tsc
 **/.DS_Store
 docs/
-pamyat/
-analysis/
-artifacts/
-AGENTS.md
-PLAN.md
-STATE.md
-BACKLOG.md
-RAZBOR.md
 .env
 .env.*
-.codex/
-.claude/
 *.log
