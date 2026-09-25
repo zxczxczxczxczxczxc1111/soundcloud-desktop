@@ -1,4 +1,4 @@
-import { mkdtempSync, readFileSync, rmSync, utimesSync, writeFileSync } from 'fs';
+import { existsSync, mkdtempSync, readFileSync, rmSync, utimesSync, writeFileSync } from 'fs';
 import { tmpdir } from 'os';
 import { join } from 'path';
 import { afterEach, expect, it, vi } from 'vitest';
@@ -34,8 +34,8 @@ it('отклоняет чужой ввод и не пускает ссылки �
     const directory = dir();
     writeFileSync(join(directory, 'exclusions-5.json'), '{broken', 'utf8');
     const store = new WaveExclusions(directory);
-    expect(store.load(5)).toEqual({ tracks: [], artists: [], laterTracks: [], laterArtists: [], more: [] });
-    expect(store.load('../5')).toEqual({ tracks: [], artists: [], laterTracks: [], laterArtists: [], more: [] });
+    expect(store.load(5)).toEqual({ tracks: [], artists: [], laterTracks: [], laterArtists: [], more: [], families: [] });
+    expect(store.load('../5')).toEqual({ tracks: [], artists: [], laterTracks: [], laterArtists: [], more: [], families: [] });
     expect(store.set('../x', 'track', { id: 1 }, true)).toBe(false);
     expect(store.set(5, 'playlist', { id: 1 }, true)).toBe(false);
     expect(store.set(5, 'track', { id: -1 }, true)).toBe(false);
@@ -63,6 +63,23 @@ it('«Не сейчас» живёт 7 дней, «Больше такого» �
     // «Не сейчас» по треку снимает «Больше такого»
     expect(store.set(9, 'later-track', { id: 2 }, true, t0)).toBe(true);
     expect(store.load(9, t0).more).toEqual([]);
+});
+
+it('старый файл без семей открывается как был; первая запись семьи сохраняет его копию один раз', () => {
+    const directory = dir();
+    const old = '{"tracks":[{"id":1,"title":"Song","artist":"A","url":"","at":5}],"artists":[{"id":7,"title":"A","artist":"","url":"","at":6}]}';
+    writeFileSync(join(directory, 'exclusions-3.json'), old, 'utf8');
+    const store = new WaveExclusions(directory);
+    // Прежние отметки не переосмысляются: трек это запрет загрузки, артист это скрытый аккаунт
+    expect(store.load(3)).toMatchObject({ tracks: [{ id: 1, at: 5 }], artists: [{ id: 7 }], families: [] });
+    expect(store.set(3, 'track', { id: 2, title: 'Other' }, true, 10)).toBe(true);
+    expect(existsSync(join(directory, 'exclusions-3.v1.json'))).toBe(false);
+    expect(store.set(3, 'family', { id: 4, title: 'Artist - Song (Slowed)', artist: 'fan', artistId: 40 }, true, 20)).toBe(true);
+    expect(JSON.parse(readFileSync(join(directory, 'exclusions-3.v1.json'), 'utf8')).tracks.map((entry: { id: number }) => entry.id)).toEqual([2, 1]);
+    expect(new WaveExclusions(directory).load(3).families).toEqual([{ id: 4, title: 'Artist - Song (Slowed)', artist: 'fan', url: '', at: 20, artistId: 40 }]);
+    expect(store.set(3, 'family', { id: 5, title: 'X' }, true, 30)).toBe(true);
+    // Копия снята один раз, до первой семьи
+    expect(JSON.parse(readFileSync(join(directory, 'exclusions-3.v1.json'), 'utf8')).families ?? []).toEqual([]);
 });
 
 it('знает текущего пользователя: последнего со страницы, иначе по самому свежему файлу', () => {

@@ -5,6 +5,9 @@
 // и константы модуля, только друг на друга по имени.
 import type { WaveTrack } from './wave';
 
+/** Версия разбора: хранилище помнит, каким разбором посчитаны ключи загрузки. Только для Node, на страницу не уходит */
+export const IDENTITY_VERSION = 1;
+
 /** Автор версии (ремикс, эдит, флип, кавер) идёт ролью remixer, автор песни из метаданных ролью writer */
 export type CreditRole = 'artist' | 'featured' | 'remixer' | 'producer' | 'writer';
 export interface TrackCredit {

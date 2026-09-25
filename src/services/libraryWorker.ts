@@ -4,11 +4,13 @@ import { WaveSignals } from './waveSignals';
 import { TasteService, type TasteMark } from './tasteModel';
 import { WaveExclusions } from './waveExclusions';
 import { PlaybackStore } from './playbackStore';
+import { RecommendStore } from './recommendStore';
 import type { LibraryReply, LibraryRequest } from './libraryService';
 
 const { directory } = workerData as { directory: string };
 const index = new HistoryIndex(directory, new WaveSignals(directory));
 const playback = new PlaybackStore(directory);
+const recommend = new RecommendStore(directory);
 const overrides = new Map<number, TasteMark[]>();
 const taste = new TasteService(directory, index, (userId) => overrides.get(userId) ?? new WaveExclusions(directory).load(userId).more.map((entry) => ({
     id: entry.id, artist: entry.artistId ?? 0, genre: entry.genre ?? '', tags: entry.tags ?? '', at: entry.at,
@@ -34,11 +36,21 @@ function run(request: LibraryRequest): unknown {
         case 'listMixes': return playback.listMixes(...request.args);
         case 'saveMix': return playback.saveMix(...request.args);
         case 'removeMix': return playback.removeMix(...request.args);
+        case 'recordUploads': return recommend.recordUploads(...request.args);
+        case 'uploads': return recommend.uploads(...request.args);
+        case 'recordingLinks': return recommend.recordingLinks(...request.args);
+        case 'setRecordingLink': return recommend.setRecordingLink(...request.args);
+        case 'syncStart': return recommend.syncStart(...request.args);
+        case 'syncPage': return recommend.syncPage(...request.args);
+        case 'syncFinish': return recommend.syncFinish(...request.args);
+        case 'syncState': return recommend.syncState(...request.args);
+        case 'libraryMembers': return recommend.libraryMembers(...request.args);
     }
 }
 parentPort?.on('message', (request: LibraryRequest | { method: 'close' }) => {
     if (request.method === 'close') {
         index.close();
+        recommend.close();
         parentPort?.close();
         return;
     }
@@ -47,4 +59,7 @@ parentPort?.on('message', (request: LibraryRequest | { method: 'close' }) => {
     catch (error) { reply = { id: request.id, error: error instanceof Error ? error.message : String(error) }; }
     parentPort?.postMessage(reply);
 });
-parentPort?.on('close', () => index.close());
+parentPort?.on('close', () => {
+    index.close();
+    recommend.close();
+});

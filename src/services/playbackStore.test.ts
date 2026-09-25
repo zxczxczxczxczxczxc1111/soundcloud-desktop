@@ -13,6 +13,25 @@ it('сохраняет позицию, паузу и очередь отдель
     expect(store.loadSession(77)).toMatchObject({ position: 52000, paused: true, items: [{ explicit: true, track: { id: 42 }, reason: { kind: 'similar', seed: 'Original seed' } }] });
     expect(store.loadSession(78)).toBeNull();
 });
+it('A19: очередь после перезапуска хранит точный id, название версии, кредиты, даты и причину', () => {
+    const store = open(); const saved = snapshot();
+    saved.items[0] = {
+        track: {
+            id: 43, title: 'Artist - Song (Slowed + Reverb)', duration: 200000, created_at: '2026-09-25T08:38:54Z', release_date: '2026-09-24T00:00:00Z',
+            display_date: 'вчера', publisher_metadata: { artist: 'Artist', isrc: 'QZMHP2505378', writer_composer: null },
+        },
+        explicit: false, wave: true, reason: { kind: 'group', name: 'Phonk' },
+    };
+    store.saveSession(77, saved);
+    const item = store.loadSession(77)?.items[0];
+    expect(item?.reason).toEqual({ kind: 'group', name: 'Phonk' });
+    expect(item?.track).toMatchObject({ id: 43, title: 'Artist - Song (Slowed + Reverb)', created_at: '2026-09-25T08:38:54Z', release_date: '2026-09-24T00:00:00Z' });
+    expect(item?.track.publisher_metadata).toEqual({ artist: 'Artist', isrc: 'QZMHP2505378', writer_composer: null });
+    expect(item?.track.display_date).toBeUndefined();
+    // Пустые метаданные в файл не пишутся
+    expect(store.saveSession(78, snapshot())).toBe(true);
+    expect(store.loadSession(78)?.items[0].track).not.toHaveProperty('publisher_metadata');
+});
 it('не портит предыдущий снимок некорректным вводом', () => {
     const store = open(); store.saveSession(77, snapshot());
     expect(store.saveSession(77, { ...snapshot(), index: 4 })).toBe(false);

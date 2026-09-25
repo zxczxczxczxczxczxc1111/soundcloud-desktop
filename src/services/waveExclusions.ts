@@ -1,11 +1,12 @@
-import { mkdirSync, readdirSync, readFileSync, renameSync, statSync, writeFileSync } from 'fs';
+import { copyFileSync, existsSync, mkdirSync, readdirSync, readFileSync, renameSync, statSync, writeFileSync } from 'fs';
 import { join } from 'path';
 
 /**
- * track и artist: «Не нравится» и скрытый артист, навсегда; later-*: «Не сейчас», на 7 дней;
- * more: «Больше такого», локальный лайк для модели вкуса и зерно волны
+ * track: «Не нравится», запрет этой загрузки (и её подтверждённых копий); artist: скрытый аккаунт загрузчика, навсегда;
+ * later-*: «Не сейчас», на 7 дней; more: «Больше такого», локальный лайк для модели вкуса и зерно волны;
+ * family: скрыть другие версии композиции этой загрузки, семья считается разбором названия (title, artist, artistId)
  */
-export type ExclusionKind = 'track' | 'artist' | 'later-track' | 'later-artist' | 'more';
+export type ExclusionKind = 'track' | 'artist' | 'later-track' | 'later-artist' | 'more' | 'family';
 export interface ExclusionEntry {
     id: number;
     /** Название трека или имя артиста для списка в F1 */
@@ -28,6 +29,7 @@ export interface WaveExclusionList {
     laterTracks: ExclusionEntry[];
     laterArtists: ExclusionEntry[];
     more: ExclusionEntry[];
+    families: ExclusionEntry[];
 }
 
 const LIMIT = 5000;
@@ -38,6 +40,7 @@ const LISTS: Record<ExclusionKind, keyof WaveExclusionList> = {
     'later-track': 'laterTracks',
     'later-artist': 'laterArtists',
     more: 'more',
+    family: 'families',
 };
 // Отметка трека снимает противоречащие: «Больше такого» и «Не нравится» или «Не сейчас» вместе не живут
 const OPPOSITE: Partial<Record<ExclusionKind, ExclusionKind[]>> = {
@@ -47,7 +50,7 @@ const OPPOSITE: Partial<Record<ExclusionKind, ExclusionKind[]>> = {
 };
 const isId = (value: unknown): value is number => typeof value === 'number' && Number.isSafeInteger(value) && value > 0;
 const isKind = (value: unknown): value is ExclusionKind => typeof value === 'string' && Object.prototype.hasOwnProperty.call(LISTS, value);
-const emptyList = (): WaveExclusionList => ({ tracks: [], artists: [], laterTracks: [], laterArtists: [], more: [] });
+const emptyList = (): WaveExclusionList => ({ tracks: [], artists: [], laterTracks: [], laterArtists: [], more: [], families: [] });
 
 export function cleanExclusionUrl(value: unknown): string {
     if (typeof value !== 'string') return '';
@@ -118,7 +121,12 @@ export class WaveExclusions {
         const target = this.file(userId);
         try {
             mkdirSync(this.directory, { recursive: true });
-            writeFileSync(target + '.tmp', JSON.stringify(this.read(userId)), 'utf8');
+            const list = this.read(userId);
+            // Прежняя сборка клиента перезаписала бы файл без списка families: перед первой такой записью
+            // прежний файл сохраняется рядом один раз, откат сборки его не теряет
+            const backup = join(this.directory, 'exclusions-' + userId + '.v1.json');
+            if (list.families.length && existsSync(target) && !existsSync(backup)) copyFileSync(target, backup);
+            writeFileSync(target + '.tmp', JSON.stringify(list), 'utf8');
             renameSync(target + '.tmp', target);
             return true;
         } catch (error) {
@@ -138,6 +146,7 @@ export class WaveExclusions {
             laterTracks: list.laterTracks.filter(alive),
             laterArtists: list.laterArtists.filter(alive),
             more: list.more.slice(),
+            families: list.families.slice(),
         };
     }
     /** Ставит или снимает отметку. false, если ввод неверный или файл не записан */

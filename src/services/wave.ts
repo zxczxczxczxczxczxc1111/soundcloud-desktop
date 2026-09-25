@@ -28,6 +28,10 @@ export interface WaveTrack {
     full_duration?: number;
     /** Метаданные издателя: часто null или псевдоним загрузчика, иногда isrc и автор (приложение А плана радара) */
     publisher_metadata?: { artist?: string | null; isrc?: string | null; writer_composer?: string | null } | null;
+    /** Даты ISO: загрузка, публикация (бывает позже загрузки), заявленный релиз с точностью до дня */
+    created_at?: string;
+    display_date?: string;
+    release_date?: string | null;
 }
 export type WaveMode = 'similar' | 'fresh';
 export type OpenTrackResult = 'played' | 'not-ready' | 'unavailable' | 'failed' | 'superseded';

@@ -3,6 +3,7 @@ import { join } from 'node:path';
 import type { HistoryIndex } from './historyIndex';
 import type { TasteService, TasteMark } from './tasteModel';
 import type { PlaybackStore } from './playbackStore';
+import type { RecommendStore } from './recommendStore';
 
 type Operation<F extends (...args: never[]) => unknown> = { args: Parameters<F>; result: ReturnType<F> };
 export interface LibraryOperations {
@@ -25,6 +26,15 @@ export interface LibraryOperations {
     listMixes: Operation<PlaybackStore['listMixes']>;
     saveMix: Operation<PlaybackStore['saveMix']>;
     removeMix: Operation<PlaybackStore['removeMix']>;
+    recordUploads: Operation<RecommendStore['recordUploads']>;
+    uploads: Operation<RecommendStore['uploads']>;
+    recordingLinks: Operation<RecommendStore['recordingLinks']>;
+    setRecordingLink: Operation<RecommendStore['setRecordingLink']>;
+    syncStart: Operation<RecommendStore['syncStart']>;
+    syncPage: Operation<RecommendStore['syncPage']>;
+    syncFinish: Operation<RecommendStore['syncFinish']>;
+    syncState: Operation<RecommendStore['syncState']>;
+    libraryMembers: Operation<RecommendStore['libraryMembers']>;
 }
 export type LibraryRequest = { [K in keyof LibraryOperations]: { id: number; method: K; args: LibraryOperations[K]['args'] } }[keyof LibraryOperations];
 export interface LibraryReply { id: number; value?: unknown; error?: string }

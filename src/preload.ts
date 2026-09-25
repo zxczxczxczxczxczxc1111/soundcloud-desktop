@@ -243,6 +243,20 @@ contextBridge.exposeInMainWorld('soundcloudAPI', {
         saveMix: (user: number, title: string, tracks: unknown) => ipcRenderer.invoke('soundcloud:library:saveMix', user, title, tracks),
         removeMix: (user: number, id: string) => ipcRenderer.invoke('soundcloud:library:removeMix', user, id),
     },
+    // Хранилище рекомендаций: загрузки с разбором версий, связи записей, обход лайков и подписок; ввод проверяет worker
+    recommend: {
+        recordUploads: (user: number, tracks: unknown) => ipcRenderer.invoke('soundcloud:recommend:recordUploads', user, tracks),
+        uploads: (user: number, keys: unknown) => ipcRenderer.invoke('soundcloud:recommend:uploads', user, keys),
+        recordingLinks: (user: number) => ipcRenderer.invoke('soundcloud:recommend:recordingLinks', user),
+        setRecordingLink: (user: number, a: string, b: string, same: boolean) => ipcRenderer.invoke('soundcloud:recommend:setRecordingLink', user, a, b, same),
+        syncStart: (user: number, source: string, resume: boolean) => ipcRenderer.invoke('soundcloud:recommend:syncStart', user, source, resume),
+        syncPage: (user: number, source: string, run: number, items: unknown, cursor: unknown) =>
+            ipcRenderer.invoke('soundcloud:recommend:syncPage', user, source, run, items, cursor),
+        syncFinish: (user: number, source: string, run: number, status: string, error: string) =>
+            ipcRenderer.invoke('soundcloud:recommend:syncFinish', user, source, run, status, error),
+        syncState: (user: number) => ipcRenderer.invoke('soundcloud:recommend:syncState', user),
+        libraryMembers: (user: number, source: string) => ipcRenderer.invoke('soundcloud:recommend:libraryMembers', user, source),
+    },
     playback: (command: string) => {
         if (['play', 'pause', 'next', 'previous'].includes(command)) ipcRenderer.send('soundcloud:playback', command);
     },

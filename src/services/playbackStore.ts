@@ -14,6 +14,9 @@ export interface LocalMix { id: string; title: string; at: number; tracks: WaveT
 export interface LibraryCatalog { at: number; tracks: WaveTrack[] }
 const isId = (value: unknown): value is number => typeof value === 'number' && Number.isSafeInteger(value) && value > 0;
 const object = (value: unknown): Record<string, unknown> => value !== null && typeof value === 'object' && !Array.isArray(value) ? value as Record<string, unknown> : {};
+/** Дата сайта вида 2026-09-25T08:38:54Z; остальное не дата */
+export const isoDate = (value: unknown): string | undefined =>
+    typeof value === 'string' && /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{1,3})?Z$/.test(value) && Number.isFinite(Date.parse(value)) ? value : undefined;
 export function cleanStoredTrack(input: unknown): WaveTrack | null {
     const value = object(input);
     if (!isId(value.id)) return null;
@@ -21,7 +24,7 @@ export function cleanStoredTrack(input: unknown): WaveTrack | null {
     const duration = typeof value.duration === 'number' && Number.isFinite(value.duration) ? Math.max(0, Math.min(value.duration, 86400000)) : 0;
     const full = typeof value.full_duration === 'number' && Number.isFinite(value.full_duration) ? Math.max(0, Math.min(value.full_duration, 86400000)) : duration;
     const path = trackPathOf(typeof value.permalink_url === 'string' ? value.permalink_url.replace(/^https:\/\/soundcloud\.com/, '') : '');
-    return {
+    const track: WaveTrack = {
         id: value.id, kind: 'track', title: text(value.title, 300), duration, full_duration: full,
         user_id: isId(value.user_id) ? value.user_id : isId(user.id) ? user.id : undefined,
         user: { id: isId(user.id) ? user.id : undefined, username: text(user.username, 200), avatar_url: artworkOf(user.avatar_url) },
@@ -30,6 +33,17 @@ export function cleanStoredTrack(input: unknown): WaveTrack | null {
         policy: ['ALLOW', 'SNIP', 'BLOCK'].includes(String(value.policy)) ? String(value.policy) : undefined,
         streamable: typeof value.streamable === 'boolean' ? value.streamable : undefined,
     };
+    // Кредиты и даты нужны разбору версий и радару: пустое не пишется, чтобы большой каталог не рос
+    const meta = object(value.publisher_metadata);
+    const publisher = { artist: text(meta.artist, 200) || null, isrc: text(meta.isrc, 20) || null, writer_composer: text(meta.writer_composer, 200) || null };
+    if (publisher.artist || publisher.isrc || publisher.writer_composer) track.publisher_metadata = publisher;
+    const created = isoDate(value.created_at);
+    const shown = isoDate(value.display_date);
+    const release = isoDate(value.release_date);
+    if (created) track.created_at = created;
+    if (shown) track.display_date = shown;
+    if (release) track.release_date = release;
+    return track;
 }
 const tracks = (value: unknown, limit: number): WaveTrack[] => Array.isArray(value) ? value.slice(0, limit).map(cleanStoredTrack).filter((track): track is WaveTrack => track !== null) : [];
 function cleanReason(input: unknown): WaveReason | undefined {

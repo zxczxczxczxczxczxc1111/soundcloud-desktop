@@ -29,7 +29,22 @@ module.exports = async function librarySmoke() {
         const mix = await library.request('saveMix', 77, 'Smoke mix', [{ id: 42, title: 'Music' }]);
         assert.equal((await library.request('listMixes', 77))[0].id, mix.id);
         assert.deepEqual(await library.request('listMixes', 78), []);
-        console.log(`PASS: library worker, 50000 plays in ${Math.round(syncedMs)} ms, main heartbeat ${beats}, account isolation`);
+        // Хранилище рекомендаций в SQLite поставляемого Electron: разбор версий, связь каталога, обход с номером прогона
+        const uploads = Array.from({ length: 2000 }, (_, i) => ({
+            id: 100000 + i, kind: 'track', title: 'Artist ' + (i % 50) + ' - Song ' + i + (i % 3 ? '' : ' (Slowed + Reverb)'), user_id: 1 + i % 50,
+            user: { id: 1 + i % 50, username: 'user' + (i % 50) }, duration: 180000 + i, created_at: '2026-09-25T08:38:54Z',
+        }));
+        const recordStart = performance.now();
+        assert.equal(await library.request('recordUploads', 77, uploads), 2000);
+        const recordMs = performance.now() - recordStart;
+        assert.deepEqual((await library.request('uploads', 77, ['sc:track:100000']))[0].version, ['reverb', 'slowed']);
+        const run = await library.request('syncStart', 77, 'likes', false);
+        assert.equal(await library.request('syncPage', 77, 'likes', run.run, uploads.slice(0, 200).map((item) => ({ key: 'sc:track:' + item.id })), null), true);
+        assert.equal((await library.request('syncFinish', 77, 'likes', run.run, 'complete', '')).status, 'complete');
+        assert.equal((await library.request('libraryMembers', 77, 'likes')).length, 200);
+        assert.equal(await library.request('syncPage', 77, 'likes', run.run, [], null), false);
+        assert.deepEqual(await library.request('libraryMembers', 78, 'likes'), []);
+        console.log(`PASS: library worker, 50000 plays in ${Math.round(syncedMs)} ms, main heartbeat ${beats}, account isolation, recommend store 2000 uploads in ${Math.round(recordMs)} ms`);
     } finally {
         clearInterval(heartbeat);
         const closing = library.close();

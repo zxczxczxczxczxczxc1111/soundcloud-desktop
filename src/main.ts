@@ -1087,6 +1087,30 @@ async function init() {
             }
         });
     }
+    // Хранилище рекомендаций: загрузки с версиями, связи записей и обход источников. Ввод проверяет worker,
+    // аккаунт задаёт файл, ответ прошлого прогона обхода отклоняется по номеру прогона
+    const recommendChannels = ['recordUploads', 'uploads', 'recordingLinks', 'setRecordingLink', 'syncStart', 'syncPage', 'syncFinish', 'syncState', 'libraryMembers'] as const;
+    for (const method of recommendChannels) {
+        const channel = 'soundcloud:recommend:' + method;
+        ipcMain.removeHandler(channel);
+        ipcMain.handle(channel, (event, userId: unknown, ...args: unknown[]) => {
+            if (!isTrustedSoundCloudSender(event)) throw new Error('Недопустимый отправитель рекомендаций');
+            if (typeof userId !== 'number' || !Number.isSafeInteger(userId) || userId <= 0) throw new Error('Пользователь не определён');
+            // Время операций ставит worker: страница передаёт только данные
+            const [a, b, c, d] = args;
+            switch (method) {
+                case 'recordUploads': return library.request(method, userId, a);
+                case 'uploads': return library.request(method, userId, a);
+                case 'recordingLinks': return library.request(method, userId);
+                case 'setRecordingLink': return library.request(method, userId, a, b, c);
+                case 'syncStart': return library.request(method, userId, a, b);
+                case 'syncPage': return library.request(method, userId, a, b, c, d);
+                case 'syncFinish': return library.request(method, userId, a, b, c, d);
+                case 'syncState': return library.request(method, userId);
+                case 'libraryMembers': return library.request(method, userId, a);
+            }
+        });
+    }
     ipcMain.handle('soundcloud:wave-taste', async (event, userId: unknown) => {
         if (!isTrustedSoundCloudSender(event)) return null;
         try {
