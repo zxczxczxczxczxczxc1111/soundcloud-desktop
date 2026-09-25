@@ -2854,6 +2854,10 @@ export function installWave(config: WaveConfig, createPlayback: typeof installPl
         if (published && !radarPinned && radarLoaded) loadRadar();
         else render();
     };
+    // Восстановили резервную копию: в архиве могли появиться выпуски, открытый перечитывается на месте
+    host.__scRadarReload = (): void => {
+        if (!disposed && radarLoaded) loadRadar();
+    };
     async function radarTracksOf(ids: number[]): Promise<WaveTrack[]> {
         const missing = ids.filter((id) => !radarTracks.has(id));
         if (missing.length) for (const track of await tracksByIds(missing)) radarTracks.set(track.id, track);
@@ -5028,6 +5032,7 @@ export function installWave(config: WaveConfig, createPlayback: typeof installPl
         delete host.__scResume;
         delete host.__scRadarCollect;
         delete host.__scRadarChanged;
+        delete host.__scRadarReload;
         radarRequest++;
         closeVersions();
     };

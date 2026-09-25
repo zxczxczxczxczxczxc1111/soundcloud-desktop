@@ -232,6 +232,10 @@ export class HistoryManager {
         this.view.webContents.focus();
         return true;
     }
+    /** Журнал поменялся не со страницы (восстановление копии): открытое окно перечитывает период */
+    public changed(): void {
+        if (this.view && !this.view.webContents.isDestroyed()) this.view.webContents.send('history:changed');
+    }
     public setLanguage(language: 'ru' | 'en'): void {
         this.view?.webContents.send('history:language', language);
     }

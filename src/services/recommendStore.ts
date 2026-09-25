@@ -1,5 +1,5 @@
 import { DatabaseSync } from 'node:sqlite';
-import { existsSync, mkdirSync, renameSync, rmSync } from 'node:fs';
+import { copyFileSync, existsSync, mkdirSync, renameSync, rmSync } from 'node:fs';
 import { join } from 'node:path';
 import type { WaveTrack } from './wave';
 import { cleanStoredTrack } from './playbackStore';
@@ -256,6 +256,41 @@ function toEdition(row: Values): RadarEdition {
         items: list(row.items),
         uploads: list(row.uploads),
     };
+}
+/** Часть резервной копии: архив выпусков радара и решения пользователя о версиях. Остальное хранилища берётся с сайта заново */
+export interface RecommendBackup {
+    editions: Array<RadarEdition & { manual: boolean }>;
+    links: RecordingLink[];
+}
+const LIMIT_EDITIONS = 5000;
+const LIMIT_LINKS = 50000;
+/** Часть копии недоверенная: выпуск проходит те же проверки, что при чтении из базы, связь только пользовательская и упорядоченная */
+export function cleanRecommendBackup(value: unknown): RecommendBackup | null {
+    if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
+    const source = value as { editions?: unknown; links?: unknown };
+    if (!Array.isArray(source.editions) || !Array.isArray(source.links) || source.editions.length > LIMIT_EDITIONS || source.links.length > LIMIT_LINKS) return null;
+    const count = (item: unknown): item is number => typeof item === 'number' && Number.isSafeInteger(item) && item >= 0;
+    const items = (list: unknown): RadarItem[] | null =>
+        Array.isArray(list) && list.length <= 5000 ? list.map(cleanRadarItem).filter((item): item is RadarItem => item !== null) : null;
+    const editions: RecommendBackup['editions'] = [];
+    for (const raw of source.editions) {
+        const edition = raw && typeof raw === 'object' ? (raw as Record<string, unknown>) : {};
+        const list = items(edition.items);
+        const uploads = items(edition.uploads);
+        if (!isPeriod(edition.period) || !isId(edition.revision) || !isTime(edition.created) || !isTime(edition.cutoff) || typeof edition.manual !== 'boolean'
+            || (edition.status !== 'complete' && edition.status !== 'partial') || !count(edition.algorithm) || !count(edition.taste) || !list || !uploads) return null;
+        editions.push({
+            period: edition.period, revision: edition.revision, created: edition.created, cutoff: edition.cutoff, status: edition.status, manual: edition.manual,
+            algorithm: edition.algorithm, taste: edition.taste, coverage: cleanCoverage(edition.coverage), items: list, uploads,
+        });
+    }
+    const links: RecordingLink[] = [];
+    for (const raw of source.links) {
+        const link = raw && typeof raw === 'object' ? (raw as Record<string, unknown>) : {};
+        if (!isTrackKey(link.a) || !isTrackKey(link.b) || link.a >= link.b || typeof link.same !== 'boolean' || !isTime(link.at)) return null;
+        links.push({ a: link.a, b: link.b, same: link.same, source: 'user', at: link.at });
+    }
+    return { editions, links };
 }
 // Строка хранилища обратно в трек для сравнения версий
 const asTrack = (row: Values): WaveTrack => ({
@@ -650,6 +685,80 @@ export class RecommendStore {
             const items = parseJson(str(row.items));
             return Array.isArray(items) ? items.map(cleanRadarItem).filter((item): item is RadarItem => item !== null).map((item) => item.direction) : [];
         }));
+    }
+    /** Есть ли у аккаунта файл хранилища: копия и её проверка не создают пустой */
+    public exists(userId: unknown): boolean {
+        return isId(userId) && existsSync(this.file(userId));
+    }
+    public exportBackup(userId: unknown): RecommendBackup {
+        if (!this.exists(userId)) return { editions: [], links: [] };
+        return this.guarded(userId as number, (db) => ({
+            editions: (db.prepare('select * from editions order by period, revision').all() as Values[]).map((row) => ({ ...toEdition(row), manual: num(row.manual) === 1 })),
+            links: (db.prepare("select a, b, same, at from relations where source = 'user' order by at").all() as Values[]).map((row) => ({
+                a: str(row.a), b: str(row.b), same: num(row.same) === 1, source: 'user' as const, at: num(row.at),
+            })),
+        }));
+    }
+    /** Выпуски, которые уже есть: период и время создания. Для сводки перед восстановлением */
+    public editionKeys(userId: unknown): Set<string> {
+        if (!this.exists(userId)) return new Set();
+        return this.guarded(userId as number, (db) =>
+            new Set((db.prepare('select period, created from editions').all() as Values[]).map((row) => str(row.period) + '|' + num(row.created))));
+    }
+    /**
+     * Слить часть копии одной транзакцией. Выпуск с тем же периодом и временем создания уже есть и пропускается,
+     * иначе встаёт на свою ревизию или, если она занята, на следующую. Связь пользователя заменяется только более поздней
+     */
+    public importBackup(userId: unknown, data: RecommendBackup): { editions: number; links: number } {
+        if (!isId(userId)) return { editions: 0, links: 0 };
+        return this.guarded(userId, (db) => this.transaction(db, () => {
+            const known = db.prepare('select 1 from editions where period = ? and created = ? limit 1');
+            const taken = db.prepare('select 1 from editions where period = ? and revision = ?');
+            const last = db.prepare('select max(revision) as last from editions where period = ?');
+            const insert = db.prepare(
+                'insert into editions(period, revision, created, cutoff, status, manual, algorithm, taste, coverage, items, uploads) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
+            );
+            let editions = 0;
+            for (const edition of data.editions) {
+                if (known.get(edition.period, edition.created)) continue;
+                const revision = taken.get(edition.period, edition.revision) ? num((last.get(edition.period) as Values | undefined)?.last) + 1 : edition.revision;
+                insert.run(
+                    edition.period, revision, edition.created, edition.cutoff, edition.status, edition.manual ? 1 : 0, edition.algorithm, edition.taste,
+                    JSON.stringify(edition.coverage), JSON.stringify(edition.items), JSON.stringify(edition.uploads),
+                );
+                editions++;
+            }
+            const link = db.prepare(
+                "insert into relations(a, b, source, same, at) values (?, ?, 'user', ?, ?) on conflict(a, b, source) do update set same = excluded.same, at = excluded.at where excluded.at > relations.at",
+            );
+            let links = 0;
+            for (const item of data.links) links += num(link.run(item.a, item.b, item.same ? 1 : 0, item.at).changes);
+            return { editions, links };
+        }));
+    }
+    /** Защитная копия файла перед восстановлением; false, если файла ещё нет */
+    public snapshot(userId: unknown, target: string): boolean {
+        if (!this.exists(userId)) return false;
+        return this.guarded(userId as number, (db) => {
+            rmSync(target, { force: true });
+            db.prepare('vacuum into ?').run(target);
+            return true;
+        });
+    }
+    /** Откат восстановления: файл заменяется защитной копией, без неё удаляется */
+    public replaceWith(userId: unknown, source: string | null): void {
+        if (!isId(userId)) return;
+        const cached = this.handles.get(userId);
+        if (cached?.isOpen) cached.close();
+        this.handles.delete(userId);
+        const file = this.file(userId);
+        for (const suffix of ['-wal', '-shm', '-journal']) rmSync(file + suffix, { force: true });
+        if (!source) {
+            rmSync(file, { force: true });
+            return;
+        }
+        copyFileSync(source, file + '.tmp');
+        renameSync(file + '.tmp', file);
     }
     private readLinks(db: DatabaseSync): RecordingLink[] {
         return (db.prepare('select a, b, source, same, at from relations order by at limit 50000').all() as Values[]).map((row) => ({

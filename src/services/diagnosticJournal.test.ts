@@ -34,6 +34,19 @@ it('пустая волна: в журнал попадают только чи�
     expect(line.title).toBeUndefined();
     expect(line.url).toBeUndefined();
 });
+it('резервная копия: причина отказа и время без пути к файлу и содержимого', () => {
+    const { root, journal } = create();
+    journal.record('backup.failed', { auto: true, reason: 'no-space', file: 'D:/Backups/soundcloud-backup.scbackup', title: 'кровью' });
+    journal.record('backup.saved', { auto: false, backupMs: 812.456, backupKiB: 96.5, path: 'C:/Users/name' });
+    journal.record('backup.failed', { reason: 'D:/private' });
+    journal.exportTo(join(root, 'export.log'));
+    const lines = readFileSync(join(root, 'export.log'), 'utf8').trim().split('\n').map((line) => JSON.parse(line) as Record<string, unknown>).filter((line) => String(line.event).startsWith('backup.'));
+    expect(lines.map(({ event, auto, reason, backupMs, backupKiB, file, title, path }) => ({ event, auto, reason, backupMs, backupKiB, file, title, path }))).toEqual([
+        { event: 'backup.failed', auto: true, reason: 'no-space', backupMs: undefined, backupKiB: undefined, file: undefined, title: undefined, path: undefined },
+        { event: 'backup.saved', auto: false, reason: undefined, backupMs: 812.46, backupKiB: 96.5, file: undefined, title: undefined, path: undefined },
+        { event: 'backup.failed', auto: undefined, reason: undefined, backupMs: undefined, backupKiB: undefined, file: undefined, title: undefined, path: undefined },
+    ]);
+});
 it('предупреждение Node пишется предупреждением процесса, а не ошибкой без источника', () => {
     const { root, journal } = create();
     const stderr = vi.spyOn(console, 'error').mockImplementation(() => undefined);

@@ -5,6 +5,7 @@ import type { TasteService, TasteMark } from './tasteModel';
 import type { PlaybackStore } from './playbackStore';
 import type { RecommendStore } from './recommendStore';
 import type { RadarService } from './radar';
+import type { BackupService } from './backup';
 
 type Operation<F extends (...args: never[]) => unknown> = { args: Parameters<F>; result: ReturnType<F> };
 export interface LibraryOperations {
@@ -45,9 +46,16 @@ export interface LibraryOperations {
     radarEdition: Operation<RecommendStore['edition']>;
     radarView: Operation<RadarService['view']>;
     radarFound: Operation<RadarService['found']>;
+    backupSave: Operation<BackupService['save']>;
+    backupInspect: Operation<BackupService['inspect']>;
+    backupRestore: Operation<BackupService['restore']>;
+    backupRollback: Operation<BackupService['rollback']>;
+    backupFinish: Operation<BackupService['finish']>;
 }
 export type LibraryRequest = { [K in keyof LibraryOperations]: { id: number; method: K; args: LibraryOperations[K]['args'] } }[keyof LibraryOperations];
 export interface LibraryReply { id: number; value?: unknown; error?: string }
+/** Копия всего профиля дольше обычного запроса: свой предел */
+const BACKUP_TIMEOUT = 300000;
 
 // Единственный владелец SQLite живёт в worker. Главный поток только передаёт команды и получает готовые данные.
 export class LibraryService {
@@ -86,14 +94,14 @@ export class LibraryService {
     }
     public request<K extends keyof LibraryOperations>(method: K, ...args: LibraryOperations[K]['args']): Promise<LibraryOperations[K]['result']> {
         try {
-            if (method === 'sync' || method === 'profile' || method === 'view' || method === 'radarBuild' || method === 'radarView' || method === 'radarFound') this.flush();
+            if (method === 'sync' || method === 'profile' || method === 'view' || method === 'radarBuild' || method === 'radarView' || method === 'radarFound' || method === 'backupSave' || method === 'backupInspect') this.flush();
             const worker = this.start();
             const id = ++this.sequence;
             return new Promise((resolve, reject) => {
                 const timer = setTimeout(() => {
                     this.pending.delete(id);
                     reject(new Error('Библиотека не ответила вовремя'));
-                }, 60000);
+                }, method.startsWith('backup') ? BACKUP_TIMEOUT : 60000);
                 this.pending.set(id, { resolve: (value) => resolve(value as LibraryOperations[K]['result']), reject, timer });
                 worker.postMessage({ id, method, args });
             });

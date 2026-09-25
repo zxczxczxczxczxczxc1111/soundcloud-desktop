@@ -63,6 +63,7 @@ app.whenReady().then(async () => {
         'get-accounts': { accounts: [], currentAccountId: 'default' },
         'get-update-state': { mode: 'dev', version: '0.0.0', enabled: true, hint: '', status: '', releaseUrl: '' },
         'get-wave-exclusions': { tracks: [], artists: [] },
+        'backup-state': { folder: '', auto: false, lastAt: 0, lastError: '', busy: false },
     };
     const { isTrustedLocalSender } = require('../tsc/trustedViews');
     for (const [channel, data] of Object.entries(responses)) ipcMain.handle(channel, (event) => {

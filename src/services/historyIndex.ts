@@ -264,6 +264,20 @@ export class HistoryIndex {
             return this.ingest(handle, synced ? synced - 2 * DAY : 0, userId);
         });
     }
+    /**
+     * Перечитать журнал целиком: восстановление копии добавило в него старые записи, которые sync не увидит.
+     * fresh собирает файл заново: после отката восстановления записи могли и пропасть
+     */
+    public reindex(userId: unknown, fresh = false): number {
+        if (!isId(userId)) return 0;
+        if (fresh) {
+            const cached = this.handles.get(userId);
+            if (cached?.db.isOpen) cached.db.close();
+            this.handles.delete(userId);
+            this.remove(userId);
+        }
+        return this.guarded(userId, (handle) => this.ingest(handle, 0, userId));
+    }
     private ingest(handle: Handle, since: number, userId: number): number {
         const signals = this.source.load(userId, Math.max(0, since));
         if (!signals.length) return 0;

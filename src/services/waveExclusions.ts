@@ -89,6 +89,19 @@ function cleanList(value: unknown): ExclusionEntry[] {
     }
     return list.slice(0, LIMIT);
 }
+/** Содержимое файла отметок: каждая запись проверяется, чужие поля и повторы отбрасываются */
+export function cleanExclusionList(value: unknown): WaveExclusionList {
+    const list = emptyList();
+    if (value && typeof value === 'object') {
+        const source = value as Record<string, unknown>;
+        for (const key of Object.values(LISTS)) list[key] = cleanList(source[key]);
+    }
+    return list;
+}
+const copyList = (list: WaveExclusionList): WaveExclusionList => ({
+    tracks: list.tracks.slice(), artists: list.artists.slice(), laterTracks: list.laterTracks.slice(),
+    laterArtists: list.laterArtists.slice(), more: list.more.slice(), families: list.families.slice(),
+});
 
 // Отметки «Моей волны»: файл на каждого пользователя SoundCloud, новые записи сверху.
 // Пишется сразу: отметки редкие, а терять их при падении нельзя
@@ -104,13 +117,9 @@ export class WaveExclusions {
     private read(userId: number): WaveExclusionList {
         const cached = this.cache.get(userId);
         if (cached) return cached;
-        const list = emptyList();
+        let list = emptyList();
         try {
-            const parsed: unknown = JSON.parse(readFileSync(this.file(userId), 'utf8'));
-            if (parsed && typeof parsed === 'object') {
-                const source = parsed as Record<string, unknown>;
-                for (const key of Object.values(LISTS)) list[key] = cleanList(source[key]);
-            }
+            list = cleanExclusionList(JSON.parse(readFileSync(this.file(userId), 'utf8')));
         } catch (error) {
             if ((error as NodeJS.ErrnoException).code !== 'ENOENT') console.warn('Исключения волны не прочитаны:', error);
         }
@@ -166,6 +175,44 @@ export class WaveExclusions {
             list[key] = [stored, ...rest].slice(0, LIMIT);
             for (const other of OPPOSITE[kind] ?? []) list[LISTS[other]] = list[LISTS[other]].filter((item) => item.id !== entry.id);
         } else list[key] = rest;
+        return this.write(userId);
+    }
+    /**
+     * Слить отметки из резервной копии. Все записи проигрываются по времени, как если бы ставились заново:
+     * при повторе и противоречии побеждает более поздняя, истёкшие «Не сейчас» не возвращаются.
+     * Возвращает прежние списки для отката или null, если файл не записан
+     */
+    public merge(userId: unknown, input: WaveExclusionList, now = Date.now()): WaveExclusionList | null {
+        if (!isId(userId)) return null;
+        const current = this.read(userId);
+        const previous = copyList(current);
+        const events: Array<{ kind: ExclusionKind; entry: ExclusionEntry }> = [];
+        // Списки хранятся новыми сверху: проход с конца сохраняет их порядок и при равном времени
+        for (const source of [current, input])
+            for (const kind of Object.keys(LISTS) as ExclusionKind[])
+                for (const entry of source[LISTS[kind]].slice().reverse()) {
+                    if (source === input && entry.until !== undefined && entry.until <= now) continue;
+                    events.push({ kind, entry });
+                }
+        events.sort((a, b) => a.entry.at - b.entry.at);
+        const next = emptyList();
+        for (const { kind, entry } of events) {
+            const key = LISTS[kind];
+            next[key] = [entry, ...next[key].filter((item) => item.id !== entry.id)];
+            for (const other of OPPOSITE[kind] ?? []) next[LISTS[other]] = next[LISTS[other]].filter((item) => item.id !== entry.id);
+        }
+        for (const key of Object.values(LISTS)) next[key] = next[key].slice(0, LIMIT);
+        // Ничего нового: файл не переписывается
+        if (JSON.stringify(next) === JSON.stringify(current)) return previous;
+        this.cache.set(userId, next);
+        if (this.write(userId)) return previous;
+        this.cache.set(userId, current);
+        return null;
+    }
+    /** Вернуть списки, снятые merge, если восстановление копии откатывается */
+    public restore(userId: unknown, list: WaveExclusionList): boolean {
+        if (!isId(userId)) return false;
+        this.cache.set(userId, copyList(list));
         return this.write(userId);
     }
     /** Пользователь, с которым страница работала последней; до первого обращения страницы берётся самый свежий файл */

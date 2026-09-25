@@ -83,6 +83,15 @@ export function cleanPlaybackSnapshot(input: unknown): PlaybackSnapshot | null {
         paused: value.paused, active: value.active === true, mode: value.mode === 'fresh' ? 'fresh' : 'similar', genre: text(value.genre, 300) || null, seed, fallback: value.fallback === true };
 }
 
+/** Содержимое файла подборок: до 100 штук с id, временем, названием и проверенными треками */
+export function cleanMixes(input: unknown): LocalMix[] {
+    if (!Array.isArray(input)) return [];
+    return input.slice(0, 100).flatMap((raw) => {
+        const item = object(raw);
+        return typeof item.id === 'string' && typeof item.at === 'number' ? [{ id: item.id, at: item.at, title: text(item.title, 100), tracks: tracks(item.tracks, 5000) }] : [];
+    });
+}
+
 // Вызывается только в worker. Снимки отделены по аккаунтам, запись заменяет файл атомарно.
 export class PlaybackStore {
     constructor(private directory: string) {}
@@ -115,12 +124,24 @@ export class PlaybackStore {
         this.write(user, 'catalog', { at: Date.now(), tracks: tracks(input, 100000) }); return true;
     }
     public listMixes(user: unknown): LocalMix[] {
-        const input = this.read(user, 'mixes');
-        if (!Array.isArray(input)) return [];
-        return input.slice(0, 100).flatMap((raw) => {
-            const item = object(raw);
-            return typeof item.id === 'string' && typeof item.at === 'number' ? [{ id: item.id, at: item.at, title: text(item.title, 100), tracks: tracks(item.tracks, 5000) }] : [];
-        });
+        return cleanMixes(this.read(user, 'mixes'));
+    }
+    /** Резервная копия: подборки объединяются по id, новые сверху, не больше 100. Возвращает число добавленных */
+    public mergeMixes(user: unknown, input: readonly LocalMix[]): number {
+        const list = this.listMixes(user);
+        const known = new Set(list.map((mix) => mix.id));
+        const added: LocalMix[] = [];
+        for (const mix of input) {
+            if (known.has(mix.id)) continue;
+            known.add(mix.id);
+            added.push(mix);
+        }
+        if (!added.length) return 0;
+        const next = [...list, ...added].sort((a, b) => b.at - a.at).slice(0, 100);
+        const kept = added.filter((mix) => next.includes(mix)).length;
+        if (!kept) return 0;
+        this.write(user, 'mixes', next);
+        return kept;
     }
     public saveMix(user: unknown, title: unknown, input: unknown): LocalMix {
         const name = text(title, 100);

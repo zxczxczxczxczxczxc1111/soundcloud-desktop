@@ -73,7 +73,39 @@ module.exports = async function librarySmoke() {
         assert.equal((await library.request('radarBuild', 77, '2026-09-25', cutoff, true, false)).published, false);
         assert.equal((await library.request('radarEditions', 77)).length, 1);
         assert.equal((await library.request('radarEdition', 77, '2026-09-25')).items.length, 50);
-        console.log(`PASS: library worker, 50000 plays in ${Math.round(syncedMs)} ms, main heartbeat ${beats}, account isolation, recommend store 2000 uploads in ${Math.round(recordMs)} ms, taste in ${Math.round(tasteMs)} ms, radar of 20000 uploads from ${plan.length} sources in ${Math.round(radarMs)} ms`);
+        // Резервная копия той же нагрузки на чистый профиль: главный цикл не стоит, история и архив радара на месте
+        const backupDir = mkdtempSync(join(tmpdir(), 'sc-backup-smoke-'));
+        const restoredDir = mkdtempSync(join(tmpdir(), 'sc-restore-smoke-'));
+        const restored = new LibraryService(restoredDir, () => {});
+        let backupLine = '';
+        try {
+            const file = join(backupDir, 'smoke.scbackup');
+            const beatsBefore = beats;
+            const saveStart = performance.now();
+            const saved = await library.request('backupSave', file, { siteLanguage: 'en', proxyPassword: 'secret' }, { version: '0.0.0', build: 'development' }, 0);
+            const saveMs = performance.now() - saveStart;
+            assert.equal(saved.ok, true);
+            assert.equal(saved.plays, 50000);
+            assert.ok(beats - beatsBefore > 2, 'main event loop must run while the backup is written');
+            const restoreStart = performance.now();
+            const inspected = await restored.request('backupInspect', file);
+            assert.equal(inspected.ok, true);
+            assert.equal(inspected.summary.accounts[0].newPlays, 50000);
+            const outcome = await restored.request('backupRestore', file, inspected.hash);
+            assert.equal(outcome.ok, true);
+            assert.deepEqual(outcome.settings, { siteLanguage: 'en' });
+            await restored.request('backupFinish', [77]);
+            const restoreMs = performance.now() - restoreStart;
+            assert.equal((await restored.request('overview', 77, null, now + 1)).total, 50000);
+            assert.equal((await restored.request('radarEditions', 77)).length, 1);
+            assert.equal((await restored.request('listMixes', 77)).length, 1);
+            backupLine = `, backup of ${Math.round(saved.size / 1024)} KiB saved in ${Math.round(saveMs)} ms and restored with index in ${Math.round(restoreMs)} ms`;
+        } finally {
+            await restored.close();
+            rmSync(backupDir, { recursive: true, force: true });
+            rmSync(restoredDir, { recursive: true, force: true });
+        }
+        console.log(`PASS: library worker, 50000 plays in ${Math.round(syncedMs)} ms, main heartbeat ${beats}, account isolation, recommend store 2000 uploads in ${Math.round(recordMs)} ms, taste in ${Math.round(tasteMs)} ms, radar of 20000 uploads from ${plan.length} sources in ${Math.round(radarMs)} ms${backupLine}`);
     } finally {
         clearInterval(heartbeat);
         const closing = library.close();

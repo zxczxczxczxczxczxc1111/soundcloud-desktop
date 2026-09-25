@@ -35,6 +35,7 @@
                     <button data-target="wave">Моя волна</button>
                     <button data-target="discord">Discord</button>
                     <button data-target="account">Аккаунт</button>
+                    <button data-target="backup">Резервная копия</button>
                     <button data-target="advanced" id="advancedNav">Дополнительно<span class="nav-dot" aria-hidden="true"></span></button>
                 </nav>
 
@@ -217,6 +218,38 @@
                             <button id="logoutBtn" class="btn">Выйти</button>
                         </div>
                         <div class="hint pad">Смена аккаунта перезапускает клиент</div>
+                    </section>
+
+                    <section class="section" id="backup" hidden>
+                        <h2>Резервная копия</h2>
+                        <div class="hint pad">История прослушиваний, отметки волны, вкус, подборки, архив радара и настройки в одном файле. Лайки, плейлисты и подписки хранит SoundCloud, вход и пароль прокси в копию не входят</div>
+                        <div class="row">
+                            <span class="text"><span>Файл копии</span><span class="hint">Лежит только там, куда ты его положишь</span></span>
+                            <span class="backup-actions">
+                                <button id="backupSave" class="btn">Сохранить копию…</button>
+                                <button id="backupRestore" class="btn">Восстановить…</button>
+                            </span>
+                        </div>
+                        <div id="backupStatus" class="hint pad" role="status"></div>
+                        <div id="backupPreview" class="backup-preview" hidden>
+                            <div id="backupSummary" class="backup-summary" data-no-i18n></div>
+                            <div class="controls">
+                                <button id="backupConfirm" class="btn solid">Восстановить</button>
+                                <button id="backupCancel" class="btn">Отмена</button>
+                            </div>
+                        </div>
+
+                        <div class="item">
+                            <label class="row">
+                                <span class="text"><span>Автокопия раз в неделю</span><span class="hint" id="backupAutoHint" role="status">Сначала выбери папку</span></span>
+                                <span class="toggle"><input type="checkbox" id="backupAuto" disabled /><span class="slider"></span></span>
+                            </label>
+                            <div class="row">
+                                <span class="text"><span>Папка автокопии</span><span class="hint excluded-title" id="backupFolderPath" data-no-i18n></span></span>
+                                <button id="backupFolder" class="btn">Выбрать…</button>
+                            </div>
+                            <div class="hint pad">Переустановку Windows переживёт папка на другом диске или в облаке. Хранятся пять последних копий</div>
+                        </div>
                     </section>
 
                     <section class="section" id="advanced" hidden>

@@ -3,6 +3,8 @@ import { join } from 'path';
 
 const LIMIT = 20000;
 const isId = (value: unknown): value is number => typeof value === 'number' && Number.isSafeInteger(value) && value > 0;
+/** Содержимое файла журнала: только id треков, последние LIMIT */
+export const cleanJournal = (value: unknown): number[] => (Array.isArray(value) ? value.filter(isId).slice(-LIMIT) : []);
 
 // Журнал прослушанного для режима «Новое»: история SoundCloud отдаёт только 200 последних треков.
 // Файл на каждого пользователя SoundCloud, хранятся только id треков, старые вытесняются
@@ -21,8 +23,7 @@ export class WaveJournal {
         if (cached) return cached;
         let ids: number[] = [];
         try {
-            const parsed: unknown = JSON.parse(readFileSync(this.file(userId), 'utf8'));
-            if (Array.isArray(parsed)) ids = parsed.filter(isId).slice(-LIMIT);
+            ids = cleanJournal(JSON.parse(readFileSync(this.file(userId), 'utf8')));
         } catch (error) {
             if ((error as NodeJS.ErrnoException).code !== 'ENOENT') console.warn('Журнал волны не прочитан:', error);
         }
@@ -61,15 +62,52 @@ export class WaveJournal {
             console.warn('Папка журнала волны не создана:', error);
             return;
         }
-        for (const userId of [...this.dirty]) {
-            const target = this.file(userId);
-            try {
-                writeFileSync(target + '.tmp', JSON.stringify(this.cache.get(userId) ?? []), 'utf8');
-                renameSync(target + '.tmp', target);
-                this.dirty.delete(userId);
-            } catch (error) {
-                console.warn('Журнал волны не записан:', error);
-            }
+        for (const userId of [...this.dirty]) if (this.write(userId)) this.dirty.delete(userId);
+    }
+    private write(userId: number): boolean {
+        const target = this.file(userId);
+        try {
+            writeFileSync(target + '.tmp', JSON.stringify(this.cache.get(userId) ?? []), 'utf8');
+            renameSync(target + '.tmp', target);
+            return true;
+        } catch (error) {
+            console.warn('Журнал волны не записан:', error);
+            return false;
         }
+    }
+    /**
+     * Слить журнал из резервной копии: недостающие id встают перед текущими как более старые, лимит прежний.
+     * Возвращает прежний журнал для отката или null, если файл не записан
+     */
+    public merge(userId: unknown, input: readonly number[]): number[] | null {
+        if (!isId(userId)) return null;
+        const current = this.read(userId);
+        const previous = current.slice();
+        const seen = new Set(current);
+        const older = [...new Set(input.filter((id) => isId(id) && !seen.has(id)))];
+        if (!older.length) return previous;
+        this.cache.set(userId, [...older, ...current].slice(-LIMIT));
+        try {
+            mkdirSync(this.directory, { recursive: true });
+        } catch (error) {
+            console.warn('Папка журнала волны не создана:', error);
+        }
+        if (this.write(userId)) {
+            this.dirty.delete(userId);
+            return previous;
+        }
+        this.cache.set(userId, current);
+        return null;
+    }
+    /** Вернуть журнал, снятый merge, если восстановление копии откатывается */
+    public restore(userId: unknown, ids: readonly number[]): boolean {
+        if (!isId(userId)) return false;
+        this.cache.set(userId, ids.slice());
+        if (this.write(userId)) {
+            this.dirty.delete(userId);
+            return true;
+        }
+        this.dirty.add(userId);
+        return false;
     }
 }

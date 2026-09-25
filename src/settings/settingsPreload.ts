@@ -24,9 +24,15 @@ const INVOKE_CHANNELS = new Set([
     'open-data-folder',
     'get-wave-exclusions',
     'remove-wave-exclusion',
+    'backup-state',
+    'backup-save',
+    'backup-pick',
+    'backup-restore',
+    'backup-folder',
+    'backup-auto',
 ]);
 
-const ON_CHANNELS = new Set(['presence-preview-update', 'discord-incognito-changed', 'update-translations', 'accounts-updated', 'update-state', 'wave-exclusions-changed']);
+const ON_CHANNELS = new Set(['presence-preview-update', 'discord-incognito-changed', 'update-translations', 'accounts-updated', 'update-state', 'wave-exclusions-changed', 'backup-state-changed']);
 
 function isHttpsUrl(value: string): boolean {
     try {

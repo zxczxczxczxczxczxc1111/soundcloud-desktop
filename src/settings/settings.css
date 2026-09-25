@@ -120,6 +120,9 @@ h1 {
     flex-shrink: 0;
     padding: 0 12px 20px 24px;
     overflow-y: auto;
+    /* С разделом «Резервная копия» список в низком окне прокручивается: полоса как у правой части */
+    scrollbar-width: thin;
+    scrollbar-color: var(--film-strong) transparent;
 }
 .nav-list button {
     display: flex;
@@ -248,6 +251,39 @@ label.row:hover {
 }
 .row .dropdown:has(#radarZone) {
     width: 220px;
+}
+/* Резервная копия: две кнопки в строке и сводка перед восстановлением */
+.backup-actions {
+    display: flex;
+    gap: 6px;
+    flex: none;
+}
+.backup-preview {
+    margin: 4px 8px 8px;
+    padding: 10px 12px 2px;
+    border-radius: 6px;
+    background: var(--film-strong);
+}
+.backup-summary {
+    display: flex;
+    flex-direction: column;
+    gap: 3px;
+    font-size: 12.5px;
+    padding-bottom: 6px;
+}
+.backup-summary .backup-account {
+    margin-top: 6px;
+    font-weight: 600;
+}
+.backup-summary .backup-warn {
+    margin-top: 6px;
+    color: var(--focus);
+}
+.backup-preview .controls {
+    padding: 4px 0 8px;
+}
+.backup-preview .controls .btn {
+    flex: none;
 }
 .excluded-title {
     white-space: nowrap;

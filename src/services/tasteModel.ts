@@ -373,6 +373,14 @@ export function buildTaste(
 
 const isId = (value: unknown): value is number => typeof value === 'number' && Number.isSafeInteger(value) && value > 0;
 const isTagKey = (value: unknown): value is string => typeof value === 'string' && value.length >= 2 && value.length <= 80 && normalizeTag(value) === value;
+/** Содержимое файла «убрать из вкуса»: id аккаунтов и ключи тегов без повторов */
+export function cleanTasteOverrides(value: unknown): TasteOverrides {
+    const parsed = value && typeof value === 'object' ? (value as { artists?: unknown; tags?: unknown }) : null;
+    return {
+        artists: Array.isArray(parsed?.artists) ? [...new Set(parsed.artists.filter(isId))].slice(0, 1000) : [],
+        tags: Array.isArray(parsed?.tags) ? [...new Set(parsed.tags.filter(isTagKey))].slice(0, 1000) : [],
+    };
+}
 
 // Профиль считается по индексу истории и хранилищу рекомендаций и живёт 30 минут; «убрать из вкуса» хранится
 // отдельным файлом на пользователя
@@ -395,13 +403,7 @@ export class TasteService {
         if (cached) return cached;
         let result: TasteOverrides = { artists: [], tags: [] };
         try {
-            if (existsSync(this.file(userId))) {
-                const parsed = JSON.parse(readFileSync(this.file(userId), 'utf8')) as { artists?: unknown; tags?: unknown } | null;
-                result = {
-                    artists: Array.isArray(parsed?.artists) ? [...new Set(parsed.artists.filter(isId))].slice(0, 1000) : [],
-                    tags: Array.isArray(parsed?.tags) ? [...new Set(parsed.tags.filter(isTagKey))].slice(0, 1000) : [],
-                };
-            }
+            if (existsSync(this.file(userId))) result = cleanTasteOverrides(JSON.parse(readFileSync(this.file(userId), 'utf8')));
         } catch (error) {
             console.warn('Вкус волны: убранное из вкуса не прочитано', error);
         }
@@ -446,6 +448,9 @@ export class TasteService {
         if (kind === 'artist' && isId(key)) next = { ...current, artists: removed ? [...new Set([key, ...current.artists])] : current.artists.filter((id) => id !== key) };
         else if (kind === 'tag' && isTagKey(key)) next = { ...current, tags: removed ? [...new Set([key, ...current.tags])] : current.tags.filter((tag) => tag !== key) };
         else return false;
+        return this.writeOverrides(userId, next);
+    }
+    private writeOverrides(userId: number, next: TasteOverrides): boolean {
         try {
             mkdirSync(this.directory, { recursive: true });
             writeFileSync(this.file(userId) + '.tmp', JSON.stringify(next), 'utf8');
@@ -458,8 +463,23 @@ export class TasteService {
         this.cache.delete(userId);
         return true;
     }
+    /** Резервная копия: убранное из вкуса объединяется с текущим, ничего не возвращается во вкус само. Возвращает число добавленных */
+    public mergeRemoved(userId: unknown, input: TasteOverrides): number | null {
+        if (!isId(userId)) return null;
+        const current = this.readOverrides(userId);
+        const next = cleanTasteOverrides({ artists: [...current.artists, ...input.artists], tags: [...current.tags, ...input.tags] });
+        const added = next.artists.length + next.tags.length - current.artists.length - current.tags.length;
+        if (!added) return 0;
+        return this.writeOverrides(userId, next) ? added : null;
+    }
     /** Отметки «Больше такого» поменялись: профиль пересчитается при следующем запросе */
     public invalidate(userId: unknown): void {
         if (isId(userId)) this.cache.delete(userId);
+    }
+    /** Файлы вкуса заменены восстановлением копии или его откатом: забыть и профиль, и убранное */
+    public forget(userId: unknown): void {
+        if (!isId(userId)) return;
+        this.cache.delete(userId);
+        this.overrides.delete(userId);
     }
 }

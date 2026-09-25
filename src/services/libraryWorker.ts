@@ -6,6 +6,7 @@ import { WaveExclusions } from './waveExclusions';
 import { PlaybackStore } from './playbackStore';
 import { RecommendStore } from './recommendStore';
 import { RadarService } from './radar';
+import { BackupService } from './backup';
 import type { LibraryReply, LibraryRequest } from './libraryService';
 
 const { directory } = workerData as { directory: string };
@@ -17,6 +18,7 @@ const taste = new TasteService(directory, index, (userId) => overrides.get(userI
     id: entry.id, artist: entry.artistId ?? 0, genre: entry.genre ?? '', tags: entry.tags ?? '', at: entry.at,
 })), (userId, played) => recommend.tasteLibrary(userId, played));
 const radar = new RadarService(recommend, index, taste, (userId) => new WaveExclusions(directory).load(userId));
+const backup = new BackupService(directory, { playback, recommend, index, taste });
 function run(request: LibraryRequest): unknown {
     switch (request.method) {
         case 'sync': return index.sync(...request.args);
@@ -56,6 +58,11 @@ function run(request: LibraryRequest): unknown {
         case 'radarEdition': return recommend.edition(...request.args);
         case 'radarView': return radar.view(...request.args);
         case 'radarFound': return radar.found(...request.args);
+        case 'backupSave': return backup.save(...request.args);
+        case 'backupInspect': return backup.inspect(...request.args);
+        case 'backupRestore': return backup.restore(...request.args);
+        case 'backupRollback': return backup.rollback();
+        case 'backupFinish': return backup.finish(...request.args);
     }
 }
 parentPort?.on('message', (request: LibraryRequest | { method: 'close' }) => {

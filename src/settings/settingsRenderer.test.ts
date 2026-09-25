@@ -10,6 +10,7 @@ afterEach(() => {
 async function openSettings(
     state: Record<string, unknown>,
     exclusions: { tracks: object[]; artists: object[]; families?: object[] } = { tracks: [], artists: [] },
+    handlers: Record<string, (...args: unknown[]) => unknown> = {},
 ): Promise<{ send: ReturnType<typeof vi.fn>; invoke: ReturnType<typeof vi.fn>; emit: (channel: string, ...args: unknown[]) => void }> {
     const html = readFileSync(resolve('src/settings/settings.html'), 'utf8');
     document.documentElement.innerHTML = html.replace(/<!doctype html>/i, '');
@@ -33,6 +34,8 @@ async function openSettings(
             case 'get-current-track':
                 return { track: { title: '', author: '', duration: '', elapsed: '', isPlaying: false, artwork: '' }, card: null, hidden: 'idle' };
             default:
+                if (Object.prototype.hasOwnProperty.call(handlers, channel)) return handlers[channel](...args);
+                if (channel === 'backup-state') return { folder: '', auto: false, lastAt: 0, lastError: '', busy: false };
                 throw new Error(channel);
         }
     });
@@ -279,6 +282,84 @@ it('радар: день, время и часовой пояс уходят в 
     expect(document.getElementById('waveFamiliesCount')?.textContent).toBe('1');
     families.querySelector('button')?.click();
     expect(invoke).toHaveBeenCalledWith('remove-wave-exclusion', 'family', 555);
+    expect(russianLeft()).toEqual([]);
+});
+
+it('резервная копия: сводка перед записью, предупреждение о другом аккаунте, понятный отказ, итог после перечитывания панели и автокопия', async () => {
+    window.sessionStorage.clear();
+    const folderState = { folder: 'D:\\Backups', auto: false, lastAt: 0, lastError: '', busy: false };
+    let pick: unknown = {
+        ok: true, token: 't1', current: 77, settingsChanged: 3,
+        summary: {
+            version: 1, created: Date.UTC(2026, 8, 20, 10, 0), app: { version: '0.7.0', build: 'abc' }, size: 1000, settings: 20,
+            accounts: [{ id: 88, plays: 1200, newPlays: 30, firstAt: Date.UTC(2026, 2, 3), lastAt: Date.UTC(2026, 8, 19), marks: 4, tasteRemoved: 0, journal: 10, mixes: 2, newMixes: 1, editions: 3, newEditions: 3, links: 0 }],
+        },
+    };
+    const { invoke, emit } = await openSettings({}, undefined, {
+        'backup-pick': () => pick,
+        'backup-restore': () => ({ ok: true, plays: 30, mixes: 1, editions: 3, reload: true }),
+        'backup-folder': () => folderState,
+        'backup-auto': (value) => ({ ...folderState, auto: value === true, busy: value === true }),
+    });
+    const toggle = document.getElementById('backupAuto') as HTMLInputElement;
+    const hint = document.getElementById('backupAutoHint') as HTMLElement;
+    const status = document.getElementById('backupStatus') as HTMLElement;
+    expect(toggle.closest('section')?.id).toBe('backup');
+    await vi.waitFor(() => expect(document.getElementById('backupFolderPath')?.textContent).toBe('Не выбрана'));
+    expect(toggle.disabled).toBe(true);
+    expect(hint.textContent).toBe('Сначала выбери папку');
+
+    // Выбор файла ничего не пишет: сначала сводка и вопрос
+    (document.getElementById('backupRestore') as HTMLButtonElement).click();
+    await vi.waitFor(() => expect(document.getElementById('backupPreview')?.hidden).toBe(false));
+    const summary = document.getElementById('backupSummary')?.textContent ?? '';
+    expect(summary).toContain('Аккаунт SoundCloud 88');
+    expect(summary).toMatch(/Прослушиваний 1\s200 \(новых 30\)/);
+    expect(summary).toContain('Отметок волны 4, подборок 2 (новых 1), выпусков радара 3 (новых 3)');
+    expect(summary).toContain('Настроек в копии 20, поменяется 3');
+    expect(summary).toContain('В копии другой аккаунт, не тот, что открыт сейчас');
+    expect(invoke).not.toHaveBeenCalledWith('backup-restore', expect.anything());
+    (document.getElementById('backupConfirm') as HTMLButtonElement).click();
+    expect(invoke).toHaveBeenCalledWith('backup-restore', 't1');
+    await vi.waitFor(() => expect(window.sessionStorage.getItem('backupDone')).toBe(JSON.stringify({ plays: 30, mixes: 1, editions: 3, reload: true })));
+
+    pick = { ok: false, reason: 'newer-format' };
+    (document.getElementById('backupRestore') as HTMLButtonElement).click();
+    await vi.waitFor(() => expect(status.textContent).toBe('Файл не подходит: Копию сделала более новая версия клиента, сначала обнови клиент'));
+    expect(document.getElementById('backupPreview')?.hidden).toBe(true);
+
+    (document.getElementById('backupFolder') as HTMLButtonElement).click();
+    await vi.waitFor(() => expect(toggle.disabled).toBe(false));
+    expect(document.getElementById('backupFolderPath')?.textContent).toBe('D:\\Backups');
+    expect(hint.textContent).toBe('Копий ещё не было');
+    toggle.click();
+    expect(invoke).toHaveBeenCalledWith('backup-auto', true);
+    await vi.waitFor(() => expect(hint.textContent).toBe('Идёт копирование…'));
+    emit('backup-state-changed', { ...folderState, auto: true, lastAt: Date.UTC(2026, 8, 18, 9, 0), lastError: 'no-space' });
+    expect(hint.textContent).toMatch(/^Не получилось: На диске не хватает места\. Последняя удачная: 18 сентября 2026/);
+
+    // Панель перечиталась после восстановления: итог в разделе копии и просьба перезагрузить страницу
+    document.body.innerHTML = '';
+    await openSettings({});
+    expect(document.getElementById('backup')?.hidden).toBe(false);
+    expect(document.getElementById('backupStatus')?.textContent).toBe('Восстановлено: прослушиваний 30, подборок 1, выпусков радара 3');
+    expect(document.getElementById('networkNotice')?.hidden).toBe(false);
+    expect(window.sessionStorage.getItem('backupDone')).toBeNull();
+});
+
+it('резервная копия по-английски: подписи раздела и сводка переведены', async () => {
+    await openSettings({ siteLanguage: 'en' }, undefined, {
+        'backup-pick': () => ({
+            ok: true, token: 't2', current: 77, settingsChanged: 0,
+            summary: { version: 1, created: Date.UTC(2026, 8, 20), app: { version: '0.7.0', build: '' }, size: 10, settings: 5, accounts: [{ id: 77, plays: 0, newPlays: 0, firstAt: 0, lastAt: 0, marks: 1, tasteRemoved: 1, journal: 0, mixes: 0, newMixes: 0, editions: 0, newEditions: 0, links: 2 }] },
+        }),
+    });
+    (document.querySelector('.nav-list button[data-target="backup"]') as HTMLButtonElement).click();
+    (document.getElementById('backupRestore') as HTMLButtonElement).click();
+    await vi.waitFor(() => expect(document.getElementById('backupPreview')?.hidden).toBe(false));
+    expect(document.getElementById('backupSummary')?.textContent).toContain('SoundCloud account 77, signed in now');
+    expect(document.getElementById('backupSummary')?.textContent).toContain('Wave marks 1, removed from taste 1, version decisions 2');
+    expect(document.getElementById('backupSummary')?.textContent).not.toMatch(/[А-Яа-яЁё]/);
     expect(russianLeft()).toEqual([]);
 });
 

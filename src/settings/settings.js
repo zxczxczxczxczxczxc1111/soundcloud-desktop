@@ -402,6 +402,7 @@ async function initializeSettings() {
         document.getElementById('diagnosticsStatus').textContent = '';
         loadAccounts();
         loadWaveExclusions();
+        loadBackupState();
         updatePreview(lastPreview);
     });
 
@@ -478,6 +479,198 @@ async function initializeSettings() {
     }
     ipcRenderer.on('wave-exclusions-changed', () => loadWaveExclusions());
     loadWaveExclusions();
+
+    // Резервная копия: файл выбирается диалогом в main, сюда приходят только сводка и итог
+    const BACKUP_REASONS = {
+        'not-backup': 'Это не файл резервной копии клиента',
+        'newer-format': 'Копию сделала более новая версия клиента, сначала обнови клиент',
+        damaged: 'Файл повреждён или обрезан',
+        'too-big': 'Файл слишком большой',
+        'unknown-part': 'В файле есть незнакомые части',
+        'bad-part': 'Часть данных в файле испорчена',
+        changed: 'Файл изменился после проверки, выбери его заново',
+        'inside-profile': 'Папка данных клиента не подходит: копия пропадёт вместе с ней',
+        'no-folder': 'Папки нет, выбери другую',
+        'no-space': 'На диске не хватает места',
+        'no-access': 'Нет прав на запись в эту папку',
+        'io-error': 'Не получилось прочитать или записать файл',
+        busy: 'Копия уже сохраняется или восстанавливается, подожди',
+    };
+    const FILE_REASONS = new Set(['not-backup', 'newer-format', 'damaged', 'too-big', 'unknown-part', 'bad-part', 'changed']);
+    const backupStatus = document.getElementById('backupStatus');
+    const backupPreview = document.getElementById('backupPreview');
+    const backupSummary = document.getElementById('backupSummary');
+    const backupButtons = ['backupSave', 'backupRestore', 'backupConfirm', 'backupFolder'].map((id) => document.getElementById(id));
+    let backupToken = null;
+    const backupLocale = () => (language === 'en' ? 'en-GB' : 'ru-RU');
+    const backupNumber = (value) => Number(value || 0).toLocaleString(backupLocale());
+    const backupDate = (at, withTime = true) =>
+        new Date(at).toLocaleString(backupLocale(), withTime ? { day: 'numeric', month: 'long', year: 'numeric', hour: '2-digit', minute: '2-digit' } : { day: 'numeric', month: 'long', year: 'numeric' });
+    const backupFailure = (reason) => tr(BACKUP_REASONS[reason] || BACKUP_REASONS['io-error']);
+    const setBackupBusy = (busy) => {
+        for (const button of backupButtons) if (button) button.disabled = busy;
+    };
+    function renderBackupState(state) {
+        if (!state) return;
+        const toggle = document.getElementById('backupAuto');
+        toggle.disabled = !state.folder;
+        toggle.checked = state.auto === true;
+        const folder = document.getElementById('backupFolderPath');
+        folder.textContent = state.folder || tr('Не выбрана');
+        folder.title = state.folder || '';
+        const hint = document.getElementById('backupAutoHint');
+        if (!state.folder) hint.textContent = tr('Сначала выбери папку');
+        else if (state.busy) hint.textContent = tr('Идёт копирование…');
+        else if (state.lastError) hint.textContent = tr('Не получилось') + ': ' + backupFailure(state.lastError) + (state.lastAt ? '. ' + tr('Последняя удачная') + ': ' + backupDate(state.lastAt) : '');
+        else hint.textContent = state.lastAt ? tr('Последняя копия') + ': ' + backupDate(state.lastAt) : tr('Копий ещё не было');
+    }
+    async function loadBackupState() {
+        try {
+            renderBackupState(await ipcRenderer.invoke('backup-state'));
+        } catch (error) {
+            console.error('Не удалось прочитать состояние резервной копии:', error);
+        }
+    }
+    function renderBackupSummary({ summary, current, settingsChanged }) {
+        backupSummary.textContent = '';
+        const line = (text, className) => {
+            const node = document.createElement('div');
+            node.textContent = text;
+            if (className) node.className = className;
+            backupSummary.appendChild(node);
+        };
+        const withNew = (label, total, fresh) => label + ' ' + backupNumber(total) + (total ? ' (' + tr('новых') + ' ' + backupNumber(fresh) + ')' : '');
+        line(tr('Копия от') + ' ' + backupDate(summary.created) + (summary.app?.version ? ', ' + tr('версия клиента') + ' ' + summary.app.version : ''));
+        for (const account of summary.accounts) {
+            line(tr('Аккаунт SoundCloud') + ' ' + account.id + (account.id === current ? ', ' + tr('открыт сейчас') : ''), 'backup-account');
+            line(withNew(tr('Прослушиваний'), account.plays, account.newPlays) +
+                (account.plays ? ', ' + backupDate(account.firstAt, false) + ' - ' + backupDate(account.lastAt, false) : ''));
+            const extra = [
+                account.marks ? tr('отметок волны') + ' ' + backupNumber(account.marks) : '',
+                account.tasteRemoved ? tr('убрано из вкуса') + ' ' + backupNumber(account.tasteRemoved) : '',
+                account.mixes ? withNew(tr('подборок'), account.mixes, account.newMixes) : '',
+                account.editions ? withNew(tr('выпусков радара'), account.editions, account.newEditions) : '',
+                account.links ? tr('решений о версиях') + ' ' + backupNumber(account.links) : '',
+            ].filter(Boolean);
+            const details = extra.join(', ');
+            if (details) line(details.charAt(0).toUpperCase() + details.slice(1));
+        }
+        if (!summary.accounts.length) line(tr('В копии только настройки'));
+        line(tr('Настроек в копии') + ' ' + backupNumber(summary.settings) + ', ' + tr('поменяется') + ' ' + backupNumber(settingsChanged));
+        if (current && summary.accounts.length && !summary.accounts.some((account) => account.id === current))
+            line(tr('В копии другой аккаунт, не тот, что открыт сейчас. Его данные лягут отдельно и появятся, когда войдёшь в него'), 'backup-warn');
+        line(tr('История, отметки, подборки и радар сливаются с текущими, ничего не удаляется. Настройки берутся из копии'), 'hint');
+    }
+    document.getElementById('backupSave').addEventListener('click', async () => {
+        setBackupBusy(true);
+        backupPreview.hidden = true;
+        backupToken = null;
+        backupStatus.textContent = tr('Сохраняю копию…');
+        try {
+            const outcome = await ipcRenderer.invoke('backup-save');
+            if (!outcome) backupStatus.textContent = '';
+            else if (outcome.ok) backupStatus.textContent = tr('Копия сохранена') + ': ' + outcome.file;
+            else backupStatus.textContent = tr('Копия не сохранена') + ': ' + backupFailure(outcome.reason);
+        } catch (error) {
+            console.error('Резервная копия не сохранена:', error);
+            backupStatus.textContent = tr('Копия не сохранена') + ': ' + backupFailure('io-error');
+        } finally {
+            setBackupBusy(false);
+        }
+    });
+    document.getElementById('backupRestore').addEventListener('click', async () => {
+        setBackupBusy(true);
+        backupPreview.hidden = true;
+        backupToken = null;
+        backupStatus.textContent = tr('Проверяю файл…');
+        try {
+            const outcome = await ipcRenderer.invoke('backup-pick');
+            if (!outcome) {
+                backupStatus.textContent = '';
+                return;
+            }
+            if (!outcome.ok) {
+                backupStatus.textContent = tr(FILE_REASONS.has(outcome.reason) ? 'Файл не подходит' : 'Не получилось') + ': ' + backupFailure(outcome.reason);
+                return;
+            }
+            // Ничего не записано: сначала человек видит, что в копии, и подтверждает
+            backupToken = outcome.token;
+            renderBackupSummary(outcome);
+            backupStatus.textContent = '';
+            backupPreview.hidden = false;
+        } catch (error) {
+            console.error('Резервная копия не проверена:', error);
+            backupStatus.textContent = tr('Не получилось') + ': ' + backupFailure('io-error');
+        } finally {
+            setBackupBusy(false);
+            if (!backupPreview.hidden) document.getElementById('backupConfirm').focus();
+        }
+    });
+    document.getElementById('backupCancel').addEventListener('click', () => {
+        backupToken = null;
+        backupPreview.hidden = true;
+        document.getElementById('backupRestore').focus();
+    });
+    document.getElementById('backupConfirm').addEventListener('click', async () => {
+        if (!backupToken) return;
+        const token = backupToken;
+        backupToken = null;
+        setBackupBusy(true);
+        backupPreview.hidden = true;
+        backupStatus.textContent = tr('Восстанавливаю…');
+        try {
+            const outcome = await ipcRenderer.invoke('backup-restore', token);
+            if (!outcome.ok) {
+                backupStatus.textContent = tr('Не восстановлено, данные остались как были') + ': ' + backupFailure(outcome.reason);
+                return;
+            }
+            // Восстановленные настройки видны после перечитывания панели: итог переживает перезагрузку F1
+            try {
+                window.sessionStorage.setItem('backupDone', JSON.stringify({ plays: outcome.plays, mixes: outcome.mixes, editions: outcome.editions, reload: outcome.reload === true }));
+            } catch (error) {
+                console.warn('Итог восстановления не сохранён до перезагрузки панели:', error);
+            }
+            window.location.reload();
+        } catch (error) {
+            console.error('Резервная копия не восстановлена:', error);
+            backupStatus.textContent = tr('Не восстановлено, данные остались как были') + ': ' + backupFailure('io-error');
+        } finally {
+            setBackupBusy(false);
+        }
+    });
+    document.getElementById('backupFolder').addEventListener('click', async () => {
+        try {
+            const state = await ipcRenderer.invoke('backup-folder');
+            renderBackupState(state);
+            backupStatus.textContent = state?.rejected ? backupFailure(state.rejected) : '';
+        } catch (error) {
+            console.error('Папка автокопии не выбрана:', error);
+        }
+    });
+    document.getElementById('backupAuto').addEventListener('change', async (event) => {
+        const toggle = event.currentTarget;
+        try {
+            renderBackupState(await ipcRenderer.invoke('backup-auto', toggle.checked));
+        } catch (error) {
+            console.error('Автокопия не переключена:', error);
+            toggle.checked = !toggle.checked;
+        }
+    });
+    ipcRenderer.on('backup-state-changed', (_, state) => renderBackupState(state));
+    loadBackupState();
+    let backupDone = null;
+    try {
+        backupDone = JSON.parse(window.sessionStorage.getItem('backupDone') || 'null');
+        window.sessionStorage.removeItem('backupDone');
+    } catch (error) {
+        console.warn('Итог восстановления не прочитан:', error);
+    }
+    if (backupDone && typeof backupDone === 'object') {
+        navButtons.find((button) => button.dataset.target === 'backup')?.click();
+        backupStatus.textContent = tr('Восстановлено') + ': ' + tr('прослушиваний') + ' ' + backupNumber(backupDone.plays) + ', ' + tr('подборок') + ' ' + backupNumber(backupDone.mixes) + ', ' +
+            tr('выпусков радара') + ' ' + backupNumber(backupDone.editions);
+        if (backupDone.reload === true) showNetworkNotice();
+    }
 
     document.getElementById('proxyEnabled')?.addEventListener('change', (e) => {
         const isEnabled = e.target.checked;

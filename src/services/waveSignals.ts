@@ -88,18 +88,24 @@ export function validateSignal(input: unknown, now = Date.now()): PlaySignal | n
     return signal;
 }
 
+/** Месяц файла журнала по местному времени машины, ГГГГ-ММ */
+export function signalMonth(at: number): string {
+    const date = new Date(at);
+    return date.getFullYear() + '-' + String(date.getMonth() + 1).padStart(2, '0');
+}
+
 // Журнал сигналов волны: строка JSON на прослушивание, файл на пользователя и месяц.
 // Только дописывается, поэтому сбой посреди записи портит одну строку, а не весь журнал
 export class WaveSignals {
     private pending = new Map<number, PlaySignal[]>();
     private timer: ReturnType<typeof setTimeout> | undefined;
+    private paused = false;
 
     /** isAway: был ли пользователь не у компьютера большую часть окна [from, to]; страница этого не знает */
     constructor(private directory: string, private delay = 3000, private isAway?: (from: number, to: number) => boolean) {}
 
     private file(userId: number, at: number): string {
-        const date = new Date(at);
-        return join(this.directory, 'signals-' + userId + '-' + date.getFullYear() + '-' + String(date.getMonth() + 1).padStart(2, '0') + '.jsonl');
+        return join(this.directory, 'signals-' + userId + '-' + signalMonth(at) + '.jsonl');
     }
     public add(userId: unknown, input: unknown): number {
         if (!isId(userId) || !Array.isArray(input)) return 0;
@@ -120,10 +126,18 @@ export class WaveSignals {
         }
         return added;
     }
+    /** Восстановление копии переписывает файлы журнала: на это время события копятся в памяти */
+    public pause(): void {
+        this.paused = true;
+    }
+    public resume(): void {
+        this.paused = false;
+        this.flush();
+    }
     public flush(): void {
         if (this.timer !== undefined) clearTimeout(this.timer);
         this.timer = undefined;
-        if (!this.pending.size) return;
+        if (this.paused || !this.pending.size) return;
         try {
             mkdirSync(this.directory, { recursive: true });
         } catch (error) {

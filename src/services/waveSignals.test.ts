@@ -47,6 +47,16 @@ it('дописывает события в файл месяца и читает
     expect(reopened.load(43)).toEqual([]);
 });
 
+it('на время восстановления копии запись ждёт: события копятся в памяти и ложатся после возобновления', () => {
+    const directory = dir();
+    const journal = new WaveSignals(directory, 0);
+    journal.pause();
+    expect(journal.add(42, [signal()])).toBe(1);
+    journal.flush();
+    expect(readdirSync(directory)).toEqual([]);
+    journal.resume();
+    expect(new WaveSignals(directory).load(42).map((item) => item.id)).toEqual([11]);
+});
 it('отбрасывает чужой ввод и переживает оборванную строку', () => {
     const directory = dir();
     const journal = new WaveSignals(directory);
