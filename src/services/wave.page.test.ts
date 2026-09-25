@@ -1598,6 +1598,48 @@ it('P7: «Версии этого трека»: та же запись и дру
     expect(document.querySelector('.scw-dialog')).toBeNull();
 });
 
+it('A20: очередь сайта, ручное добавление и «Версии этого трека» не режутся запретами подбора', async () => {
+    const slowed: WaveTrack = { id: 557, kind: 'track', title: 'Art - Song (Slowed)', duration: 260000, user_id: 902, user: { id: 902, username: 'Slow' }, permalink_url: 'https://soundcloud.com/slow/song-slowed' };
+    const site = fakeSite(relatedTracks, (name, path, query) => {
+        if (name === 'searchCategory' && query.q === 'Song') return { collection: [song, slowed] };
+        if (name === 'resolve' && query.url === 'https://soundcloud.com/slow/song-slowed') return slowed;
+        return siteExtra(name, path, query);
+    });
+    // Slowed под «Не нравится», её аккаунт скрыт
+    const exclusions = fakeExclusions([{ id: 557, title: 'Art - Song (Slowed)' }], [{ id: 902, title: 'Slow' }]);
+    // Плейлист играет сайт, волна не запущена
+    const playlist: FakeItem[] = [{ sound: { id: 555 } }, { sound: { id: 557 } }];
+    site.setItems(playlist, 0);
+    const row = listRow();
+    window.eval(waveScript());
+    await vi.advanceTimersByTimeAsync(100);
+
+    rightClick(row.querySelector('.soundTitle__title')!);
+    choose('dislike');
+    await vi.advanceTimersByTimeAsync(100);
+    expect(exclusions.set).toHaveBeenCalled();
+    expect(site.player.getQueue().slice().map((item) => item.sound.id)).toEqual([555, 557]);
+
+    // Ручное «Слушать следующим» ставит трек, даже если он под «Не нравится»
+    rightClick(row.querySelector('.soundTitle__title')!);
+    choose('queue-next');
+    await vi.advanceTimersByTimeAsync(100);
+    expect(site.player.getQueue().slice().map((item) => item.sound.id)).toEqual([555, 555, 557]);
+
+    rightClick(row.querySelector('.soundTitle__title')!);
+    choose('versions');
+    await vi.advanceTimersByTimeAsync(100);
+    const dialog = document.querySelector<HTMLElement>('.scw-dialog')!;
+    const lists = dialog.querySelectorAll('.scw-vlist');
+    const ids = (list: Element): string[] => [...list.querySelectorAll<HTMLElement>('[data-act="version-play"]')].map((node) => node.dataset.track ?? '');
+    expect(ids(lists[0])).toEqual(['555']);
+    expect(ids(lists[1])).toEqual(['557']);
+    dialog.querySelector<HTMLButtonElement>('[data-act="version-play"][data-track="557"]')!.click();
+    await vi.advanceTimersByTimeAsync(100);
+    const queued = site.player.replaceQueue.mock.calls[site.player.replaceQueue.mock.calls.length - 1][0] as FakeItem[];
+    expect(queued.map((item) => item.sound.id)).toEqual([557]);
+});
+
 it('P7: «Скрыть другие версии» пишет семью с загрузчиком, меню меняется на «Показывать другие версии» и снимает отметку', async () => {
     fakeSite(relatedTracks, siteExtra);
     const bridge = fakeExclusions();
