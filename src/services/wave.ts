@@ -6,10 +6,14 @@ import type { PlaybackSnapshot, LocalMix, LibraryCatalog } from './playbackStore
 import { installPlaybackPage } from './playbackPage';
 import { installPlaybackRecovery } from './playbackRecovery';
 import * as identity from './trackIdentity';
+import * as sources from './pageSources';
+import type { SyncBridge } from './pageSources';
 
-// Разбор версий живёт в своём модуле. Функции страницы зовут его по голому имени: в Node имя берётся отсюда,
-// на странице из объявлений identityHelpers в той же обёртке. Именованный импорт превратился бы в trackIdentity_1.copyKey
-const { copyKey, copyKeys } = identity;
+// Разбор версий и сеть подбора живут в своих модулях. Функции страницы зовут их по голому имени: в Node имя
+// берётся отсюда, на странице из объявлений identityHelpers и sourceHelpers в той же обёртке.
+// Именованный импорт превратился бы в trackIdentity_1.copyKey и на странице не нашёлся
+const { copyKey, copyKeys, matchLevel, searchQueries } = identity;
+const { createDispatcher, createSearchCache, likeItems, entityItems, syncSource } = sources;
 
 export interface WaveTrack {
     id: number;
@@ -50,7 +54,8 @@ export type WaveReason =
     | { kind: 'tasteTag'; genre: string }
     | { kind: 'daily' }
     | { kind: 'forgotten' }
-    | { kind: 'group'; name: string };
+    | { kind: 'group'; name: string }
+    | { kind: 'version'; seed: string };
 export interface WaveCandidate {
     track: WaveTrack;
     reason: WaveReason;
@@ -83,7 +88,7 @@ export type WaveTexts = Record<
     | 'toastLaterArtist' | 'toastUnlater'
     | 'lang' | 'shelf' | 'shelfDaily' | 'shelfForgotten' | 'shelfEmpty' | 'shelfFailed' | 'tracksCount' | 'groupAnd' | 'whyDaily' | 'whyForgotten' | 'whyGroup'
     | 'seedDaily' | 'seedForgotten' | 'seedGroup' | 'seedTracks' | 'menuPick' | 'menuUnpick' | 'toastPicked' | 'toastUnpicked' | 'toastPickFull'
-    | 'pickStart' | 'pickClear' | 'mixPlay' | 'mixClose' | 'mixLoading' | 'mixFailed' | 'mixEmpty',
+    | 'pickStart' | 'pickClear' | 'mixPlay' | 'mixClose' | 'mixLoading' | 'mixFailed' | 'mixEmpty' | 'whyVersion',
     string
 >;
 
@@ -125,6 +130,7 @@ export const WAVE_TEXTS: Record<'ru' | 'en', WaveTexts> = {
         toastPickFull: 'В подборке уже {count}', pickStart: 'Включить волну по подборке', pickClear: 'Очистить подборку',
         mixPlay: 'Слушать подборку', mixClose: 'Свернуть', mixLoading: 'Загружаю треки', mixFailed: 'Треки не загрузились, нажми на карточку ещё раз',
         mixEmpty: 'Все треки подборки ты убрал из волны',
+        whyVersion: 'Другая версия {seed}',
     },
     en: {
         wave: 'My Wave', similar: 'Similar', fresh: 'New', anyGenre: 'Any genre', genreInput: 'Genres, comma separated', fromLikes: 'From your likes',
@@ -164,6 +170,7 @@ export const WAVE_TEXTS: Record<'ru' | 'en', WaveTexts> = {
         toastPickFull: 'Picks are full: {count}', pickStart: 'Play wave from picks', pickClear: 'Clear picks',
         mixPlay: 'Play mix', mixClose: 'Collapse', mixLoading: 'Loading tracks', mixFailed: 'Couldn’t load tracks, click the card again',
         mixEmpty: 'You removed every track of this mix from My Wave',
+        whyVersion: 'Another version of {seed}',
     },
 };
 
@@ -452,6 +459,7 @@ export function reasonText(reason: WaveReason, texts: WaveTexts): string {
         case 'daily': return texts.whyDaily;
         case 'forgotten': return texts.whyForgotten;
         case 'group': return fillText(texts.whyGroup, { name: reason.name });
+        case 'version': return fillText(texts.whyVersion, { seed: reason.seed });
     }
 }
 
@@ -759,6 +767,8 @@ export interface WaveWindow extends Window {
         waveTaste?: { load(userId: number): Promise<unknown> };
         waveSignals?: { add(userId: number, signals: PlaySignal[]): void };
         waveShelf?: { load(userId: number): Promise<unknown>; save(userId: number, snapshot: object): Promise<unknown> };
+        // Хранилище рекомендаций в worker: обход библиотеки и загрузки с разбором версий
+        recommend?: SyncBridge & { syncState(user: number): Promise<unknown> };
         reportWaveEmpty?(counts: { seen: number; artistTracks: number; moodTags: number }): void;
         sendTrackMeta?(meta: TrackMeta): void;
         openHistory?(): void;
@@ -907,8 +917,18 @@ export function installWave(config: WaveConfig, createPlayback: typeof installPl
     let sentMeta = '';
     // «Встряхнуть»: зёрна прошлой подборки не берутся, пока хватает других
     const staleSeeds = new Set<number>();
+    // Очередь текстового поиска: зерно и цель запроса чередуются от прохода к проходу
+    let searchTurn = 0;
 
     const wait = (ms: number): Promise<void> => new Promise((resolve) => setTimeout(resolve, ms));
+    // Волна и действия пользователя идут сразу; фоновой обход ждёт их, держит шаг в секунду и паузу после 429.
+    // Создаётся до первого возможного запроса: call зовут уже при установке очереди
+    const dispatcher = createDispatcher({
+        now: () => Date.now(),
+        later: (run, ms) => setTimeout(run, ms),
+        cancel: (handle) => clearTimeout(handle as ReturnType<typeof setTimeout>),
+    });
+    const searchCache = createSearchCache<WaveTrack>({ now: () => Date.now() });
     // Модель трека сайта может оказаться без методов (чужой элемент очереди): тогда длительность и позиция нулевые
     const durationOf = (sound: SiteSound | null | undefined): number => (typeof sound?.getMediaDuration === 'function' ? sound.getMediaDuration() || 0 : 0);
     const positionOf = (sound: SiteSound | null | undefined): number => (typeof sound?.currentTime === 'function' ? sound.currentTime() || 0 : 0);
@@ -984,6 +1004,7 @@ export function installWave(config: WaveConfig, createPlayback: typeof installPl
         shelfFailedAt = 0;
         if (isVisible()) ensureShelf();
         if (profile) void expandLibrary(profile).catch((error: unknown) => console.warn('Библиотека не обновлена', error));
+        if (profile) scheduleLibrarySync(20000);
         void queueControls.ready().catch((error: unknown) => console.warn('Сессия не восстановлена', error));
         if (active) void refill();
     } });
@@ -1023,10 +1044,16 @@ export function installWave(config: WaveConfig, createPlayback: typeof installPl
         return false;
     }
 
-    async function call(name: string, path: object, query: object): Promise<unknown> {
+    async function request(name: string, path: object, query: object): Promise<unknown> {
         if (!api) throw new Error('API сайта не найден');
         const result = await Promise.race([api.callEndpoint(name, path, query), wait(15000).then(() => { throw new Error('Тайм-аут ' + name); })]);
         return result.body;
+    }
+    function call(name: string, path: object, query: object): Promise<unknown> {
+        return dispatcher.user(() => request(name, path, query));
+    }
+    function backgroundCall(name: string, path: object, query: object): Promise<unknown> {
+        return dispatcher.background(() => request(name, path, query));
     }
     const collection = (body: unknown): unknown[] => {
         const list = (body as { collection?: unknown } | null)?.collection;
@@ -1094,6 +1121,8 @@ export function installWave(config: WaveConfig, createPlayback: typeof installPl
             profile = loaded;
             profileRetryAt = 0;
             void expandLibrary(loaded).catch((error: unknown) => console.warn('Волна: библиотека догрузится позже', error));
+            // Полный обход библиотеки ждёт, пока страница и волна разгрузятся
+            scheduleLibrarySync(20000);
             return loaded;
         }).catch((error: unknown) => {
             if (!profile) throw error;
@@ -1147,6 +1176,65 @@ export function installWave(config: WaveConfig, createPlayback: typeof installPl
         } finally {
             if (expanding === current) expanding = null;
         }
+    }
+
+    // Фоновой обход библиотеки в хранилище рекомендаций: лайки с датами, подписки, свои и сохранённые плейлисты.
+    // Источник обходится заново через 12 часов после полного обхода, после сбоя не раньше чем через 10 минут.
+    // Идёт фоном через диспетчер и музыке не мешает
+    let librarySync: Promise<void> | null = null;
+    let librarySyncTimer: ReturnType<typeof setTimeout> | undefined;
+    function scheduleLibrarySync(delay: number): void {
+        if (librarySyncTimer !== undefined || disposed || !host.soundcloudAPI?.recommend) return;
+        librarySyncTimer = setTimeout(() => {
+            librarySyncTimer = undefined;
+            void syncLibrary();
+        }, delay);
+    }
+    function syncLibrary(): Promise<void> {
+        const bridge = host.soundcloudAPI?.recommend;
+        if (!bridge || disposed) return Promise.resolve();
+        librarySync ??= (async () => {
+            const user = await ensureUser();
+            if (!user || disposed) return;
+            const loaded = await bridge.syncState(user);
+            const states = Array.isArray(loaded) ? (loaded as Array<{ source?: unknown; status?: unknown; completed?: unknown; updated?: unknown }>) : [];
+            const due = (source: string): boolean => {
+                const state = states.find((item) => item.source === source);
+                if (!state) return true;
+                const since = (value: unknown): number => Date.now() - (typeof value === 'number' ? value : 0);
+                return state.status === 'complete' ? since(state.completed) > 12 * 3600000 : since(state.updated) > 10 * 60000;
+            };
+            const bulk = new Set<string>();
+            const plans: sources.SyncPlan[] = [
+                { source: 'likes', first: { limit: 200 }, fetch: (query) => backgroundCall('userTrackLikes', { id: user }, query), items: (body) => likeItems(body, bulk) },
+                { source: 'followings', first: { limit: 5000 }, fetch: (query) => backgroundCall('myFollowingsIds', { userId: user }, query), items: (body) => entityItems(body, 'user') },
+                { source: 'playlists', first: { limit: 50 }, fetch: (query) => backgroundCall('userPlaylistsWithoutAlbums', { id: user }, query), items: (body) => entityItems(body, 'playlist') },
+                { source: 'playlist-likes', first: { limit: 200 }, fetch: (query) => backgroundCall('playlistLikesIds', {}, query), items: (body) => entityItems(body, 'playlist') },
+            ];
+            for (const plan of plans) {
+                if (disposed || !due(plan.source)) continue;
+                const result = await syncSource({
+                    user, plan, bridge, nextQuery, maxPages: 1000, now: () => Date.now(), stopped: () => disposed,
+                    // Сайт мог сменить вход без перезагрузки: чужие ответы в библиотеку этого аккаунта не попадают
+                    stillOwner: async () => ((await backgroundCall('me', {}, {})) as { id?: unknown } | null)?.id === user,
+                });
+                if (result.status !== 'complete') console.warn('Библиотека: обход ' + plan.source + ' ' + result.status + (result.error ? ': ' + result.error : ''));
+                // Вход пропал или аккаунт сменился: остальные источники тоже не ответят этому аккаунту
+                if (result.error.startsWith('auth') || result.error === 'account-changed') break;
+            }
+        })().catch((error: unknown) => console.warn('Библиотека: обход не завершён', error)).finally(() => { librarySync = null; });
+        return librarySync;
+    }
+
+    // Текстовый поиск треков по всему каталогу, без привязки к аккаунту; ответ живёт в кэше, ошибка не кэшируется
+    async function searchTracks(q: string): Promise<WaveTrack[]> {
+        const key = q.toLowerCase().replace(/\s+/g, ' ').trim();
+        if (!key) return [];
+        const cached = searchCache.get(key);
+        if (cached) return cached;
+        const tracks = tracksOf(await call('searchCategory', { category: 'tracks' }, { q, limit: 50 }));
+        searchCache.set(key, tracks);
+        return tracks;
     }
 
     function fillExcluded(map: Map<number, Excluded>, input: unknown): void {
@@ -1361,6 +1449,25 @@ export function installWave(config: WaveConfig, createPlayback: typeof installPl
                     if (disposed || own !== generation) return;
                     for (const track of tracks) accept(found, { track, reason: { kind: source === 'recent' ? 'genreFresh' : 'genrePopular', genre: tag } }, filter);
                 }).catch((error: unknown) => { failures++; console.warn('Волна: жанр не загружен', error); }));
+        // Текстовый поиск по одному зерну за проход, четверть запросов прохода: другие версии зерна и песни его
+        // участников у любых аккаунтов, загрузчик запрос не ограничивает. Версии зерна идут со своей причиной
+        const probe = picked.length ? picked[searchTurn % picked.length] : undefined;
+        const queries = probe ? searchQueries(probe) : [];
+        const query = queries.find((item) => item.purpose === (searchTurn % 2 === 0 ? 'versions' : 'songs')) ?? queries[0];
+        searchTurn++;
+        if (probe && query)
+            tasks.push(searchTracks(query.q).then((tracks) => {
+                if (disposed || own !== generation) return;
+                for (const track of tracks) {
+                    if (track.id === probe.id) continue;
+                    if (matchLevel(probe, track) === 'none') {
+                        take(track, probe);
+                        continue;
+                    }
+                    observed.push(track);
+                    if (trackMatchesGenre(track, keys)) accept(found, { track, reason: { kind: 'version', seed: (probe.title ?? '').trim() || '…' } }, filter);
+                }
+            }).catch((error: unknown) => { failures++; console.warn('Волна: поиск не ответил', error); }));
         await Promise.all(tasks);
         if (own !== generation) return 0;
         // У маленьких артистов похожие замкнуты на их же треки (замер 23.09.2026: «Steel Lullaby» дал 4 трека по кругу),
@@ -3714,6 +3821,8 @@ export function installWave(config: WaveConfig, createPlayback: typeof installPl
         queueControls.dispose();
         recovery.dispose();
         disposed = true;
+        dispatcher.dispose();
+        if (librarySyncTimer !== undefined) clearTimeout(librarySyncTimer);
         openRequest++;
         generation++;
         seedRequest++;
@@ -3794,7 +3903,7 @@ const pageHelpers = [
     normalizeTag, tagKeys, genreKeys, parseGenres, formatGenres, genreKeysFor, classifyLink, canonicalUrl, trackMatchesGenre, trackArtist,
     isWaveEligible, acceptCandidate, pickSpaced, tasteMaps, tasteScore, tasteOrder, tasteReason, applyTasteReasons, shuffleInPlace, topGenres, fillText, reasonText, shapeSamples,
     artworkUrl, formatTime, playEnd, siteSource, moodTags, trackPath, localDay, countText, tasteGroups, forgottenPicks, pickFinds,
-    ...identity.identityHelpers, installPlaybackPage, installPlaybackRecovery,
+    ...identity.identityHelpers, ...sources.sourceHelpers, installPlaybackPage, installPlaybackRecovery,
 ];
 
 export function waveScript(): string {

@@ -50,7 +50,7 @@ function cleanReason(input: unknown): WaveReason | undefined {
     const value = object(input);
     const seed = text(value.seed, 300); const genre = text(value.genre, 300); const artist = text(value.artist, 200);
     switch (value.kind) {
-        case 'similar': case 'fresh': return { kind: value.kind, seed };
+        case 'similar': case 'fresh': case 'version': return { kind: value.kind, seed };
         case 'genreFresh': case 'genrePopular': case 'tasteTag': return { kind: value.kind, genre };
         case 'genreSimilar': case 'mood': return { kind: value.kind, seed, genre };
         case 'artistTrack': case 'tasteArtist': return { kind: value.kind, artist };

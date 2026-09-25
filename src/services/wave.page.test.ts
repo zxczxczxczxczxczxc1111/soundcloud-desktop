@@ -1130,3 +1130,64 @@ it('не прерывает первую подборку ожиданием с�
     await vi.advanceTimersByTimeAsync(1000);
     expect(library.saveCatalog).toHaveBeenCalledWith(77, expect.arrayContaining([expect.objectContaining({ id: 20249 })]));
 });
+
+it('P3: фоном обходит лайки с датами, подписки и плейлисты в хранилище; 429 оставляет лайки неполными без повторов', async () => {
+    const calls: unknown[][] = [];
+    let run = 0;
+    const recommend = {
+        syncState: vi.fn(async () => []),
+        syncStart: vi.fn(async (_user: number, source: string) => { calls.push(['start', source]); return { run: ++run, cursor: null }; }),
+        syncPage: vi.fn(async (_user: number, source: string, _run: number, items: unknown, cursor: unknown) => { calls.push(['page', source, items, cursor]); return true; }),
+        syncFinish: vi.fn(async (_user: number, source: string, _run: number, status: string, error: string) => { calls.push(['finish', source, status, error]); return {}; }),
+        recordUploads: vi.fn(async () => 1),
+    };
+    Object.assign(window, { soundcloudAPI: { recommend } });
+    let likePages = 0;
+    fakeSite(relatedTracks, (name, _path, query) => {
+        if (name === 'userTrackLikes') {
+            likePages++;
+            if (query.offset === 'p2') return Promise.reject({ status: 429, headers: {} });
+            return { collection: [{ created_at: '2026-09-20T10:00:00Z', track: { id: 41, title: 'Liked' } }], next_href: 'https://api-v2.soundcloud.com/users/77/track_likes?offset=p2&limit=200&client_id=secret' };
+        }
+        if (name === 'myFollowingsIds') return { collection: [5, 6] };
+        if (name === 'userPlaylistsWithoutAlbums') return { collection: [{ id: 8, created_at: '2026-01-01T00:00:00Z' }] };
+        if (name === 'playlistLikesIds') return { collection: [9] };
+        return undefined;
+    });
+    window.eval(waveScript());
+    await vi.advanceTimersByTimeAsync(100);
+    // Обход ждёт, пока страница и волна разгрузятся
+    expect(recommend.syncStart).not.toHaveBeenCalled();
+    await vi.advanceTimersByTimeAsync(60000);
+    expect(calls).toEqual([
+        ['start', 'likes'], ['page', 'likes', [{ key: 'sc:track:41', added: Date.parse('2026-09-20T10:00:00Z') }], { offset: 'p2', limit: '200' }], ['finish', 'likes', 'partial', 'rate 429'],
+        ['start', 'followings'], ['page', 'followings', [{ key: 'sc:user:5', added: 0 }, { key: 'sc:user:6', added: 0 }], null], ['finish', 'followings', 'complete', ''],
+        ['start', 'playlists'], ['page', 'playlists', [{ key: 'sc:playlist:8', added: Date.parse('2026-01-01T00:00:00Z') }], null], ['finish', 'playlists', 'complete', ''],
+        ['start', 'playlist-likes'], ['page', 'playlist-likes', [{ key: 'sc:playlist:9', added: 0 }], null], ['finish', 'playlist-likes', 'complete', ''],
+    ]);
+    expect(recommend.recordUploads).toHaveBeenCalledWith(77, [{ id: 41, title: 'Liked' }]);
+    await vi.advanceTimersByTimeAsync(120000);
+    expect(likePages).toBe(2);
+});
+
+it('P3: текстовый поиск находит другие версии зерна у любых аккаунтов, версия идёт со своей причиной', async () => {
+    const site = fakeSite(() => [], (name, _path, query) => {
+        if (name !== 'searchCategory' || typeof query.q !== 'string' || !query.q.startsWith('Seed ')) return undefined;
+        const n = Number(query.q.slice(5));
+        return { collection: [
+            { id: 7000 + n * 10, kind: 'track', title: 'Seed ' + n + ' (Slowed)', user_id: 100 + n, duration: 200000 },
+            { id: 7001 + n * 10, kind: 'track', title: 'Other ' + n, user_id: 900 + n, duration: 200000 },
+            { id: n, kind: 'track', title: 'Seed ' + n, user_id: 100 + n, duration: 180000 },
+        ] };
+    });
+    window.eval(waveScript());
+    await vi.advanceTimersByTimeAsync(100);
+    const searches = site.api.callEndpoint.mock.calls.filter((args) => args[0] === 'searchCategory');
+    expect(searches.length).toBeGreaterThan(0);
+    for (const args of searches) expect(args[2]).toEqual({ q: expect.stringMatching(/^Seed \d$/), limit: 50 });
+    const why = [...document.querySelectorAll('#sc-wave .scw-t3')].map((node) => node.textContent);
+    expect(why.some((text) => /^Another version of Seed \d$/.test(text ?? ''))).toBe(true);
+    expect(why.some((text) => /^Similar to Seed \d$/.test(text ?? ''))).toBe(true);
+    const ids = [...document.querySelectorAll<HTMLElement>('#sc-wave .scw-tile[data-track]')].map((tile) => Number(tile.dataset.track));
+    expect(ids.every((id) => id >= 7000)).toBe(true);
+});
