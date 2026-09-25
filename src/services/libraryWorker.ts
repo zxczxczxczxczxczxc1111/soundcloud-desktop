@@ -36,7 +36,12 @@ function run(request: LibraryRequest): unknown {
         case 'removeMix': return playback.removeMix(...request.args);
     }
 }
-parentPort?.on('message', (request: LibraryRequest) => {
+parentPort?.on('message', (request: LibraryRequest | { method: 'close' }) => {
+    if (request.method === 'close') {
+        index.close();
+        parentPort?.close();
+        return;
+    }
     let reply: LibraryReply;
     try { reply = { id: request.id, value: run(request) }; }
     catch (error) { reply = { id: request.id, error: error instanceof Error ? error.message : String(error) }; }

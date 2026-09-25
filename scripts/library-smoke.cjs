@@ -32,7 +32,10 @@ module.exports = async function librarySmoke() {
         console.log(`PASS: library worker, 50000 plays in ${Math.round(syncedMs)} ms, main heartbeat ${beats}, account isolation`);
     } finally {
         clearInterval(heartbeat);
-        await library.close();
+        const closing = library.close();
+        assert.equal(library.close(), closing, 'repeated close must await the same worker exit');
+        await closing;
+        await assert.rejects(library.request('listMixes', 77), /закрыта/);
         rmSync(dir, { recursive: true, force: true });
     }
 };

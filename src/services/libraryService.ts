@@ -34,6 +34,7 @@ export class LibraryService {
     private worker: Worker | null = null;
     private sequence = 0;
     private closed = false;
+    private closing: Promise<void> | null = null;
     private pending = new Map<number, { resolve(value: unknown): void; reject(error: Error): void; timer: ReturnType<typeof setTimeout> }>();
     private marks = new Map<number, TasteMark[]>();
     constructor(private directory: string, private flush: () => void, private workerPath = join(__dirname, 'libraryWorker.js')) {}
@@ -85,13 +86,27 @@ export class LibraryService {
         this.marks.set(userId, marks);
         if (this.worker) void this.request('invalidate', userId, marks).catch((error: unknown) => console.warn('Вкус не обновлён', error));
     }
-    public async close(): Promise<void> {
+    public close(): Promise<void> {
+        if (this.closing) return this.closing;
         this.closed = true;
         const worker = this.worker;
         this.worker = null;
         for (const pending of this.pending.values()) { clearTimeout(pending.timer); pending.reject(new Error('Библиотека закрыта')); }
         this.pending.clear();
-        // SQLite использует транзакции; незавершённая операция откатится при следующем открытии индекса.
-        if (worker) await worker.terminate();
+        if (!worker || worker.threadId === -1) return this.closing = Promise.resolve();
+        this.closing = new Promise<void>((resolve, reject) => {
+            // Сначала закрываем SQLite и порт естественным путём. Принудительная остановка только для зависшего worker.
+            const timer = setTimeout(() => {
+                console.warn('Worker библиотеки не завершился за 5 секунд');
+                void worker.terminate().catch(reject);
+            }, 5000);
+            worker.once('exit', (code) => {
+                clearTimeout(timer);
+                if (code === 0) resolve();
+                else reject(new Error('Worker библиотеки завершился с кодом ' + code));
+            });
+            worker.postMessage({ method: 'close' });
+        });
+        return this.closing;
     }
 }

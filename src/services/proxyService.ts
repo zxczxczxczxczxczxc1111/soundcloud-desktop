@@ -3,7 +3,7 @@ import {
     type WebContents,
     type AuthInfo,
     type Event,
-    type LoginAuthenticationResponseDetails,
+    type AuthenticationResponseDetails,
 } from 'electron';
 
 import type { TranslationKeys } from './translationService';
@@ -20,7 +20,7 @@ export class ProxyService {
     private pending = Promise.resolve();
     private login = (
         event: Event,
-        _details: LoginAuthenticationResponseDetails,
+        _details: AuthenticationResponseDetails,
         auth: AuthInfo,
         callback: (username?: string, password?: string) => void,
     ): void => {

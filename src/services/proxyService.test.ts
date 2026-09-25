@@ -1,5 +1,5 @@
 import { beforeEach, expect, it, vi } from 'vitest';
-import type { WebContents, AuthInfo, Event, LoginAuthenticationResponseDetails } from 'electron';
+import type { WebContents, AuthInfo, Event, AuthenticationResponseDetails } from 'electron';
 const storage = vi.hoisted(() => ({
     isEncryptionAvailable: vi.fn(() => true),
     encryptString: vi.fn(() => Buffer.from('encrypted')),
@@ -11,7 +11,7 @@ import { TranslationService } from './translationService';
 
 type Login = (
     event: Event,
-    details: LoginAuthenticationResponseDetails,
+    details: AuthenticationResponseDetails,
     auth: AuthInfo,
     callback: (user?: string, password?: string) => void,
 ) => void;
@@ -60,7 +60,7 @@ it('не сохраняет пароль открытым текстом и от
     service.setPassword('secret');
     expect(values.get('proxyPasswordEncrypted')).toBe(Buffer.from('encrypted').toString('base64'));
     const event = { preventDefault: vi.fn() } as unknown as Event;
-    const details = {} as LoginAuthenticationResponseDetails;
+    const details = {} as AuthenticationResponseDetails;
     const auth: AuthInfo = { isProxy: true, host: 'proxy.local', port: 8080, realm: '', scheme: 'basic' };
     const callback = vi.fn();
     login(event, details, { ...auth, isProxy: false }, callback);

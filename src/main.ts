@@ -1660,6 +1660,7 @@ app.on('activate', function () {
 });
 
 let waveSignalsTaken = false;
+let libraryStopped = false;
 app.on('before-quit', (event) => {
     // Последнее прослушивание страница отдаёт до закрытия окон: её pagehide приходит уже после записи журнала
     if (!waveSignalsTaken && waveSignals && contentView && !contentView.webContents.isDestroyed()) {
@@ -1672,6 +1673,15 @@ app.on('before-quit', (event) => {
                 const out = result as { userId?: unknown; signals?: unknown } | null;
                 if (out) waveSignals?.add(out.userId, out.signals);
             }, (error: unknown) => console.warn('Журнал сигналов: последнее прослушивание не получено', error))
+            .finally(() => app.quit());
+        return;
+    }
+    if (!libraryStopped && listeningLibrary) {
+        libraryStopped = true;
+        event.preventDefault();
+        waveSignals?.flush();
+        void listeningLibrary.close()
+            .catch((error: unknown) => console.warn('Библиотека не закрыта перед выходом', error))
             .finally(() => app.quit());
         return;
     }

@@ -99,7 +99,7 @@
         "@types/node": "^24.13.6",
         "@typescript-eslint/eslint-plugin": "^8.70.1",
         "@typescript-eslint/parser": "^8.70.1",
-        "electron": "https://github.com/castlabs/electron-releases#v41.10.7+wvcus",
+        "electron": "github:castlabs/electron-releases#v42.11.0+wvcus",
         "electron-builder": "^26.15.3",
         "eslint": "^10.11.0",
         "jsdom": "30.1.1",
