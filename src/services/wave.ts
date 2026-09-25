@@ -5,6 +5,11 @@ import type { PlaySignal, TrackMeta } from '../types';
 import type { PlaybackSnapshot, LocalMix, LibraryCatalog } from './playbackStore';
 import { installPlaybackPage } from './playbackPage';
 import { installPlaybackRecovery } from './playbackRecovery';
+import * as identity from './trackIdentity';
+
+// Разбор версий живёт в своём модуле. Функции страницы зовут его по голому имени: в Node имя берётся отсюда,
+// на странице из объявлений identityHelpers в той же обёртке. Именованный импорт превратился бы в trackIdentity_1.copyKey
+const { copyKey, copyKeys } = identity;
 
 export interface WaveTrack {
     id: number;
@@ -21,6 +26,8 @@ export interface WaveTrack {
     streamable?: boolean;
     duration?: number;
     full_duration?: number;
+    /** Метаданные издателя: часто null или псевдоним загрузчика, иногда isrc и автор (приложение А плана радара) */
+    publisher_metadata?: { artist?: string | null; isrc?: string | null; writer_composer?: string | null } | null;
 }
 export type WaveMode = 'similar' | 'fresh';
 export type OpenTrackResult = 'played' | 'not-ready' | 'unavailable' | 'failed' | 'superseded';
@@ -277,12 +284,6 @@ export function acceptCandidate(track: WaveTrack, filter: WaveFilter): boolean {
     if (filter.excludedTracks.has(track.id) || filter.excludedArtists.has(trackArtist(track))) return false;
     if (filter.mode === 'fresh') return !filter.heard.has(track.id) && !filter.liked.has(track.id);
     return !filter.recent.has(track.id);
-}
-
-// Перезаливки одного трека разными id: сравниваются артист и название без пометок в скобках
-export function trackSignature(track: WaveTrack): string {
-    const title = (track.title ?? '').toLowerCase().replace(/[([{][^)\]}]*[)\]}]/g, '');
-    return trackArtist(track) + ':' + normalizeTag(title);
 }
 
 // Следующие треки из пула: артист не повторяется в окне из трёх последних, пул не меняется
@@ -602,14 +603,14 @@ export function pickFinds(
     candidates: WaveTrack[], blocked: (track: WaveTrack) => boolean, knownArtists: Set<number>, taste: TasteMaps | null, limit: number, random: () => number = Math.random,
 ): WaveTrack[] {
     const artists = new Set<number>();
-    const signatures = new Set<string>();
+    // Вероятные копии одной версии (перезаливы) идут одной находкой; slowed и ремикс остаются отдельными версиями
+    const copies = new Set<string>();
     const fresh: Array<{ track: WaveTrack }> = [];
     for (const track of candidates) {
         const artist = trackArtist(track);
-        const signature = trackSignature(track);
-        if (!artist || knownArtists.has(artist) || artists.has(artist) || signatures.has(signature) || !isWaveEligible(track) || blocked(track)) continue;
+        if (!artist || knownArtists.has(artist) || artists.has(artist) || copies.has(copyKey(track)) || !isWaveEligible(track) || blocked(track)) continue;
         artists.add(artist);
-        signatures.add(signature);
+        for (const key of copyKeys(track)) copies.add(key);
         fresh.push({ track });
     }
     const ordered = taste ? tasteOrder(fresh, taste, random) : shuffleInPlace(fresh);
@@ -822,6 +823,7 @@ export function installWave(config: WaveConfig, createPlayback: typeof installPl
     const usedSeeds = new Set<number>();
     const usedStations = new Set<number>();
     const cursors = new Map<string, Cursor>();
+    // Ключи вероятных копий взятого в сессию: перезалив той же версии не играет второй раз, другая версия может
     const signatures = new Set<string>();
     // Сессия волны
     let active = false;
@@ -1256,9 +1258,8 @@ export function installWave(config: WaveConfig, createPlayback: typeof installPl
         return list;
     }
     function accept(list: WaveCandidate[], candidate: WaveCandidate, filter: WaveFilter): boolean {
-        const signature = trackSignature(candidate.track);
-        if (!acceptCandidate(candidate.track, filter) || signatures.has(signature)) return false;
-        signatures.add(signature);
+        if (!acceptCandidate(candidate.track, filter) || signatures.has(copyKey(candidate.track))) return false;
+        for (const key of copyKeys(candidate.track)) signatures.add(key);
         taken.add(candidate.track.id);
         list.push(candidate);
         return true;
@@ -1679,8 +1680,8 @@ export function installWave(config: WaveConfig, createPlayback: typeof installPl
         resetGeneration();
         for (const [key, cursor] of pages) cursors.set(key, cursor);
         for (const track of shown) taken.add(track.id);
-        // Показанное и сыгранное не возвращается и другой версией того же трека
-        for (const track of [...shown, ...[...known.values()].map((candidate) => candidate.track)]) signatures.add(trackSignature(track));
+        // Показанное и сыгранное не возвращается и перезаливом той же версии
+        for (const track of [...shown, ...[...known.values()].map((candidate) => candidate.track)]) for (const key of copyKeys(track)) signatures.add(key);
         if (active) void restartAhead();
         else void preparePreview();
     }
@@ -1999,7 +2000,7 @@ export function installWave(config: WaveConfig, createPlayback: typeof installPl
         // Стартовый трек встанет первым или уже играет: станция и треки артиста не должны вернуть его ещё раз
         if (first) {
             taken.add(first.id);
-            signatures.add(trackSignature(first));
+            for (const key of copyKeys(first)) signatures.add(key);
         }
         const keep = !!first && player?.getCurrentSound()?.id === first.id;
         if (first && keep) known.set(first.id, { track: first, reason: { kind: 'seedTrack' } });
@@ -3787,9 +3788,9 @@ export function installWave(config: WaveConfig, createPlayback: typeof installPl
 // Помощники идут на страницу объявлениями рядом со скриптом: так они видны installWave и друг другу
 const pageHelpers = [
     normalizeTag, tagKeys, genreKeys, parseGenres, formatGenres, genreKeysFor, classifyLink, canonicalUrl, trackMatchesGenre, trackArtist,
-    isWaveEligible, acceptCandidate, trackSignature, pickSpaced, tasteMaps, tasteScore, tasteOrder, tasteReason, applyTasteReasons, shuffleInPlace, topGenres, fillText, reasonText, shapeSamples,
+    isWaveEligible, acceptCandidate, pickSpaced, tasteMaps, tasteScore, tasteOrder, tasteReason, applyTasteReasons, shuffleInPlace, topGenres, fillText, reasonText, shapeSamples,
     artworkUrl, formatTime, playEnd, siteSource, moodTags, trackPath, localDay, countText, tasteGroups, forgottenPicks, pickFinds,
-    installPlaybackPage, installPlaybackRecovery,
+    ...identity.identityHelpers, installPlaybackPage, installPlaybackRecovery,
 ];
 
 export function waveScript(): string {

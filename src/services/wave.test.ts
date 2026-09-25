@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import {
     WAVE_TEXTS, acceptCandidate, artworkUrl, canonicalUrl, classifyLink, formatGenres, genreKeys, genreKeysFor, isWaveEligible,
-    moodTags, normalizeTag, trackPath, parseGenres, pickSpaced, reasonText, shapeSamples, topGenres, trackMatchesGenre, trackSignature,
+    moodTags, normalizeTag, trackPath, parseGenres, pickSpaced, reasonText, shapeSamples, topGenres, trackMatchesGenre,
     applyTasteReasons, tagKeys, tasteMaps, tasteOrder, tasteReason, type TasteMaps, type WaveCandidate, type WaveFilter, type WaveTrack,
     countText, forgottenPicks, localDay, pickFinds, tasteGroups,
 } from './wave';
@@ -160,10 +160,6 @@ describe('фильтры', () => {
         expect(acceptCandidate(track(6), filter({ excludedTracks: new Set([6]) }))).toBe(false);
         expect(acceptCandidate(track(7, { user_id: 70 }), filter({ mode: 'fresh', excludedArtists: new Set([70]) }))).toBe(false);
     });
-    it('узнаёт перезаливку по артисту и названию без пометок', () => {
-        expect(trackSignature(track(1, { user_id: 9, title: 'Song (Slowed)' }))).toBe(trackSignature(track(2, { user_id: 9, title: 'song [prod. x]' })));
-        expect(trackSignature(track(1, { user_id: 9, title: 'Song' }))).not.toBe(trackSignature(track(2, { user_id: 8, title: 'Song' })));
-    });
 });
 
 it('разносит артистов в окне из трёх и не трогает пул', () => {
@@ -232,5 +228,15 @@ describe('подборки', () => {
         const finds = pickFinds(candidates, (entry) => entry.id === 6, new Set([50]), null, 10);
         expect(finds.map((entry) => entry.id).sort((a, b) => a - b)).toEqual([2, 4, 8]);
         expect(pickFinds(candidates, () => false, new Set(), null, 2)).toHaveLength(2);
+    });
+
+    it('находки: перезалив той же версии одной находкой, slowed и ремикс отдельными (A02)', () => {
+        const candidates = [
+            track(1, { user_id: 10, title: 'Artist - Song' }), track(2, { user_id: 20, title: 'Artist - Song', duration: 181000 }),
+            track(3, { user_id: 30, title: 'Artist - Song (Slowed + Reverb)' }), track(4, { user_id: 40, title: 'Artist - Song (Altare Remix)' }),
+            track(5, { user_id: 50, title: 'Song' }),
+        ];
+        const finds = pickFinds(candidates, () => false, new Set(), null, 10);
+        expect(finds.map((entry) => entry.id).sort((a, b) => a - b)).toEqual([1, 3, 4, 5]);
     });
 });

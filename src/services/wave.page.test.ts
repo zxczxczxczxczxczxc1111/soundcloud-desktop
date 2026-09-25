@@ -755,10 +755,11 @@ it('«Встряхнуть»: впереди другие треки, играю
     expect(site.player.replaceQueue).toHaveBeenCalledTimes(1);
 });
 
-it('«Встряхнуть» не возвращает другую версию показанного или сыгранного трека', async () => {
-    // Четыре мелодии приходят от каждого зерна своей версией, остальные похожие у зёрен разные
+it('«Встряхнуть» не возвращает перезалив показанного или сыгранного трека', async () => {
+    // Четыре мелодии каждое зерно приносит перезаливом с другого аккаунта (та же версия, та же длина),
+    // остальные похожие у зёрен разные. Другая версия (slowed, ремикс) вернуться может: это отдельная запись (A02)
     const versions = (seed: number): WaveTrack[] => Array.from({ length: 8 }, (_, i) => i < 4
-        ? { id: seed * 1000 + i, kind: 'track', user_id: 200 + i, duration: 200000, title: 'Tune ' + i + ' (' + seed + ' mix)' }
+        ? { id: seed * 1000 + i, kind: 'track', user_id: 300 + seed * 10 + i, duration: 200000, title: 'Band - Tune ' + i }
         : { id: seed * 1000 + i, kind: 'track', user_id: seed * 10 + i, duration: 200000, title: 'Rel ' + seed + '-' + i });
     const site = fakeSite(versions);
     window.eval(waveScript());
@@ -766,14 +767,15 @@ it('«Встряхнуть» не возвращает другую версию
     const section = document.getElementById('sc-wave')!;
     section.querySelector<HTMLButtonElement>('.scw-play')!.click();
     await vi.advanceTimersByTimeAsync(1100);
-    const tune = (item: FakeItem): string => ((item.sound as unknown as { attributes: WaveTrack }).attributes.title ?? '').replace(/ \(.*\)$/, '');
+    const tune = (item: FakeItem): string => (item.sound as unknown as { attributes: WaveTrack }).attributes.title ?? '';
     // Играющий и вся очередь впереди: всё это пользователь уже видел
     const heard = site.player.getQueue().slice().map(tune);
     section.querySelector<HTMLButtonElement>('[data-act="shake"]')!.click();
     await vi.advanceTimersByTimeAsync(1100);
     const after = site.player.getQueue().slice(site.player.getQueueState().currentIndex + 1).map(tune);
     expect(after.length).toBeGreaterThan(0);
-    expect(after.filter((title) => title.startsWith('Tune') && heard.includes(title))).toEqual([]);
+    expect(heard.some((title) => title.includes('Tune'))).toBe(true);
+    expect(after.filter((title) => title.includes('Tune') && heard.includes(title))).toEqual([]);
 });
 
 it('ожидание рисует заготовки плиток; обложка берёт цвет из кэша плавности и проявляется поверх', async () => {
