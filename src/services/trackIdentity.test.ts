@@ -3,7 +3,7 @@ import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import type { WaveTrack } from './wave';
 import {
-    catalogLinks, confirmedGroups, copyKey, copyKeys, familyKey, identityHelpers, matchLevel, parseTrackTitle, searchQueries, trackCredits,
+    catalogLinks, confirmedCopies, confirmedGroups, copyKey, copyKeys, familyKey, identityHelpers, matchLevel, parseTrackTitle, searchQueries, trackCredits,
     versionKey, type RecordingLink,
 } from './trackIdentity';
 
@@ -145,6 +145,10 @@ it('подтверждённые группы: последнее решение
     expect(undone.get('sc:track:3')).toBe(undone.get('sc:track:2'));
     // Каталог позже, но решение пользователя «разные» остаётся
     expect(undone.get('sc:track:4')).toBeUndefined();
+    // Запрет и «уже слышано» переходят на подтверждённые копии и только на них
+    expect([...confirmedCopies([2, 9], groups)].sort((a, b) => a - b)).toEqual([1, 2, 3, 9]);
+    expect([...confirmedCopies([1], undone)]).toEqual([1]);
+    expect([...confirmedCopies([7], new Map())]).toEqual([7]);
 });
 
 it('участники из метаданных и поисковые запросы без кавычек', () => {

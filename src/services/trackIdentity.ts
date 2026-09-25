@@ -385,6 +385,26 @@ export function confirmedGroups(links: RecordingLink[]): Map<string, string> {
     return groups;
 }
 
+// Загрузки ids вместе с их подтверждёнными копиями из confirmedGroups. Вероятные копии сюда не входят:
+// запрет и «уже слышано» по ним не переносятся
+export function confirmedCopies(ids: Iterable<number>, groups: Map<string, string>): Set<number> {
+    const result = new Set<number>(ids);
+    if (!groups.size) return result;
+    const members = new Map<string, number[]>();
+    for (const [key, root] of groups) {
+        const id = Number(key.slice('sc:track:'.length));
+        if (!key.startsWith('sc:track:') || !Number.isSafeInteger(id) || id <= 0) continue;
+        const list = members.get(root) ?? [];
+        list.push(id);
+        members.set(root, list);
+    }
+    for (const id of [...result]) {
+        const root = groups.get('sc:track:' + id);
+        if (root) for (const mate of members.get(root) ?? []) result.add(mate);
+    }
+    return result;
+}
+
 // Связи каталога: один ISRC, та же версия по названию и длительность в пределах двух секунд
 export function catalogLinks(tracks: WaveTrack[], at: number): RecordingLink[] {
     const byCode = new Map<string, WaveTrack[]>();
@@ -457,6 +477,6 @@ export function searchQueries(track: WaveTrack, parsed: ParsedTitle = parseTrack
 // Всё, что уходит на страницу: waveScript кладёт объявления рядом с волной
 export const identityHelpers = [
     identityText, identityKey, nameKey, splitNames, simpleMarker, stripTailMarkers, classifySegment, parseTrackTitle, uploaderId, uploadKey,
-    trackDuration, artistHint, familyKey, versionKey, copyKeys, copyKey, probableCopy, isrcOf, matchLevel, confirmedGroups, catalogLinks,
+    trackDuration, artistHint, familyKey, versionKey, copyKeys, copyKey, probableCopy, isrcOf, matchLevel, confirmedGroups, confirmedCopies, catalogLinks,
     trackCredits, searchQueries,
 ];

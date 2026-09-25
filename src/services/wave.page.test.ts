@@ -374,6 +374,39 @@ it('пропуск артиста в прошлой волне не мешает
     expect(seeded.some((item) => item.sound.id === 555900)).toBe(true);
 });
 
+it('A07: ранний пропуск кнопкой убирает версию, а не весь сборный канал', async () => {
+    vi.spyOn(Math, 'random').mockReturnValue(0.5);
+    // Сборный канал 900 выложил по пять разных песен рядом с каждым зерном
+    const withChannel = (seed: number): WaveTrack[] => [
+        ...relatedTracks(seed),
+        ...Array.from({ length: 5 }, (_, i) => ({ id: seed * 1000 + 900 + i, kind: 'track', user_id: 900, duration: 200000, title: 'Channel Song ' + seed + '-' + i })),
+    ];
+    const site = fakeSite(withChannel);
+    window.eval(waveScript());
+    await vi.advanceTimersByTimeAsync(100);
+    document.querySelector<HTMLButtonElement>('#sc-wave .scw-play')!.click();
+    await vi.advanceTimersByTimeAsync(1100);
+    const queued = site.player.replaceQueue.mock.calls[0][0] as FakeItem[];
+    const at = queued.findIndex((item) => item.sound.id % 1000 >= 900);
+    expect(at).toBeGreaterThanOrEqual(0);
+    site.setItems(queued, at);
+    await vi.advanceTimersByTimeAsync(1100);
+    // «Дальше» в нижнем плеере на первых секундах песни канала
+    const next = document.createElement('button');
+    next.className = 'playControls skipControl__next';
+    document.body.append(next);
+    next.click();
+    site.setItems(queued, at + 1);
+    await vi.advanceTimersByTimeAsync(1100);
+    // Ближе к концу очереди волна догружает хвост из пула: другие песни канала там остались
+    site.setItems(site.player.getQueue().slice(), queued.length - 2);
+    await vi.advanceTimersByTimeAsync(1100);
+    const added = site.player.getQueue().slice(queued.length).map((item) => item.sound.id);
+    expect(added.length).toBeGreaterThan(0);
+    expect(added.some((id) => id % 1000 >= 900)).toBe(true);
+    next.remove();
+});
+
 it('волна от трека скрытого артиста подбирает похожих, сам артист в неё не попадает', async () => {
     const site = fakeSite((seed) => [...relatedTracks(seed), { id: seed * 1000 + 900, kind: 'track', user_id: 900, duration: 200000, title: 'Art ' + seed }], siteExtra);
     fakeExclusions([], [{ id: 900, title: 'Art', url: 'https://soundcloud.com/art' }]);
@@ -906,8 +939,8 @@ it('полка из снимка дня: находки играют первы�
     await vi.advanceTimersByTimeAsync(100);
     const queued = site.player.replaceQueue.mock.calls[site.player.replaceQueue.mock.calls.length - 1][0] as FakeItem[];
     expect(queued.map((item) => item.sound.id)).toEqual(finds.slice(0, 10).map((track) => track.id));
-    expect(section.querySelector('.scw-hint')?.textContent).toBe('Daily finds: artists new to you, until midnight');
-    expect(section.querySelector('.scw-why')?.textContent).toBe('Daily find: an artist new to you');
+    expect(section.querySelector('.scw-hint')?.textContent).toBe('Daily finds: tracks you haven’t played yet, until midnight');
+    expect(section.querySelector('.scw-why')?.textContent).toBe('Daily find: not played by you yet');
     expect(section.querySelector('[data-act="shelf-play"][data-card="0"]')?.getAttribute('aria-pressed')).toBe('true');
     expect(section.querySelector('.scw-seg')).toBeNull();
     expect(shelf.save).not.toHaveBeenCalled();

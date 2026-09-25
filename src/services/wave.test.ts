@@ -3,8 +3,9 @@ import {
     WAVE_TEXTS, acceptCandidate, artworkUrl, canonicalUrl, classifyLink, formatGenres, genreKeys, genreKeysFor, isWaveEligible,
     moodTags, normalizeTag, trackPath, parseGenres, pickSpaced, reasonText, shapeSamples, topGenres, trackMatchesGenre,
     applyTasteReasons, tagKeys, tasteMaps, tasteOrder, tasteReason, tasteScore, type TasteMaps, type WaveCandidate, type WaveFilter, type WaveTrack,
-    countText, forgottenPicks, localDay, pickFinds, tasteGroups,
+    countText, forgottenPicks, localDay, pickFinds, tasteGroups, artistNames, isNewArtist, spreadBy,
 } from './wave';
+import { copyKeys, familyKey } from './trackIdentity';
 
 describe('вкус волны', () => {
     const taste = (artists: Array<[number, number]>, tags: Array<[string, number]> = [], tracks: Array<[number, number]> = [], extra: object = {}): TasteMaps =>
@@ -100,8 +101,8 @@ describe('вкус волны', () => {
 
 const track = (id: number, extra: Partial<WaveTrack> = {}): WaveTrack => ({ id, kind: 'track', user_id: id, duration: 180000, policy: 'ALLOW', title: 'Track ' + id, ...extra });
 const filter = (extra: Partial<WaveFilter> = {}): WaveFilter => ({
-    mode: 'similar', taken: new Set(), recent: new Set(), heard: new Set(), liked: new Set(), skippedArtists: new Set(),
-    excludedTracks: new Set(), excludedArtists: new Set(), ...extra,
+    mode: 'similar', taken: new Set(), recent: new Set(), heard: new Set(), liked: new Set(), skipped: new Set(),
+    excludedTracks: new Set(), excludedArtists: new Set(), excludedFamilies: new Set(), ...extra,
 });
 
 describe('жанр', () => {
@@ -189,9 +190,37 @@ describe('фильтры', () => {
         expect(acceptCandidate(track(1), filter({ heard, liked, recent }))).toBe(true);
         expect(acceptCandidate(track(3), filter({ heard, liked, recent }))).toBe(false);
         expect(acceptCandidate(track(4), filter({ taken: new Set([4]) }))).toBe(false);
-        expect(acceptCandidate(track(5), filter({ skippedArtists: new Set([5]) }))).toBe(false);
         expect(acceptCandidate(track(6), filter({ excludedTracks: new Set([6]) }))).toBe(false);
         expect(acceptCandidate(track(7, { user_id: 70 }), filter({ mode: 'fresh', excludedArtists: new Set([70]) }))).toBe(false);
+    });
+
+    it('A07: ранний пропуск убирает версию и её перезаливы, остальные треки того же канала проходят', () => {
+        const skippedTrack = track(5, { user_id: 50, title: 'Mix Channel - Song A', user: { id: 50, username: 'Mix Channel' } });
+        const skipped = new Set(copyKeys(skippedTrack));
+        const reupload = track(6, { user_id: 60, title: 'Mix Channel - Song A', user: { id: 60, username: 'Reup' }, duration: 181000 });
+        const sameChannel = track(7, { user_id: 50, title: 'Mix Channel - Song B', user: { id: 50, username: 'Mix Channel' } });
+        const slowed = track(8, { user_id: 50, title: 'Mix Channel - Song A (Slowed)', user: { id: 50, username: 'Mix Channel' } });
+        expect(acceptCandidate(reupload, filter({ skipped }))).toBe(false);
+        expect(acceptCandidate(sameChannel, filter({ skipped }))).toBe(true);
+        expect(acceptCandidate(slowed, filter({ skipped }))).toBe(true);
+    });
+
+    it('A08: скрытые другие версии композиции убирают семью, другую песню того же исполнителя нет', () => {
+        const hidden = new Set([familyKey(track(1, { title: 'Artist - Song' }))]);
+        expect(acceptCandidate(track(2, { title: 'Artist - Song (Slowed)' }), filter({ excludedFamilies: hidden }))).toBe(false);
+        expect(acceptCandidate(track(3, { title: 'Artist - Other Song' }), filter({ excludedFamilies: hidden }))).toBe(true);
+    });
+
+    it('новый артист: у чужой песни на канале решают исполнители из названия, у своей ещё и аккаунт', () => {
+        const history = [track(1, { user_id: 10, title: 'Known Artist - Hit', user: { id: 10, username: 'Big Channel' } }), track(2, { user_id: 20, title: 'Solo', user: { id: 20, username: 'Solo Act' } })];
+        const names = artistNames(history);
+        expect([...names].sort()).toEqual(['knownartist', 'soloact']);
+        const ids = new Set([10, 20]);
+        // Известный исполнитель на незнакомом канале не новый; незнакомый исполнитель на знакомом сборном канале новый
+        expect(isNewArtist(track(3, { user_id: 30, title: 'Known Artist - Other', user: { id: 30, username: 'Reup' } }), ids, names)).toBe(false);
+        expect(isNewArtist(track(4, { user_id: 10, title: 'Fresh Face - Debut', user: { id: 10, username: 'Big Channel' } }), ids, names)).toBe(true);
+        expect(isNewArtist(track(5, { user_id: 20, title: 'Another', user: { id: 20, username: 'Solo Act' } }), ids, names)).toBe(false);
+        expect(isNewArtist(track(6, { user_id: 60, title: 'Untitled', user: { id: 60, username: 'Stranger' } }), ids, names)).toBe(true);
     });
 });
 
@@ -225,7 +254,7 @@ describe('подборки', () => {
         expect([1, 3, 5, 11, 21, 22].map((count) => countText(count, ru, 'ru'))).toEqual(['1 трек', '3 трека', '5 треков', '11 треков', '21 трек', '22 трека']);
         expect([1, 5].map((count) => countText(count, WAVE_TEXTS.en.tracksCount, 'en'))).toEqual(['1 track', '5 tracks']);
         expect(reasonText({ kind: 'group', name: 'Techno' }, WAVE_TEXTS.ru)).toBe('Твой вкус: Techno');
-        expect(reasonText({ kind: 'daily' }, WAVE_TEXTS.en)).toBe('Daily find: an artist new to you');
+        expect(reasonText({ kind: 'daily' }, WAVE_TEXTS.en)).toBe('Daily find: not played by you yet');
     });
 
     it('делит лайки на вкусы по тегам, трек без тегов идёт за своим артистом, мелкое отбрасывается', () => {
@@ -246,6 +275,19 @@ describe('подборки', () => {
         expect(tasteGroups([], 4, 1)).toEqual([]);
     });
 
+    it('сборный канал не раздаёт свой жанр чужим песням без тегов, своя песня артиста наследует', () => {
+        const channel = { id: 1, username: 'Techno Hub' };
+        const techno = Array.from({ length: 10 }, (_, i) => track(100 + i, { user_id: 1, user: channel, title: 'Artist ' + i + ' - Track', genre: 'Techno', tag_list: 'industrial' }));
+        const foreign = track(400, { user_id: 1, user: channel, title: 'Pop Star - Ballad' });
+        const artist = { id: 2, username: 'Solo' };
+        const own = Array.from({ length: 10 }, (_, i) => track(200 + i, { user_id: 2, user: artist, title: 'Solo Tune ' + i, genre: 'Techno', tag_list: 'industrial' }));
+        const bare = track(401, { user_id: 2, user: artist, title: 'Untagged Solo Tune' });
+        const groups = tasteGroups([...techno, foreign, ...own, bare].map((entry) => ({ track: entry, weight: 1 })), 4, 8);
+        const ids = groups.flatMap((group) => group.tracks.map((entry) => entry.id));
+        expect(ids).not.toContain(400);
+        expect(ids).toContain(401);
+    });
+
     it('давно не слушал: без недавнего и нелюбимого, ценное вперёд, дальше старые лайки', () => {
         const liked = [track(1), track(2), track(3), track(4), track(5, { policy: 'SNIP' }), track(6)];
         const weights = new Map([[1, -1.5], [3, 2]]);
@@ -253,23 +295,46 @@ describe('подборки', () => {
         expect(forgottenPicks(liked, new Set(), null, 2).map((entry) => entry.id)).toEqual([6, 4]);
     });
 
-    it('находки: только новые артисты, по треку на артиста, без слышанного и перезаливок', () => {
+    it('A01: находки берут знакомый аккаунт и несколько его песен, без слышанного и недоступного', () => {
         const candidates = [
             track(1, { user_id: 50 }), track(2, { user_id: 60 }), track(3, { user_id: 60 }), track(4, { user_id: 70, title: 'Same' }),
-            track(5, { user_id: 70, title: 'Same (Remastered)' }), track(6, { user_id: 80 }), track(7, { user_id: 90, policy: 'SNIP' }), track(8, { user_id: 95 }),
+            track(5, { user_id: 70, title: 'Other' }), track(6, { user_id: 80 }), track(7, { user_id: 90, policy: 'SNIP' }), track(8, { user_id: 95 }),
         ];
-        const finds = pickFinds(candidates, (entry) => entry.id === 6, new Set([50]), null, 10);
-        expect(finds.map((entry) => entry.id).sort((a, b) => a - b)).toEqual([2, 4, 8]);
-        expect(pickFinds(candidates, () => false, new Set(), null, 2)).toHaveLength(2);
+        const finds = pickFinds(candidates, (entry) => entry.id === 6, null, 10);
+        expect(finds.map((entry) => entry.id).sort((a, b) => a - b)).toEqual([1, 2, 3, 4, 5, 8]);
+        expect(pickFinds(candidates, () => false, null, 2)).toHaveLength(2);
+        // Десять песен одного загрузчика все проходят, потолка на аккаунт нет
+        const one = Array.from({ length: 10 }, (_, i) => track(100 + i, { user_id: 7, title: 'Song ' + i }));
+        expect(pickFinds(one, () => false, null, 30)).toHaveLength(10);
     });
 
-    it('находки: перезалив той же версии одной находкой, slowed и ремикс отдельными (A02)', () => {
+    it('A03: второй трек аккаунта, который подходит лучше, не теряется из-за порядка ответа', () => {
+        const worse = track(1, { user_id: 60, genre: 'house', title: 'First' });
+        const better = track(2, { user_id: 60, genre: 'techno', title: 'Second' });
+        const profile = tasteMaps({ tags: [['techno', 3]] });
+        if (!profile) throw new Error('профиль не разобран');
+        const half = (): number => 0.5;
+        expect(pickFinds([worse, better], () => false, profile, 1, half).map((entry) => entry.id)).toEqual([2]);
+        expect(pickFinds([better, worse], () => false, profile, 1, half).map((entry) => entry.id)).toEqual([2]);
+    });
+
+    it('находки: перезалив той же версии одной находкой, slowed и ремикс отдельными (A02); из копий остаётся лучшая', () => {
         const candidates = [
             track(1, { user_id: 10, title: 'Artist - Song' }), track(2, { user_id: 20, title: 'Artist - Song', duration: 181000 }),
             track(3, { user_id: 30, title: 'Artist - Song (Slowed + Reverb)' }), track(4, { user_id: 40, title: 'Artist - Song (Altare Remix)' }),
             track(5, { user_id: 50, title: 'Song' }),
         ];
-        const finds = pickFinds(candidates, () => false, new Set(), null, 10);
+        const finds = pickFinds(candidates, () => false, null, 10);
         expect(finds.map((entry) => entry.id).sort((a, b) => a - b)).toEqual([1, 3, 4, 5]);
+        // Копия, которую вкус ценит выше, побеждает независимо от порядка
+        const profile = tasteMaps({ tracks: [[2, 1]] });
+        if (!profile) throw new Error('профиль не разобран');
+        expect(pickFinds(candidates, () => false, profile, 10).map((entry) => entry.id).sort((a, b) => a - b)).toEqual([2, 3, 4, 5]);
+        expect(pickFinds(candidates.slice().reverse(), () => false, profile, 10).map((entry) => entry.id).sort((a, b) => a - b)).toEqual([2, 3, 4, 5]);
+    });
+
+    it('разнесение по аккаунту: один аккаунт не подряд, пока есть другие, ничего не теряется', () => {
+        expect(spreadBy([1, 1, 1, 2, 3], (value) => value, 1)).toEqual([1, 2, 1, 3, 1]);
+        expect(spreadBy([4, 4], (value) => value, 1)).toEqual([4, 4]);
     });
 });
