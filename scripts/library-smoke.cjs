@@ -44,7 +44,14 @@ module.exports = async function librarySmoke() {
         assert.equal((await library.request('libraryMembers', 77, 'likes')).length, 200);
         assert.equal(await library.request('syncPage', 77, 'likes', run.run, [], null), false);
         assert.deepEqual(await library.request('libraryMembers', 78, 'likes'), []);
-        console.log(`PASS: library worker, 50000 plays in ${Math.round(syncedMs)} ms, main heartbeat ${beats}, account isolation, recommend store 2000 uploads in ${Math.round(recordMs)} ms`);
+        // Вкус по 50000 прослушиваниям и лайкам из хранилища: участники из названий лайков доходят до профиля
+        await library.request('invalidate', 77, []);
+        const tasteStart = performance.now();
+        const profile = await library.request('profile', 77);
+        const tasteMs = performance.now() - tasteStart;
+        assert.ok(profile.tracks.length > 0 && profile.artists.length > 0);
+        assert.ok(profile.credits.some(([key]) => key === 'artist0'), 'liked uploads must feed credits');
+        console.log(`PASS: library worker, 50000 plays in ${Math.round(syncedMs)} ms, main heartbeat ${beats}, account isolation, recommend store 2000 uploads in ${Math.round(recordMs)} ms, taste in ${Math.round(tasteMs)} ms`);
     } finally {
         clearInterval(heartbeat);
         const closing = library.close();

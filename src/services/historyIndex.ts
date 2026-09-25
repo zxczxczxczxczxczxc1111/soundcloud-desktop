@@ -2,12 +2,13 @@ import { DatabaseSync } from 'node:sqlite';
 import { mkdirSync, rmSync } from 'fs';
 import { join } from 'path';
 import type { PlaySignal } from '../types';
-import { artworkOf, text, trackPathOf } from './waveSignals';
+import { artworkOf, spanCoverage, text, trackPathOf } from './waveSignals';
 
 // Индекс истории прослушиваний поверх журнала сигналов. Первоисточник остаётся JSONL: индекс досинхронизируется
 // из него при открытии страницы истории и пересобирается целиком, если файла нет, схема сменилась или файл испорчен
 // 2: теги трека и лайк во время прослушивания для модели вкуса волны
-export const HISTORY_SCHEMA = 2;
+// 3: покрытие сыгранными участками, кто сменил трек и выбран ли он кликом (сигналы v3)
+export const HISTORY_SCHEMA = 3;
 /** Трек засчитывается в топах и счётчиках с 30 секунд реально прозвучавшего звука */
 export const COUNTED_MS = 30000;
 const DAY = 86400000;
@@ -71,8 +72,15 @@ export interface TastePlay {
     source: string;
     likedNow: boolean;
     away: boolean;
+    /** Уникальное покрытие сыгранными участками, мс; null у событий до v3 */
+    covered: number | null;
+    /** Кто сменил трек; пусто у событий до v3 */
+    endedBy: 'user' | 'auto' | '';
+    /** Запущен кликом по самому треку (v3) */
+    picked: boolean;
     genre: string;
     tags: string;
+    title: string;
     artistName: string;
     artwork: string;
     path: string;
@@ -116,7 +124,7 @@ export function ftsQuery(value: unknown): string {
 const SCHEMA = [
     'create table if not exists meta(key text primary key, value integer not null)',
     "create table if not exists tracks(id integer primary key, artist integer not null default 0, title text not null default '', artist_name text not null default '', path text not null default '', artwork text not null default '', genre text not null default '', tags text not null default '', dur integer not null default 0, resolved integer not null default 0)",
-    'create table if not exists plays(at integer not null, id integer not null, artist integer not null, heard integer not null, dur integer not null, end text not null, source text not null, liked integer not null, liked_now integer not null default 0, away integer not null, tz integer, primary key(at, id)) without rowid',
+    'create table if not exists plays(at integer not null, id integer not null, artist integer not null, heard integer not null, dur integer not null, end text not null, source text not null, liked integer not null, liked_now integer not null default 0, away integer not null, tz integer, covered integer, ended_by text, picked integer, primary key(at, id)) without rowid',
     'create index if not exists plays_id on plays(id)',
     'create index if not exists plays_artist on plays(artist, at)',
     'create index if not exists tracks_resolved on tracks(resolved)',
@@ -182,7 +190,21 @@ export class HistoryIndex {
         mkdirSync(this.directory, { recursive: true });
         let db = new DatabaseSync(this.file(userId));
         try {
-            const version = num((db.prepare('pragma user_version').get() as Values | undefined)?.user_version);
+            let version = num((db.prepare('pragma user_version').get() as Values | undefined)?.user_version);
+            if (version === 2) {
+                // Со второй схемы колонки добавляются на месте: пересборка потеряла бы названия, добранные у сайта.
+                // Не вышло: индекс собирается заново ниже, как при любой чужой схеме
+                db.exec('begin');
+                try {
+                    for (const column of ['covered integer', 'ended_by text', 'picked integer']) db.exec('alter table plays add column ' + column);
+                    db.exec('pragma user_version = ' + HISTORY_SCHEMA);
+                    db.exec('commit');
+                    version = HISTORY_SCHEMA;
+                } catch (error) {
+                    db.exec('rollback');
+                    console.warn('История: колонки v3 не добавлены, индекс пересобирается', error);
+                }
+            }
             if (version !== 0 && version !== HISTORY_SCHEMA) {
                 // Индекс другой схемы: собрать заново из журнала
                 db.close();
@@ -247,7 +269,9 @@ export class HistoryIndex {
         if (!signals.length) return 0;
         const { db } = handle;
         const upsert = db.prepare(UPSERT_TRACK);
-        const insert = db.prepare('insert or ignore into plays(at, id, artist, heard, dur, end, source, liked, liked_now, away, tz) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)');
+        const insert = db.prepare(
+            'insert or ignore into plays(at, id, artist, heard, dur, end, source, liked, liked_now, away, tz, covered, ended_by, picked) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
+        );
         let added = 0;
         let latest = 0;
         db.exec('begin');
@@ -258,6 +282,7 @@ export class HistoryIndex {
                 const result = insert.run(
                     signal.at, signal.id, signal.artist, signal.heard, signal.dur, signal.end, signal.source,
                     signal.liked || signal.likedNow ? 1 : 0, signal.likedNow ? 1 : 0, signal.away ? 1 : 0, signal.tz ?? null,
+                    signal.spans ? spanCoverage(signal.spans) : null, signal.endedBy ?? null, signal.picked === undefined ? null : signal.picked ? 1 : 0,
                 );
                 added += num(result.changes);
                 latest = Math.max(latest, signal.at);
@@ -375,30 +400,38 @@ export class HistoryIndex {
         });
     }
 
-    /** Прослушивания с момента since для модели вкуса, старые сверху; закрытие клиента (stop) не сигнал */
+    /** Прослушивания с момента since для модели вкуса, старые сверху. Закрытие клиента (stop) тоже здесь: слышанное до него не пропадает */
     public tastePlays(userId: unknown, since: number): TastePlay[] {
         if (!isId(userId)) return [];
         return this.guarded(userId, ({ db }) =>
             (db.prepare(
-                "select p.at, p.id, p.artist, p.heard, p.dur, p.end, p.source, p.liked_now, p.away, coalesce(t.genre, '') as genre, coalesce(t.tags, '') as tags, " +
+                "select p.at, p.id, p.artist, p.heard, p.dur, p.end, p.source, p.liked_now, p.away, p.covered, coalesce(p.ended_by, '') as endedBy, p.picked, " +
+                    "coalesce(t.genre, '') as genre, coalesce(t.tags, '') as tags, coalesce(t.title, '') as title, " +
                     "coalesce(t.artist_name, '') as artistName, coalesce(t.artwork, '') as artwork, coalesce(t.path, '') as path " +
-                    "from plays p left join tracks t on t.id = p.id where p.at >= ? and p.end != 'stop' order by p.at",
-            ).all(since) as Values[]).map((row) => ({
-                at: num(row.at),
-                id: num(row.id),
-                artist: num(row.artist),
-                heard: num(row.heard),
-                dur: num(row.dur),
-                end: str(row.end),
-                source: str(row.source),
-                likedNow: num(row.liked_now) === 1,
-                away: num(row.away) === 1,
-                genre: str(row.genre),
-                tags: str(row.tags),
-                artistName: str(row.artistName),
-                artwork: str(row.artwork),
-                path: str(row.path),
-            })),
+                    'from plays p left join tracks t on t.id = p.id where p.at >= ? order by p.at',
+            ).all(since) as Values[]).map((row) => {
+                const endedBy = str(row.endedBy);
+                return {
+                    at: num(row.at),
+                    id: num(row.id),
+                    artist: num(row.artist),
+                    heard: num(row.heard),
+                    dur: num(row.dur),
+                    end: str(row.end),
+                    source: str(row.source),
+                    likedNow: num(row.liked_now) === 1,
+                    away: num(row.away) === 1,
+                    covered: row.covered === null || row.covered === undefined ? null : num(row.covered),
+                    endedBy: endedBy === 'user' || endedBy === 'auto' ? endedBy : '',
+                    picked: num(row.picked) === 1,
+                    genre: str(row.genre),
+                    tags: str(row.tags),
+                    title: str(row.title),
+                    artistName: str(row.artistName),
+                    artwork: str(row.artwork),
+                    path: str(row.path),
+                };
+            }),
         );
     }
 

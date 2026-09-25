@@ -12,7 +12,7 @@ import type { SyncBridge } from './pageSources';
 // Разбор версий и сеть подбора живут в своих модулях. Функции страницы зовут их по голому имени: в Node имя
 // берётся отсюда, на странице из объявлений identityHelpers и sourceHelpers в той же обёртке.
 // Именованный импорт превратился бы в trackIdentity_1.copyKey и на странице не нашёлся
-const { copyKey, copyKeys, matchLevel, searchQueries } = identity;
+const { copyKey, copyKeys, familyKey, matchLevel, nameKey, parseTrackTitle, searchQueries, trackCredits } = identity;
 const { createDispatcher, createSearchCache, likeItems, entityItems, syncSource } = sources;
 
 export interface WaveTrack {
@@ -313,30 +313,43 @@ export function pickSpaced(pool: WaveCandidate[], count: number, recentArtists: 
     return picked;
 }
 
-// Профиль вкуса из main: веса треков, артистов и тегов
+// Профиль вкуса из main: веса треков, аккаунтов-кураторов, участников, семей версий, тегов и пометок версии
 export interface TasteMaps {
     artists: Map<number, number>;
+    credits: Map<string, number>;
+    families: Map<string, number>;
     tags: Map<string, number>;
+    markers: Map<string, number>;
     tracks: Map<number, number>;
 }
 export interface TasteScore {
     score: number;
     track: number;
+    /** Вес загрузившего аккаунта как куратора */
     artist: number;
+    /** Участники из названия и метаданных, кроме загрузчика: лучший плюс и худший минус вместе */
+    credit: number;
+    /** Самый любимый участник и его вес */
+    creditName: string;
+    creditBest: number;
+    /** Семья версий: другая версия любимой песни */
+    family: number;
+    /** Средний вес известных пометок версии (slowed, remix, live) */
+    marker: number;
     /** Средний вес известных тегов трека */
     tag: number;
     /** Самый любимый из тегов трека и его вес */
     tagKey: string;
     tagBest: number;
-    /** У артиста есть история */
+    /** У аккаунта или участника есть история */
     known: boolean;
 }
-// Ответ main недоверенный: берутся только пары [id или ключ тега, конечное число]
+// Ответ main недоверенный: берутся только пары [id или ключ, конечное число]. Старый профиль без новых частей даёт пустые
 export function tasteMaps(input: unknown): TasteMaps | null {
     if (!input || typeof input !== 'object') return null;
-    const source = input as { artists?: unknown; tags?: unknown; tracks?: unknown };
+    const source = input as Record<'artists' | 'credits' | 'families' | 'tags' | 'markers' | 'tracks', unknown>;
     const isId = (value: unknown): value is number => typeof value === 'number' && Number.isSafeInteger(value) && value > 0;
-    const isKey = (value: unknown): value is string => typeof value === 'string' && value.length > 0 && value.length <= 80;
+    const isKey = (value: unknown): value is string => typeof value === 'string' && value.length > 0 && value.length <= 200;
     const pairs = <K>(list: unknown, valid: (value: unknown) => value is K, limit: number): Map<K, number> => {
         const map = new Map<K, number>();
         if (!Array.isArray(list)) return map;
@@ -344,28 +357,73 @@ export function tasteMaps(input: unknown): TasteMaps | null {
             if (Array.isArray(item) && valid(item[0]) && typeof item[1] === 'number' && Number.isFinite(item[1])) map.set(item[0], item[1]);
         return map;
     };
-    return { artists: pairs(source.artists, isId, 500), tags: pairs(source.tags, isKey, 300), tracks: pairs(source.tracks, isId, 1000) };
+    return {
+        artists: pairs(source.artists, isId, 1000),
+        credits: pairs(source.credits, isKey, 1000),
+        families: pairs(source.families, isKey, 1000),
+        tags: pairs(source.tags, isKey, 300),
+        markers: pairs(source.markers, isKey, 50),
+        tracks: pairs(source.tracks, isId, 1000),
+    };
 }
 export function tasteScore(track: WaveTrack, taste: TasteMaps): TasteScore {
     const artistId = trackArtist(track);
     const own = taste.tracks.get(track.id) ?? 0;
     const artist = taste.artists.get(artistId) ?? 0;
-    let sum = 0;
-    let count = 0;
-    let tagKey = '';
-    let tagBest = 0;
-    for (const key of tagKeys(track.genre, track.tag_list)) {
-        const weight = taste.tags.get(key);
-        if (weight === undefined) continue;
-        sum += weight;
-        count++;
-        if (weight > tagBest) {
-            tagBest = weight;
-            tagKey = key;
+    const average = (keys: string[], map: Map<string, number>): { value: number; key: string; best: number } => {
+        let sum = 0;
+        let count = 0;
+        let key = '';
+        let best = 0;
+        for (const item of keys) {
+            const weight = map.get(item);
+            if (weight === undefined) continue;
+            sum += weight;
+            count++;
+            if (weight > best) {
+                best = weight;
+                key = item;
+            }
         }
+        return { value: count ? sum / count : 0, key, best };
+    };
+    const tags = average(tagKeys(track.genre, track.tag_list), taste.tags);
+    // Анонимный ремикс без участников и имени исполнителя оценивается остальными частями, а не выпадает
+    const parsed = parseTrackTitle(track.title);
+    const uploader = nameKey(track.user?.username);
+    let creditName = '';
+    let creditBest = 0;
+    let creditWorst = 0;
+    let creditKnown = false;
+    for (const credit of trackCredits(track, parsed)) {
+        // Имя самого загрузчика уже учтено весом аккаунта
+        if (credit.key === uploader) continue;
+        const weight = taste.credits.get(credit.key);
+        if (weight === undefined) continue;
+        creditKnown = true;
+        if (weight > creditBest) {
+            creditBest = weight;
+            creditName = credit.name;
+        }
+        creditWorst = Math.min(creditWorst, weight);
     }
-    const tag = count ? sum / count : 0;
-    return { score: own + artist + tag, track: own, artist, tag, tagKey, tagBest, known: taste.artists.has(artistId) };
+    const credit = creditBest + creditWorst;
+    const family = Math.max(0, taste.families.get(familyKey(track, parsed)) ?? 0);
+    const marker = average([...new Set(parsed.version.map((item) => item.split(':')[0]))], taste.markers).value;
+    return {
+        score: own + artist + credit + family + marker + tags.value,
+        track: own,
+        artist,
+        credit,
+        creditName,
+        creditBest,
+        family,
+        marker,
+        tag: tags.value,
+        tagKey: tags.key,
+        tagBest: tags.best,
+        known: taste.artists.has(artistId) || creditKnown,
+    };
 }
 // Порядок подборки по вкусу вместо перемешивания: взвешенная случайная выборка (чем выше оценка, тем раньше),
 // треки с сильным минусом не берутся, не меньше 30% артистов без истории, чтобы волна не кормила сама себя
@@ -397,8 +455,10 @@ export function tasteReason(candidate: WaveCandidate, taste: TasteMaps): WaveRea
     if (candidate.reason.kind !== 'similar' && candidate.reason.kind !== 'fresh') return null;
     const score = tasteScore(candidate.track, taste);
     const name = (candidate.track.user?.username ?? '').trim();
+    // Любимый исполнитель из названия важнее канала, который его выложил
+    if (score.creditName && score.creditBest >= 1 && score.creditBest > score.artist && score.creditBest >= score.tag) return { kind: 'tasteArtist', artist: score.creditName };
     if (name && score.artist >= 1 && score.artist >= score.tag) return { kind: 'tasteArtist', artist: name };
-    if (!score.tagKey || score.tagBest < 1 || score.artist >= 0.3) return null;
+    if (!score.tagKey || score.tagBest < 1 || Math.max(score.artist, score.creditBest) >= 0.3) return null;
     const labels = [candidate.track.genre ?? '', ...Array.from((candidate.track.tag_list ?? '').matchAll(/"([^"]+)"|(\S+)/g), (match) => match[1] ?? match[2] ?? '')];
     const label = labels.find((item) => normalizeTag(item) === score.tagKey);
     return label ? { kind: 'tasteTag', genre: label.trim().toLowerCase() } : null;
@@ -909,8 +969,19 @@ export function installWave(config: WaveConfig, createPlayback: typeof installPl
     let userId = 0;
     let journalTimer: ReturnType<typeof setTimeout> | undefined;
     // Журнал сигналов: одно событие на прослушивание любого трека, не только из волны
-    interface Play { signal: PlaySignal; lastPosition: number; likedAtStart: boolean }
+    interface Play { signal: PlaySignal; lastPosition: number; likedAtStart: boolean; spans: Array<[number, number]> }
     let play: Play | null = null;
+    // Последнее действие человека на странице: клик или клавиша. Медиаклавиши и горячие клавиши клиента тоже кликают
+    // кнопки плеера. Выбор конкретного трека отмечается только в своих списках (плитки и строки волны, панель очереди):
+    // классы кнопок сайта не сверены, а для треков сайта отметка на вкус не влияет
+    let lastInput = { at: 0, pick: false };
+    const onUserInput = (event: Event): void => {
+        const target = event.target instanceof Element ? event.target : null;
+        const pick = event.type === 'click' && !!target?.closest('.scw-tile[data-track], .scw-row[data-track], #sc-desktop-queue .scq-name');
+        lastInput = { at: Date.now(), pick };
+    };
+    // Трек сменился в течение 4 секунд после действия: сменил человек (опрос раз в секунду, плюс запас на загрузку)
+    const recentInput = (): boolean => Date.now() - lastInput.at < 4000;
     const pendingSignals: PlaySignal[] = [];
     let signalsTimer: ReturnType<typeof setTimeout> | undefined;
     // Сведения о текущем треке для карточки Discord: уходят в main, только когда поменялись
@@ -1867,7 +1938,7 @@ export function installWave(config: WaveConfig, createPlayback: typeof installPl
         }
     }
 
-    function beginPlay(sound: SiteSound): void {
+    function beginPlay(sound: SiteSound, picked = false): void {
         const attrs = sound.attributes ?? { id: sound.id };
         const item = player?.getCurrentQueueItem();
         const candidate = known.get(sound.id);
@@ -1889,18 +1960,31 @@ export function installWave(config: WaveConfig, createPlayback: typeof installPl
                 hiddenArtist: false,
                 genre: textOf(attrs.genre, 80),
                 tags: textOf(attrs.tag_list, 300),
-                v: 2,
+                v: 3,
                 tz: -new Date().getTimezoneOffset(),
                 title: textOf(attrs.title, 300),
                 artistName: textOf((attrs.user as { username?: unknown } | undefined)?.username, 200),
                 path: trackPath(attrs.permalink_url),
                 artwork: textOf(attrs.artwork_url, 400),
+                picked,
             },
             lastPosition: positionOf(sound),
             likedAtStart: currentLiked,
+            spans: [],
         };
     }
-    function finishPlay(end?: PlaySignal['end']): void {
+    // Слить пересекающиеся участки по порядку
+    function mergeSpans(spans: Array<[number, number]>): Array<[number, number]> {
+        const merged: Array<[number, number]> = [];
+        for (const span of spans.slice().sort((a, b) => a[0] - b[0])) {
+            const last = merged[merged.length - 1];
+            if (last && span[0] <= last[1]) last[1] = Math.max(last[1], span[1]);
+            else merged.push([span[0], span[1]]);
+        }
+        return merged;
+    }
+    // byUser: трек сменил человек; без него сменил сам сайт (ошибка, конец очереди), это не пропуск
+    function finishPlay(end?: PlaySignal['end'], byUser = false): void {
         const current = play;
         play = null;
         // Трек сменили раньше, чем он прозвучал секунду: сигнала нет
@@ -1908,6 +1992,8 @@ export function installWave(config: WaveConfig, createPlayback: typeof installPl
         const signal = current.signal;
         signal.end = end ?? playEnd(signal.dur, signal.pos);
         signal.likedNow = signal.liked && !current.likedAtStart;
+        signal.spans = mergeSpans(current.spans).map(([from, to]) => [Math.round(from), Math.round(to)]);
+        if (signal.end !== 'stop') signal.endedBy = byUser ? 'user' : 'auto';
         pendingSignals.push(signal);
         if (pendingSignals.length > 1000) pendingSignals.splice(0, pendingSignals.length - 1000);
         if (signalsTimer === undefined) signalsTimer = setTimeout(flushSignals, 5000);
@@ -1926,7 +2012,17 @@ export function installWave(config: WaveConfig, createPlayback: typeof installPl
             return;
         }
         const delta = position - current.lastPosition;
-        if (playing && delta > 0 && delta <= 3000) signal.heard += delta;
+        if (playing && delta > 0 && delta <= 3000) {
+            signal.heard += delta;
+            // Участок продолжается, пока нет перемотки; повтор того же места покрытия не прибавит
+            const last = current.spans[current.spans.length - 1];
+            if (last && last[1] === current.lastPosition) last[1] = position;
+            else {
+                if (current.spans.length >= 64) current.spans = mergeSpans(current.spans);
+                // Предел журнала: при сотне перемоток покрытие занижается, а не выдумывается
+                if (current.spans.length < 64) current.spans.push([current.lastPosition, position]);
+            }
+        }
         current.lastPosition = position;
         signal.pos = position;
         signal.liked = currentLiked;
@@ -1965,12 +2061,13 @@ export function installWave(config: WaveConfig, createPlayback: typeof installPl
                 ownQueue = ownQueue.filter((item) => !skippedArtists.has(trackArtist(item.track)));
             }
             jumped = false;
-            finishPlay();
+            const byUser = recentInput();
+            finishPlay(undefined, byUser);
             currentId = id;
             currentPosition = 0;
             currentDuration = durationOf(sound);
             currentLiked = likeButton()?.classList.contains('sc-button-selected') ?? false;
-            if (sound) beginPlay(sound);
+            if (sound) beginPlay(sound, byUser && lastInput.pick);
             render();
         } else if (sound) {
             currentPosition = positionOf(sound);
@@ -3832,6 +3929,8 @@ export function installWave(config: WaveConfig, createPlayback: typeof installPl
         document.removeEventListener('contextmenu', onPageMenu);
         document.removeEventListener('mousedown', onOutside, true);
         document.removeEventListener('keydown', onDocumentKey);
+        document.removeEventListener('click', onUserInput, true);
+        document.removeEventListener('keydown', onUserInput, true);
         window.removeEventListener('blur', closeMenu);
         window.removeEventListener('resize', onResize);
         document.removeEventListener('visibilitychange', repaint);
@@ -3888,6 +3987,8 @@ export function installWave(config: WaveConfig, createPlayback: typeof installPl
     document.addEventListener('contextmenu', onPageMenu);
     document.addEventListener('mousedown', onOutside, true);
     document.addEventListener('keydown', onDocumentKey);
+    document.addEventListener('click', onUserInput, true);
+    document.addEventListener('keydown', onUserInput, true);
     window.addEventListener('blur', closeMenu);
     window.addEventListener('resize', onResize);
     document.addEventListener('visibilitychange', repaint);

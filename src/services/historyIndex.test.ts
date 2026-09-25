@@ -69,7 +69,7 @@ it('sync переносит журнал один раз и дальше чит�
     expect(index.day(USER, T0, T0 + 3 * HOUR).map((row) => row.id)).toEqual([13, 12, 11]);
 });
 
-it('модели вкуса уходят теги, лайк во время прослушивания и исход, без закрытий клиента', () => {
+it('модели вкуса уходят теги, лайк во время прослушивания, исход и закрытия клиента', () => {
     const journal = new Journal();
     journal.list = [
         signal({ genre: 'Techno', tags: '"dark techno" berlin', likedNow: true, liked: true }),
@@ -79,10 +79,26 @@ it('модели вкуса уходят теги, лайк во время пр
     const index = open(journal);
     index.sync(USER);
     const plays = index.tastePlays(USER, 0);
-    expect(plays.map((item) => item.id)).toEqual([11, 13]);
+    expect(plays.map((item) => item.id)).toEqual([11, 12, 13]);
     expect(plays[0]).toMatchObject({ likedNow: true, genre: 'techno', tags: '"dark techno" berlin', end: 'done', source: 'wave:similar' });
-    expect(plays[1]).toMatchObject({ likedNow: false, away: true, end: 'skip', heard: 5000 });
-    expect(index.tastePlays(USER, T0 + HOUR).map((item) => item.id)).toEqual([13]);
+    expect(plays[1]).toMatchObject({ end: 'stop', heard: 20000 });
+    // До v3 покрытия и причины смены нет: модель читает такие события по-старому
+    expect(plays[2]).toMatchObject({ likedNow: false, away: true, end: 'skip', heard: 5000, covered: null, endedBy: '', picked: false });
+    expect(index.tastePlays(USER, T0 + HOUR).map((item) => item.id)).toEqual([12, 13]);
+});
+
+it('события v3: покрытие из участков, кто сменил трек и выбран ли он кликом; название для разбора версий', () => {
+    const journal = new Journal();
+    journal.list = [
+        signal({ v: 3, title: 'Artist - Song (slowed)', heard: 90000, spans: [[0, 30000], [60000, 90000]], endedBy: 'user', picked: true }),
+        signal({ at: T0 + HOUR, id: 12, v: 3, end: 'skip', heard: 4000, spans: [[0, 4000]], endedBy: 'auto' }),
+    ];
+    const index = open(journal);
+    index.sync(USER);
+    expect(index.tastePlays(USER, 0)).toEqual([
+        expect.objectContaining({ id: 11, title: 'Artist - Song (slowed)', covered: 60000, endedBy: 'user', picked: true }),
+        expect.objectContaining({ id: 12, covered: 4000, endedBy: 'auto', picked: false }),
+    ]);
 });
 
 it('чужой или кривой userId не открывает базу', () => {
@@ -226,6 +242,32 @@ it('индекс старой схемы пересобирается', () => {
     db.close();
     const second = open(journal, directory);
     expect(second.sync(USER)).toBe(1);
+});
+
+it('индекс второй схемы получает колонки v3 на месте: добранные у сайта названия не теряются', () => {
+    const directory = dir();
+    // Индекс схемы 2, как его оставила версия 0.7.0: название трека пришло от сайта, в журнале его нет
+    const journal = new Journal();
+    journal.list = [signal()];
+    const first = open(journal, directory);
+    first.sync(USER);
+    expect(first.resolve(USER, [11], [{ id: 11, title: 'С сайта' }])).toBe(1);
+    first.close();
+    const old = new DatabaseSync(join(directory, 'history-' + USER + '.sqlite'));
+    for (const column of ['covered', 'ended_by', 'picked']) old.exec('alter table plays drop column ' + column);
+    old.exec('pragma user_version = 2');
+    old.close();
+    journal.list.push(signal({ at: T0 + HOUR, id: 12, v: 3, spans: [[0, 50000]], endedBy: 'auto' }));
+    const index = open(journal, directory);
+    const warn = vi.spyOn(console, 'warn');
+    expect(index.sync(USER)).toBe(1);
+    expect(warn).not.toHaveBeenCalled();
+    expect(index.tastePlays(USER, 0)).toEqual([
+        expect.objectContaining({ id: 11, title: 'С сайта', covered: null, endedBy: '' }),
+        expect.objectContaining({ id: 12, covered: 50000, endedBy: 'auto' }),
+    ]);
+    // Трек 11 не просится у сайта заново, трек 12 без названия в журнале просится
+    expect(index.missing(USER)).toEqual([12]);
 });
 
 it('помощники: шаг волны, запрос поиска, жанр, местное время', () => {

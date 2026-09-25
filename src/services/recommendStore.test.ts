@@ -83,6 +83,31 @@ it('A16: полный обход снимает пропавшее, неполн
     expect(store.libraryMembers(77, 'likes')).toEqual([{ key: 'sc:track:1', added: 50 }, { key: 'sc:track:3', added: 40 }]);
 });
 
+it('для вкуса: лайки с датой и разбором загрузки, подписки, кредиты сыгранного; снятое с лайков не идёт', () => {
+    const store = open(folder());
+    store.recordUploads(77, [track(1, 'Artist - Song', 9, { genre: 'House', publisher_metadata: { artist: 'Real Name' } }), track(5, 'Other', 8)], 10);
+    store.syncStart(77, 'likes', false, 100);
+    store.syncPage(77, 'likes', 1, [{ key: 'sc:track:1', added: 50 }, { key: 'sc:track:2' }], null, 110);
+    store.syncFinish(77, 'likes', 1, 'complete', '', 120);
+    store.syncStart(77, 'followings', false, 100);
+    store.syncPage(77, 'followings', 1, [{ key: 'sc:user:9' }, { key: 'sc:user:12' }], null, 110);
+    store.syncFinish(77, 'followings', 1, 'complete', '', 120);
+    const library = store.tasteLibrary(77, [5, 6, 5, -1]);
+    expect(library.likes).toEqual([
+        expect.objectContaining({ id: 1, added: 50, upload: expect.objectContaining({ uploader: 9, uploaderName: 'user9', title: 'Artist - Song', genre: 'House' }) }),
+        { id: 2, added: 0, upload: null },
+    ]);
+    expect(library.likes[0].upload?.credits.map((credit) => credit.role + ':' + credit.key)).toEqual(['artist:artist', 'artist:realname']);
+    expect(library.follows.sort((a, b) => a - b)).toEqual([9, 12]);
+    expect(library.uploads.map((upload) => upload.id)).toEqual([5]);
+    // Лайк снят полным обходом: во вкус больше не идёт
+    store.syncStart(77, 'likes', false, 200);
+    store.syncPage(77, 'likes', 2, [{ key: 'sc:track:2' }], null, 210);
+    store.syncFinish(77, 'likes', 2, 'complete', '', 220);
+    expect(store.tasteLibrary(77, []).likes.map((like) => like.id)).toEqual([2]);
+    expect(store.tasteLibrary(0, [5])).toEqual({ likes: [], follows: [], uploads: [] });
+});
+
 it('A15: ответ прошлого прогона и чужого аккаунта не принимается', () => {
     const store = open(folder());
     store.syncStart(77, 'likes', false, 100);

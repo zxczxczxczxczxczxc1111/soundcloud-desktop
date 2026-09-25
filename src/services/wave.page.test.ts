@@ -685,11 +685,16 @@ it('журнал сигналов: где ушёл, сколько прозву�
     const signals = bridge.waveSignals.add.mock.calls.flatMap(([userId, list]) => (userId === 77 ? list : []));
     expect(signals[0]).toEqual(expect.objectContaining({
         id: queued[0].sound.id, end: 'skip', source: 'wave:similar', why: 'similar', dur: 200000, liked: false, disliked: false,
-        v: 2, tz: -new Date().getTimezoneOffset(), title: expect.stringMatching(/^Rel /), path: '',
+        v: 3, tz: -new Date().getTimezoneOffset(), title: expect.stringMatching(/^Rel /), path: '',
+        // Трек сменил не человек: кнопок и клавиш за 4 секунды до смены не было. Кнопка «играть» блока трек не выбирает
+        endedBy: 'auto', picked: false,
     }));
     expect(signals[0].heard).toBeGreaterThanOrEqual(39000);
     expect(signals[0].heard).toBeLessThanOrEqual(41000);
     expect(signals[0].pos).toBeGreaterThanOrEqual(100000);
+    // Перемотка на 60 секунд в участки не попала
+    expect(signals[0].spans).toHaveLength(1);
+    expect(signals[0].spans[0][1] - signals[0].spans[0][0]).toBe(signals[0].heard);
     // Второй трек сменили, не дав ему прозвучать секунду: сигнала нет
     expect(signals.some((signal: { id: number }) => signal.id === queued[1].sound.id)).toBe(false);
 
@@ -699,6 +704,47 @@ it('журнал сигналов: где ушёл, сколько прозву�
     await vi.advanceTimersByTimeAsync(7000);
     const later = bridge.waveSignals.add.mock.calls.flatMap(([, list]) => list);
     expect(later.find((signal: { id: number }) => signal.id === 5)).toEqual(expect.objectContaining({ end: 'done', source: 'site:playlist', why: '' }));
+});
+
+it('A21: повтор одного места не растит покрытие, смену кнопкой плеера отличает от смены самим сайтом', async () => {
+    const site = fakeSite(relatedTracks);
+    const bridge = fakeBridge();
+    window.eval(waveScript());
+    await vi.advanceTimersByTimeAsync(100);
+    const item = (id: number): FakeItem => ({ sound: { id, currentTime: () => position, getMediaDuration: () => 200000 }, sourceInfo: { type: 'playlist' } });
+    site.player.playCurrent();
+    position = 0;
+    site.setItems([item(5)], 0);
+    await vi.advanceTimersByTimeAsync(1000);
+    await playFor(20000);
+    // Перемотка вперёд и дважды один и тот же кусок
+    position = 100000;
+    await vi.advanceTimersByTimeAsync(1000);
+    await playFor(10000);
+    position = 100000;
+    await vi.advanceTimersByTimeAsync(1000);
+    await playFor(10000);
+    // «Дальше» в нижнем плеере: так же жмут медиаклавиши и горячие клавиши клиента
+    const next = document.createElement('button');
+    next.className = 'playControls skipControl__next';
+    document.body.append(next);
+    next.click();
+    position = 0;
+    site.setItems([item(6)], 0);
+    await vi.advanceTimersByTimeAsync(1000);
+    await playFor(5000);
+    await vi.advanceTimersByTimeAsync(5000);
+    // Сайт сам перешёл дальше (ошибка воспроизведения): действий человека не было
+    position = 0;
+    site.setItems([item(7)], 0);
+    await vi.advanceTimersByTimeAsync(1000);
+    await vi.advanceTimersByTimeAsync(6000);
+    const signals = bridge.waveSignals.add.mock.calls.flatMap(([, list]) => list) as Array<{ id: number; heard: number; spans: Array<[number, number]>; endedBy: string; picked: boolean; end: string }>;
+    const five = signals.find((signal) => signal.id === 5);
+    expect(five).toEqual(expect.objectContaining({ v: 3, end: 'skip', endedBy: 'user', picked: false, spans: [[0, 20000], [100000, 110000]] }));
+    expect(five?.heard).toBe(40000);
+    expect(signals.find((signal) => signal.id === 6)).toEqual(expect.objectContaining({ end: 'skip', endedBy: 'auto', heard: 5000 }));
+    next.remove();
 });
 
 it('выход из приложения: main забирает текущее прослушивание, закрытие страницы его не дублирует', async () => {

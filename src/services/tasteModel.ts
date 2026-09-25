@@ -1,20 +1,55 @@
 import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from 'fs';
 import { join } from 'path';
 import { COUNTED_MS, localDayStart, type HistoryIndex, type TastePlay } from './historyIndex';
-import { normalizeTag, tagKeys } from './wave';
+import type { TasteLibrary, TasteUpload } from './recommendStore';
+import { copyKey, familyKey, nameKey, parseTrackTitle, trackCredits, type CreditRole, type TrackCredit } from './trackIdentity';
+import { normalizeTag, tagKeys, type WaveTrack } from './wave';
 
-// Модель вкуса «Моей волны» по журналу прослушиваний. Числа стартовые (план этапа 5), подбираются по доле
-// ранних пропусков в волне, она видна на странице истории
+// Модель вкуса «Моей волны» по журналу прослушиваний, лайкам и подпискам. Три части с разной памятью (раздел 6.1
+// плана радара): устойчивая за год, последние 30 дней и подтверждённые новые интересы недели. Аккаунт-куратор,
+// участники из названия, семья версий и пометки версии (slowed, remix) считаются отдельно.
+// Числа стартовые, подбираются по доле ранних пропусков в волне, она видна на странице истории
 const DAY = 86400000;
-const HALF_LIFE_DAYS = 60;
-const REPLAY_DAYS = 14;
-/** Меньше засчитанных прослушиваний: модель ещё не уверена, веса вполсилы */
-const CONFIDENT_PLAYS = 200;
 const HORIZON_DAYS = 365;
 const CACHE_MS = 30 * 60000;
-const LIMITS = { artists: 500, tags: 300, tracks: 1000 };
+const LIMITS = { artists: 1000, credits: 1000, families: 1000, tags: 300, markers: 50, tracks: 1000 };
 const VIEW_LIMIT = 25;
 const EARLY_DAYS = 30;
+
+type Part = 'tracks' | 'artists' | 'credits' | 'families' | 'tags' | 'markers';
+const PARTS: Part[] = ['tracks', 'artists', 'credits', 'families', 'tags', 'markers'];
+
+/** Параметры модели в одном месте; version растёт при каждом изменении их смысла */
+export const TASTE_PARAMS = {
+    version: 2,
+    /** Полураспад устойчивой части, дни */
+    halfLifeDays: 180,
+    /** Смешивание: устойчивая часть, 30 дней, неделя */
+    blend: { long: 0.5, month: 0.35, week: 0.15 },
+    monthDays: 30,
+    weekDays: 7,
+    /** Переслушивание трека в этот срок добавляет ему */
+    replayDays: 14,
+    /** Меньше засчитанных прослушиваний: модель ещё не уверена, веса вполсилы */
+    confidentPlays: 200,
+    /** Трек, поданный волной и не выбранный кликом, весит в плюс меньше */
+    wavePositive: 0.7,
+    /** Аккаунт выложил трек другого исполнителя: интерес к нему как к куратору вдвое меньше */
+    curatorShare: 0.5,
+    roles: { artist: 1, remixer: 1, featured: 0.5, producer: 0.5, writer: 0.3 } as Record<CreditRole, number>,
+    /** Доля веса трека для семьи версий, только плюс: дизлайк версии не переносится на оригинал */
+    familyShare: 0.3,
+    /** Доля веса тега для пометки версии */
+    markerShare: 0.5,
+    /** Подписка: постоянный плюс аккаунту в устойчивой части, неделя без прослушивания его не снимает */
+    follow: 0.5,
+    /** Лайк без даты (массовый импорт) идёт только в устойчивую часть с этим множителем, а не датой обхода */
+    undatedLike: 0.5,
+    /** Сумма одного ключа из прослушиваний за местные сутки [не ниже, не выше]: хит на повторе не даёт десятков голосов */
+    daily: {
+        tracks: [-1, 2], artists: [-0.6, 1.2], credits: [-0.6, 1.2], families: [-0.6, 1.2], tags: [-0.3, 0.6], markers: [-0.3, 0.6],
+    } as Record<Part, readonly [number, number]>,
+};
 
 type Weights = [track: number, artist: number, tag: number];
 const EARLY_SKIP: Weights = [-1, -0.3, -0.1];
@@ -35,10 +70,18 @@ export interface TasteOverrides {
     artists: number[];
     tags: string[];
 }
-/** Что уходит странице волны: [id или ключ тега, вес] по убыванию модуля веса */
+/** Что уходит странице волны: [id или ключ, вес] по убыванию модуля веса */
 export interface TasteProfile {
+    version: number;
+    /** Аккаунты-кураторы по id загрузчика */
     artists: Array<[number, number]>;
+    /** Участники из названия и метаданных по ключу имени, без самого загрузчика */
+    credits: Array<[string, number]>;
+    /** Семьи версий (композиции) */
+    families: Array<[string, number]>;
     tags: Array<[string, number]>;
+    /** Пометки версии: slowed, reverb, remix, live */
+    markers: Array<[string, number]>;
     tracks: Array<[number, number]>;
     counted: number;
 }
@@ -51,23 +94,33 @@ export interface TasteView {
     counted: number;
 }
 
-/** Исход прослушивания: [трек, артист, теги] или null, если это не сигнал */
-export function playWeights(play: Pick<TastePlay, 'heard' | 'dur' | 'end' | 'likedNow'>): Weights | null {
-    if (play.end !== 'done' && play.end !== 'skip') return null;
+/** Исход прослушивания: [трек, артист, теги] или null, если это не сигнал. Минус только за уход по воле человека:
+ *  закрытие клиента, смена трека самим сайтом (ошибка, конец очереди) и перемотка в конец дизлайком не считаются */
+export function playWeights(play: Pick<TastePlay, 'heard' | 'dur' | 'end' | 'likedNow'> & Partial<Pick<TastePlay, 'covered' | 'endedBy'>>): Weights | null {
+    if (play.end !== 'done' && play.end !== 'skip' && play.end !== 'stop') return null;
+    // Покрытие участками (v3): повтор одного места не растягивается до полного прослушивания
+    const covered = typeof play.covered === 'number' ? Math.min(play.heard, play.covered) : play.heard;
+    const full = play.dur <= 0 || covered >= play.dur * 0.8;
+    const most = play.dur <= 0 || covered >= play.dur / 2;
+    // У событий до v3 причины нет: пропуск читается как раньше, ручным
+    const chosen = play.end === 'skip' && play.endedBy !== 'auto';
+    // Кусок на повторе: слышно заметно больше, чем покрыто. Это интерес, а не частичный уход
+    const looped = typeof play.covered === 'number' && play.heard > play.covered + 10000;
     let base: Weights | null;
-    if (play.heard < COUNTED_MS) base = play.end === 'skip' ? EARLY_SKIP : null;
-    else if (play.end === 'done' && (play.dur <= 0 || play.heard >= play.dur * 0.8)) base = FULL;
-    else if (play.dur <= 0 || play.heard >= play.dur / 2) base = MOST;
-    else base = PARTIAL;
+    if (play.heard < COUNTED_MS) base = chosen ? EARLY_SKIP : null;
+    else if (full && !chosen) base = FULL;
+    else if (most) base = MOST;
+    else base = chosen && !looped ? PARTIAL : null;
     if (!play.likedNow) return base;
     const sum = base ?? [0, 0, 0];
     return [sum[0] + LIKE[0], sum[1] + LIKE[1], sum[2] + LIKE[2]];
 }
 
 const round = (value: number): number => Math.round(value * 1000) / 1000;
-function top<K>(map: Map<K, number>, limit: number, floor: number): Array<[K, number]> {
+function top(map: Map<string, number>, limit: number, floor: number): Array<[string, number]> {
     return [...map].filter(([, weight]) => Math.abs(weight) >= floor).sort((a, b) => Math.abs(b[1]) - Math.abs(a[1])).slice(0, limit).map(([key, weight]) => [key, round(weight)]);
 }
+const numeric = (list: Array<[string, number]>): Array<[number, number]> => list.map(([key, weight]) => [Number(key), weight]);
 // Написание тега для людей: как в первом встреченном жанре или теге трека
 function tagLabels(genre: string, tags: string, into: Map<string, string>): void {
     const labels = [genre, ...Array.from(tags.matchAll(/"([^"]+)"|(\S+)/g), (match) => match[1] ?? match[2] ?? '')];
@@ -77,56 +130,215 @@ function tagLabels(genre: string, tags: string, into: Map<string, string>): void
     }
 }
 
-export function buildTaste(plays: readonly TastePlay[], marks: readonly TasteMark[], overrides: TasteOverrides, now: number): { profile: TasteProfile; view: TasteView } {
-    const tracks = new Map<number, number>();
-    const artists = new Map<number, number>();
-    const tags = new Map<string, number>();
+/** Направления трека: доля куратора, участники с долями, семья, пометки версии, теги и ключ независимой записи */
+interface Directions {
+    curator: number;
+    credits: Array<[string, number]>;
+    family: string;
+    markers: string[];
+    tags: string[];
+    record: string;
+}
+interface Heard {
+    id: number;
+    uploader: number;
+    uploaderName: string;
+    title: string;
+    duration: number;
+    genre: string;
+    tags: string;
+    /** Кредиты из хранилища рекомендаций (с метаданными издателя); null: только из названия */
+    credits: TrackCredit[] | null;
+}
+function directionsOf(item: Heard): Directions {
+    const track: WaveTrack = { id: item.id, title: item.title, user_id: item.uploader, user: { id: item.uploader, username: item.uploaderName }, duration: item.duration };
+    const parsed = parseTrackTitle(item.title);
+    const uploader = nameKey(item.uploaderName);
+    const shares = new Map<string, number>();
+    for (const credit of item.credits ?? trackCredits(track, parsed)) {
+        if (!credit || typeof credit.key !== 'string' || !credit.key || credit.key === uploader) continue;
+        const share = TASTE_PARAMS.roles[credit.role] ?? 0;
+        if (share > (shares.get(credit.key) ?? 0)) shares.set(credit.key, share);
+    }
+    // В названии другой исполнитель: аккаунт выложил чужое, его каталог этим лайком не одобрен целиком
+    const foreign = (item.credits ?? parsed.credits).some((credit) => credit.role === 'artist' && credit.key && credit.key !== uploader);
+    // Своё выложил сам: имя тоже идёт в участники, чтобы интерес доходил до его песен на чужих каналах.
+    // Страница не складывает это с весом самого аккаунта: у своего трека имя загрузчика в участниках не считается
+    if (!foreign && uploader && uploader.length <= 60 && !shares.has(uploader)) shares.set(uploader, TASTE_PARAMS.roles.artist);
+    return {
+        curator: foreign ? TASTE_PARAMS.curatorShare : 1,
+        credits: [...shares],
+        family: item.title ? familyKey(track, parsed) : '',
+        markers: [...new Set(parsed.version.map((entry) => entry.split(':')[0]))].filter(Boolean),
+        tags: tagKeys(item.genre, item.tags),
+        record: item.title ? copyKey(track) : 'sc:track:' + item.id,
+    };
+}
+const fromUpload = (upload: TasteUpload): Heard => ({
+    id: upload.id, uploader: upload.uploader, uploaderName: upload.uploaderName, title: upload.title, duration: upload.duration,
+    genre: upload.genre, tags: upload.tags, credits: upload.credits,
+});
+
+/** Откуда вклад: независимая запись и ручное ли действие (для подтверждения недели), насыщать ли по суткам.
+ *  Сутки и затухание считаются один раз на событие, а не на каждый вклад: на полумиллионе событий это главное время */
+interface Origin {
+    record: string;
+    manual: boolean;
+    daily: boolean;
+    day: number;
+    /** Множитель устойчивой части; у лайка без даты постоянный */
+    long: number;
+    month: boolean;
+    week: boolean;
+}
+/** Всё про один ключ: суммы трёх частей, суточные суммы для потолка и подтверждение недельного интереса */
+interface Entry {
+    long: number;
+    month: number;
+    week: number;
+    daily: Map<number, number> | null;
+    records: Set<string> | null;
+    days: Set<number> | null;
+    manual: boolean;
+}
+type Layer = Record<Part, Map<string, Entry>>;
+
+export function buildTaste(
+    plays: readonly TastePlay[], marks: readonly TasteMark[], overrides: TasteOverrides, now: number, library: TasteLibrary | null = null,
+): { profile: TasteProfile; view: TasteView } {
+    const P = TASTE_PARAMS;
+    const entries: Layer = { tracks: new Map(), artists: new Map(), credits: new Map(), families: new Map(), tags: new Map(), markers: new Map() };
+    const entry = (part: Part, key: string): Entry => {
+        let found = entries[part].get(key);
+        if (!found) {
+            found = { long: 0, month: 0, week: 0, daily: null, records: null, days: null, manual: false };
+            entries[part].set(key, found);
+        }
+        return found;
+    };
     const labels = new Map<string, string>();
     const names = new Map<number, { name: string; artwork: string; path: string }>();
     const lastCounted = new Map<number, number>();
     const counted = plays.filter((play) => play.heard >= COUNTED_MS).length;
-    const confidence = counted < CONFIDENT_PLAYS ? 0.5 : 1;
-    const add = (weights: Weights, id: number, artist: number, keys: string[], factor: number, positive: number): void => {
-        // Плюсы ослабляются поправками, минусы действуют полностью
-        const scale = (value: number): number => value * factor * (value > 0 ? positive : 1);
-        tracks.set(id, (tracks.get(id) ?? 0) + scale(weights[0]));
-        if (artist > 0 && weights[1]) artists.set(artist, (artists.get(artist) ?? 0) + scale(weights[1]));
-        if (weights[2]) for (const key of keys) tags.set(key, (tags.get(key) ?? 0) + scale(weights[2]));
-    };
-    const decay = (at: number): number => Math.pow(0.5, Math.max(0, now - at) / DAY / HALF_LIFE_DAYS) * confidence;
+    const confidence = counted < P.confidentPlays ? 0.5 : 1;
 
+    const originOf = (at: number, record: string, manual: boolean, daily: boolean, undated = false): Origin => {
+        const age = Math.max(0, now - at);
+        return {
+            record, manual, daily, day: undated ? 0 : localDayStart(at),
+            long: undated ? P.undatedLike : Math.pow(0.5, age / DAY / P.halfLifeDays),
+            month: !undated && age <= P.monthDays * DAY,
+            week: !undated && age <= P.weekDays * DAY,
+        };
+    };
+    const push = (part: Part, key: string, raw: number, origin: Origin): void => {
+        if (!raw || !Number.isFinite(raw)) return;
+        const target = entry(part, key);
+        let value = raw;
+        if (origin.daily) {
+            // В сутки ключ набирает не больше потолка: считается прирост ограниченной суммы, а не сам вклад
+            target.daily ??= new Map();
+            const before = target.daily.get(origin.day) ?? 0;
+            const [low, high] = P.daily[part];
+            const clamp = (sum: number): number => Math.min(high, Math.max(low, sum));
+            value = clamp(before + raw) - clamp(before);
+            target.daily.set(origin.day, before + raw);
+            if (!value) return;
+        }
+        target.long += value * origin.long;
+        if (!origin.month) return;
+        target.month += value;
+        if (!origin.week) return;
+        target.week += value;
+        if (value <= 0 || part === 'tracks') return;
+        (target.records ??= new Set()).add(origin.record);
+        (target.days ??= new Set()).add(origin.day);
+        target.manual ||= origin.manual;
+    };
+    const apply = (weights: Weights, id: number, uploader: number, item: Directions, positive: number, origin: Origin): void => {
+        // Плюсы ослабляются поправками, минусы действуют полностью
+        const scale = (value: number): number => value * (value > 0 ? positive : 1);
+        push('tracks', String(id), scale(weights[0]), origin);
+        if (uploader > 0) push('artists', String(uploader), scale(weights[1]) * item.curator, origin);
+        for (const [key, share] of item.credits) push('credits', key, scale(weights[1]) * share, origin);
+        if (item.family && weights[0] > 0) push('families', item.family, scale(weights[0]) * P.familyShare, origin);
+        for (const key of item.tags) push('tags', key, scale(weights[2]), origin);
+        for (const key of item.markers) push('markers', key, scale(weights[2]) * P.markerShare, origin);
+    };
+
+    const stored = new Map((library?.uploads ?? []).map((upload) => [upload.id, upload] as const));
+    const cache = new Map<number, Directions>();
+    const likedInPlay = new Set<number>();
     for (const play of plays) {
         if (play.artist > 0 && play.artistName) names.set(play.artist, { name: play.artistName, artwork: play.artwork, path: play.path });
         tagLabels(play.genre, play.tags, labels);
-        const keys = tagKeys(play.genre, play.tags);
-        // Трек, поданный волной, весит в плюс меньше выбранного руками; фоновое прослушивание вполсилы
-        const positive = (play.source.startsWith('wave:') ? 0.7 : 1) * (play.away ? 0.5 : 1);
-        const factor = decay(play.at);
-        const weights = playWeights(play);
-        if (weights) add(weights, play.id, play.artist, keys, factor, positive);
+        let item = cache.get(play.id);
+        if (!item) {
+            const upload = stored.get(play.id);
+            item = directionsOf({
+                id: play.id, uploader: play.artist, uploaderName: play.artistName, title: play.title || upload?.title || '', duration: play.dur,
+                genre: play.genre, tags: play.tags, credits: upload?.credits ?? null,
+            });
+            cache.set(play.id, item);
+        }
+        if (play.likedNow) likedInPlay.add(play.id);
+        // Трек, поданный волной, весит в плюс меньше выбранного руками. Простой системы (away) не штрафуется: раздел 1 плана
+        const positive = play.source.startsWith('wave:') && !play.picked ? P.wavePositive : 1;
+        const origin = originOf(play.at, item.record, play.likedNow || play.picked, true);
+        // Само прослушивание насыщается по суткам, лайк во время него явное действие и идёт целиком
+        const weights = playWeights({ heard: play.heard, dur: play.dur, end: play.end, likedNow: false, covered: play.covered, endedBy: play.endedBy });
+        if (weights) apply(weights, play.id, play.artist, item, positive, origin);
+        if (play.likedNow) apply(LIKE, play.id, play.artist, item, positive, { ...origin, daily: false });
         if (play.heard < COUNTED_MS) continue;
         const previous = lastCounted.get(play.id);
-        if (previous !== undefined && play.at - previous <= REPLAY_DAYS * DAY) add([1, 0, 0], play.id, play.artist, keys, factor, positive);
+        if (previous !== undefined && play.at - previous <= P.replayDays * DAY) push('tracks', String(play.id), positive, origin);
         lastCounted.set(play.id, play.at);
     }
+    const marked = new Set<number>();
     for (const mark of marks) {
+        marked.add(mark.id);
         tagLabels(mark.genre, mark.tags, labels);
-        add(LIKE, mark.id, mark.artist, tagKeys(mark.genre, mark.tags), decay(mark.at), 1);
+        const item = directionsOf({ id: mark.id, uploader: mark.artist, uploaderName: '', title: '', duration: 0, genre: mark.genre, tags: mark.tags, credits: null });
+        apply(LIKE, mark.id, mark.artist, item, 1, originOf(mark.at, item.record, true, false));
+    }
+    // Лайки сайта: явное действие, без насыщения. Лайк, уже поставленный во время прослушивания, второй раз не идёт
+    for (const like of library?.likes ?? []) {
+        if (likedInPlay.has(like.id) || marked.has(like.id)) continue;
+        const upload = like.upload;
+        if (upload) tagLabels(upload.genre, upload.tags, labels);
+        const item = upload ? directionsOf(fromUpload(upload)) : directionsOf({ id: like.id, uploader: 0, uploaderName: '', title: '', duration: 0, genre: '', tags: '', credits: null });
+        apply(LIKE, like.id, upload?.uploader ?? 0, item, 1, originOf(like.added || now, item.record, true, false, !like.added));
+    }
+    for (const id of library?.follows ?? []) entry('artists', String(id)).long += P.follow;
+
+    const total: Record<Part, Map<string, number>> = { tracks: new Map(), artists: new Map(), credits: new Map(), families: new Map(), tags: new Map(), markers: new Map() };
+    for (const part of PARTS) {
+        for (const [key, item] of entries[part]) {
+            // Новый интерес недели входит, только если подтверждён: две разные записи, два дня или ручное действие.
+            // Копии одной версии дают один ключ записи и независимыми не считаются
+            const confirmed = part === 'tracks' || item.week <= 0 || (item.records?.size ?? 0) >= 2 || (item.days?.size ?? 0) >= 2 || item.manual;
+            const value = (P.blend.long * item.long + P.blend.month * item.month + (confirmed ? P.blend.week * item.week : 0)) * confidence;
+            if (value) total[part].set(key, value);
+        }
     }
 
     const droppedArtists = new Set(overrides.artists);
     const droppedTags = new Set(overrides.tags);
-    for (const id of droppedArtists) artists.delete(id);
-    for (const key of droppedTags) tags.delete(key);
+    for (const id of droppedArtists) total.artists.delete(String(id));
+    for (const key of droppedTags) total.tags.delete(key);
     const profile: TasteProfile = {
-        artists: top(artists, LIMITS.artists, 0.01),
-        tags: top(tags, LIMITS.tags, 0.01),
-        tracks: top(tracks, LIMITS.tracks, 0.1),
+        version: P.version,
+        artists: numeric(top(total.artists, LIMITS.artists, 0.01)),
+        credits: top(total.credits, LIMITS.credits, 0.01),
+        families: top(total.families, LIMITS.families, 0.01),
+        tags: top(total.tags, LIMITS.tags, 0.01),
+        markers: top(total.markers, LIMITS.markers, 0.01),
+        tracks: numeric(top(total.tracks, LIMITS.tracks, 0.1)),
         counted,
     };
 
     const artistPath = (path: string): string => /^\/[^/]+/.exec(path)?.[0] ?? '';
-    const liked = <K>(map: Map<K, number>): Array<[K, number]> => [...map].filter(([, weight]) => weight > 0).sort((a, b) => b[1] - a[1]).slice(0, VIEW_LIMIT);
+    const liked = (map: Map<string, number>): Array<[string, number]> => [...map].filter(([, weight]) => weight > 0).sort((a, b) => b[1] - a[1]).slice(0, VIEW_LIMIT);
     const today = localDayStart(now);
     const early: TasteView['early'] = [];
     for (let i = EARLY_DAYS - 1; i >= 0; i--) {
@@ -135,18 +347,20 @@ export function buildTaste(plays: readonly TastePlay[], marks: readonly TasteMar
         early.push({ start, total: 0, early: 0 });
     }
     for (const play of plays) {
-        if (!play.source.startsWith('wave:') || play.at < early[0].start) continue;
+        // Закрытие клиента не пропуск и не прослушивание волны: в долю не входит, как и раньше
+        if (!play.source.startsWith('wave:') || play.end === 'stop' || play.at < early[0].start) continue;
         const day = early.find((entry, index) => play.at >= entry.start && (index === early.length - 1 || play.at < early[index + 1].start));
         if (!day) continue;
         day.total++;
-        if (play.end === 'skip' && play.heard < COUNTED_MS) day.early++;
+        if (play.end === 'skip' && play.endedBy !== 'auto' && play.heard < COUNTED_MS) day.early++;
     }
     const view: TasteView = {
-        artists: liked(artists).map(([id, weight]) => {
+        artists: liked(total.artists).map(([key, weight]) => {
+            const id = Number(key);
             const known = names.get(id);
             return { id, name: known?.name ?? '', artwork: known?.artwork ?? '', path: artistPath(known?.path ?? ''), weight: round(weight) };
         }).filter((entry) => entry.name),
-        tags: liked(tags).map(([key, weight]) => ({ key, label: labels.get(key) ?? key, weight: round(weight) })),
+        tags: liked(total.tags).map(([key, weight]) => ({ key, label: labels.get(key) ?? key, weight: round(weight) })),
         removed: {
             artists: [...droppedArtists].map((id) => ({ id, name: names.get(id)?.name ?? '' })).filter((entry) => entry.name),
             tags: [...droppedTags].map((key) => ({ key, label: labels.get(key) ?? key })),
@@ -160,12 +374,18 @@ export function buildTaste(plays: readonly TastePlay[], marks: readonly TasteMar
 const isId = (value: unknown): value is number => typeof value === 'number' && Number.isSafeInteger(value) && value > 0;
 const isTagKey = (value: unknown): value is string => typeof value === 'string' && value.length >= 2 && value.length <= 80 && normalizeTag(value) === value;
 
-// Профиль считается по индексу истории и живёт 30 минут; «убрать из вкуса» хранится отдельным файлом на пользователя
+// Профиль считается по индексу истории и хранилищу рекомендаций и живёт 30 минут; «убрать из вкуса» хранится
+// отдельным файлом на пользователя
 export class TasteService {
     private cache = new Map<number, { at: number; profile: TasteProfile }>();
     private overrides = new Map<number, TasteOverrides>();
 
-    constructor(private directory: string, private index: HistoryIndex, private marks: (userId: number) => TasteMark[]) {}
+    constructor(
+        private directory: string,
+        private index: HistoryIndex,
+        private marks: (userId: number) => TasteMark[],
+        private library?: (userId: number, played: number[]) => TasteLibrary,
+    ) {}
 
     private file(userId: number): string {
         return join(this.directory, 'taste-overrides-' + userId + '.json');
@@ -195,7 +415,15 @@ export class TasteService {
         } catch (error) {
             console.warn('Вкус волны: журнал не перенесён в индекс', error);
         }
-        const result = buildTaste(this.index.tastePlays(userId, now - HORIZON_DAYS * DAY), this.marks(userId), this.readOverrides(userId), now);
+        const plays = this.index.tastePlays(userId, now - HORIZON_DAYS * DAY);
+        // Библиотека не прочиталась: вкус по истории, а не пустой
+        let library: TasteLibrary | null = null;
+        try {
+            library = this.library?.(userId, [...new Set(plays.map((play) => play.id))]) ?? null;
+        } catch (error) {
+            console.warn('Вкус волны: лайки и подписки не прочитаны, вкус только по истории', error);
+        }
+        const result = buildTaste(plays, this.marks(userId), this.readOverrides(userId), now, library);
         this.cache.set(userId, { at: now, profile: result.profile });
         return result;
     }

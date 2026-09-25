@@ -2,7 +2,7 @@ import { appendFileSync, mkdtempSync, readdirSync, rmSync } from 'fs';
 import { tmpdir } from 'os';
 import { join } from 'path';
 import { afterEach, expect, it, vi } from 'vitest';
-import { WaveSignals, validateSignal } from './waveSignals';
+import { WaveSignals, cleanSpans, spanCoverage, validateSignal } from './waveSignals';
 import type { PlaySignal } from '../types';
 
 const dirs: string[] = [];
@@ -90,6 +90,23 @@ it('запись v2: название, артист, адрес, обложка 
     expect(junk?.title?.length).toBe(300);
     // Запись до v2 читается как раньше
     expect(validateSignal(signal())).toEqual(expect.objectContaining({ v: 1, title: '', path: '' }));
+});
+
+it('запись v3: участки сливаются и проверяются, причина смены и выбор кликом только из допустимых значений', () => {
+    const v3 = validateSignal(signal({ v: 3, spans: [[60000, 90000], [0, 30000], [20000, 40000]], endedBy: 'user', picked: true }));
+    expect(v3).toEqual(expect.objectContaining({ v: 3, spans: [[0, 40000], [60000, 90000]], endedBy: 'user', picked: true }));
+    expect(spanCoverage(v3?.spans ?? [])).toBe(70000);
+    // Кривые пары отбрасываются, кривой список пропадает, чужая причина не принимается
+    const junk = validateSignal({ ...signal({ v: 3 }), spans: [[5, 1], [0, 'x'], [0, 1e12], [1000, 2000]], endedBy: 'site', picked: 'yes' });
+    expect(junk).toEqual(expect.objectContaining({ v: 3, spans: [[1000, 2000]] }));
+    expect(junk?.endedBy).toBeUndefined();
+    expect(junk?.picked).toBeUndefined();
+    expect(validateSignal({ ...signal({ v: 3 }), spans: 'bad' })?.spans).toBeUndefined();
+    expect(cleanSpans(Array.from({ length: 100 }, (_, i) => [i * 1000, i * 1000 + 500]))).toHaveLength(64);
+    // Поля v3 у записи v2 не принимаются
+    const old = validateSignal(signal({ v: 2, spans: [[0, 1000]], endedBy: 'auto' }));
+    expect(old?.spans).toBeUndefined();
+    expect(old?.endedBy).toBeUndefined();
 });
 
 it('«не у компьютера» решает main, признак со страницы не принимается', () => {

@@ -14,7 +14,7 @@ const recommend = new RecommendStore(directory);
 const overrides = new Map<number, TasteMark[]>();
 const taste = new TasteService(directory, index, (userId) => overrides.get(userId) ?? new WaveExclusions(directory).load(userId).more.map((entry) => ({
     id: entry.id, artist: entry.artistId ?? 0, genre: entry.genre ?? '', tags: entry.tags ?? '', at: entry.at,
-})));
+})), (userId, played) => recommend.tasteLibrary(userId, played));
 function run(request: LibraryRequest): unknown {
     switch (request.method) {
         case 'sync': return index.sync(...request.args);

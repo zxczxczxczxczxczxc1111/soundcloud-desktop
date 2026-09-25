@@ -81,6 +81,25 @@ export interface LibraryMember {
     /** Когда добавлено по данным сайта, мс; 0 если неизвестно */
     added: number;
 }
+/** Загрузка для модели вкуса: только то, из чего складываются направления */
+export interface TasteUpload {
+    id: number;
+    uploader: number;
+    uploaderName: string;
+    title: string;
+    duration: number;
+    genre: string;
+    tags: string;
+    credits: TrackCredit[];
+}
+export interface TasteLibrary {
+    /** Лайки сайта, новые сверху; added 0, если дата неизвестна (массовый импорт). upload null, если загрузка не сохранилась */
+    likes: Array<{ id: number; added: number; upload: TasteUpload | null }>;
+    /** Подписки: id аккаунтов */
+    follows: number[];
+    /** Разбор сыгранных загрузок, которые есть в хранилище: кредиты из метаданных издателя */
+    uploads: TasteUpload[];
+}
 
 type Values = Record<string, unknown>;
 const SQLITE_CORRUPT = 11;
@@ -162,6 +181,20 @@ function toState(row: Values): SourceState {
         error: str(row.error),
     };
 }
+function toTasteUpload(row: Values): TasteUpload {
+    const credits = parseJson(str(row.credits));
+    return {
+        id: num(row.id),
+        uploader: num(row.uploader),
+        uploaderName: str(row.uploader_name),
+        title: str(row.title),
+        duration: num(row.duration),
+        genre: str(row.genre),
+        tags: str(row.tags),
+        credits: Array.isArray(credits) ? (credits as TrackCredit[]) : [],
+    };
+}
+const TASTE_UPLOAD = 'u.id, u.uploader, u.uploader_name, u.title, u.duration, u.genre, u.tags, u.credits';
 // Строка хранилища обратно в трек для сравнения версий
 const asTrack = (row: Values): WaveTrack => ({
     id: num(row.id),
@@ -394,6 +427,31 @@ export class RecommendStore {
                 key: str(row.key), added: num(row.added),
             })),
         );
+    }
+    /** Для модели вкуса: лайки с датой и разбором, подписки и разбор сыгранных загрузок played */
+    public tasteLibrary(userId: unknown, played: unknown): TasteLibrary {
+        if (!isId(userId)) return { likes: [], follows: [], uploads: [] };
+        const ids = Array.isArray(played) ? [...new Set(played.filter(isId))].slice(0, 20000) : [];
+        return this.guarded(userId, (db) => {
+            const likes = (db.prepare(
+                'select m.key as member, m.added, ' + TASTE_UPLOAD + " from members m left join uploads u on u.key = m.key where m.source = 'likes' and m.removed = 0 " +
+                    'order by m.added desc, m.key limit 20000',
+            ).all() as Values[]).map((row) => ({
+                id: Number(str(row.member).slice('sc:track:'.length)),
+                added: num(row.added),
+                upload: row.id === null || row.id === undefined ? null : toTasteUpload(row),
+            })).filter((like) => isId(like.id));
+            const follows = (db.prepare("select key from members where source = 'followings' and removed = 0 order by key limit 5000").all() as Values[])
+                .map((row) => Number(str(row.key).slice('sc:user:'.length)))
+                .filter(isId);
+            const select = db.prepare('select ' + TASTE_UPLOAD + ' from uploads u where u.key = ?');
+            const uploads: TasteUpload[] = [];
+            for (const id of ids) {
+                const row = select.get('sc:track:' + id) as Values | undefined;
+                if (row) uploads.push(toTasteUpload(row));
+            }
+            return { likes, follows, uploads };
+        });
     }
     public close(): void {
         for (const db of this.handles.values()) if (db.isOpen) db.close();

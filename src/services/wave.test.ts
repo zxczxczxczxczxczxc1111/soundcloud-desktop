@@ -2,13 +2,13 @@ import { describe, expect, it } from 'vitest';
 import {
     WAVE_TEXTS, acceptCandidate, artworkUrl, canonicalUrl, classifyLink, formatGenres, genreKeys, genreKeysFor, isWaveEligible,
     moodTags, normalizeTag, trackPath, parseGenres, pickSpaced, reasonText, shapeSamples, topGenres, trackMatchesGenre,
-    applyTasteReasons, tagKeys, tasteMaps, tasteOrder, tasteReason, type TasteMaps, type WaveCandidate, type WaveFilter, type WaveTrack,
+    applyTasteReasons, tagKeys, tasteMaps, tasteOrder, tasteReason, tasteScore, type TasteMaps, type WaveCandidate, type WaveFilter, type WaveTrack,
     countText, forgottenPicks, localDay, pickFinds, tasteGroups,
 } from './wave';
 
 describe('вкус волны', () => {
-    const taste = (artists: Array<[number, number]>, tags: Array<[string, number]> = [], tracks: Array<[number, number]> = []): TasteMaps =>
-        tasteMaps({ artists, tags, tracks }) ?? { artists: new Map(), tags: new Map(), tracks: new Map() };
+    const taste = (artists: Array<[number, number]>, tags: Array<[string, number]> = [], tracks: Array<[number, number]> = [], extra: object = {}): TasteMaps =>
+        tasteMaps({ artists, tags, tracks, ...extra }) ?? { artists: new Map(), credits: new Map(), families: new Map(), tags: new Map(), markers: new Map(), tracks: new Map() };
     const item = (id: number, artist: number, extra: Partial<WaveTrack> = {}): WaveCandidate => ({
         track: { id, kind: 'track', user_id: artist, duration: 180000, title: 'T' + id, ...extra },
         reason: { kind: 'similar', seed: 'Seed' },
@@ -21,6 +21,39 @@ describe('вкус волны', () => {
         expect([...(maps?.artists ?? [])]).toEqual([[1, 2]]);
         expect([...(maps?.tags ?? [])]).toEqual([['techno', 1]]);
         expect(maps?.tracks.size).toBe(0);
+        // Профиль до P4 без новых частей читается, новые части проверяются так же
+        expect(maps?.credits.size).toBe(0);
+        const next = tasteMaps({ credits: [['artistx', 1], [5, 1]], families: [['song|artistx', 0.5]], markers: [['slowed', 0.2], ['remix', 'x']] });
+        expect([...(next?.credits ?? [])]).toEqual([['artistx', 1]]);
+        expect([...(next?.families ?? [])]).toEqual([['song|artistx', 0.5]]);
+        expect([...(next?.markers ?? [])]).toEqual([['slowed', 0.2]]);
+    });
+
+    it('A14: любимый исполнитель доходит до его песен на чужих каналах, имя загрузчика не считается дважды', () => {
+        const profile = taste([[10, 0.4]], [], [], {
+            credits: [['artistx', 1.5], ['artistz', 0.6], ['bad', -0.5]],
+            families: [['song|artistx', 0.6]],
+            markers: [['slowed', 0.4]],
+        });
+        // Ремикс любимого исполнителя на незнакомом канале: вес участника, семьи и пометки
+        const repost = item(1, 99, { title: 'Artist X - Song (slowed)', user: { id: 99, username: 'Some Channel' } });
+        const score = tasteScore(repost.track, profile);
+        expect(score.artist).toBe(0);
+        expect(score.credit).toBeCloseTo(1.5, 6);
+        expect(score.creditName).toBe('Artist X');
+        expect(score.family).toBeCloseTo(0.6, 6);
+        expect(score.marker).toBeCloseTo(0.4, 6);
+        expect(score.known).toBe(true);
+        expect(tasteReason(repost, profile)).toEqual({ kind: 'tasteArtist', artist: 'Artist X' });
+        // Своё у самого исполнителя: вес аккаунта, имя в участниках не добавляется
+        const own = item(2, 10, { title: 'Other Song', user: { id: 10, username: 'Artist Z' } });
+        expect(tasteScore(own.track, profile)).toMatchObject({ artist: 0.4, credit: 0 });
+        // Минус участника и плюс другого складываются
+        const mixed = item(3, 98, { title: 'Artist X, Bad - Thing', user: { id: 98, username: 'Hub' } });
+        expect(tasteScore(mixed.track, profile).credit).toBeCloseTo(1, 6);
+        // Безымянный ремикс без участников оценивается остальным и не выпадает
+        const anon = item(4, 97, { title: 'Nightcall (Remix)', genre: 'phonk', user: { id: 97, username: 'anon' } });
+        expect(tasteScore(anon.track, taste([], [['phonk', 1]])).score).toBeCloseTo(1, 6);
     });
 
     it('сильный минус отсеивается, любимое чаще встаёт вперёд, треть мест у новых артистов', () => {
