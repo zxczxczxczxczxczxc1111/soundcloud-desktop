@@ -59,9 +59,6 @@ app.whenReady().then(async () => {
     };
     const responses = {
         'get-translations': {},
-        'get-custom-themes': [],
-        'get-plugins': [],
-        'get-current-custom-theme': 'none',
         'get-current-track': empty,
         'get-accounts': { accounts: [], currentAccountId: 'default' },
         'get-update-state': { mode: 'dev', version: '0.0.0', enabled: true, hint: '', status: '', releaseUrl: '' },
@@ -102,20 +99,6 @@ app.whenReady().then(async () => {
     }
     console.log('PASS: settings lifecycle');
     manager.dispose();
-    const { showHomepageConfirmDialog } = require('../tsc/settings/confirmPopup');
-    for (const accept of [false, true]) {
-        const texts = { title: 'Страница плагина', question: 'Открыть этот адрес в браузере?', cancel: 'Отмена', open: 'Открыть в браузере' };
-        const confirmed = showHomepageConfirmDialog(win, 'https://example.com/?q=<script>alert(1)</script>', texts);
-        const view = win.contentView.children.at(-1);
-        await new Promise(resolve => view.webContents.once('did-finish-load', resolve));
-        assert.equal(await view.webContents.executeJavaScript("document.querySelector('.url').textContent.includes('<script>')"), true);
-        // Нажатие уничтожает view: ответ executeJavaScript может уже не вернуться.
-        void view.webContents.executeJavaScript(`document.getElementById('${accept ? 'confirmBtn' : 'cancelBtn'}').click()`)
-            .catch(error => { if (!view.webContents.isDestroyed()) throw error; });
-        assert.equal(await confirmed, accept);
-        assert.equal(win.listenerCount('closed'), closedListeners);
-    }
-    console.log('PASS: dialogs');
     const { UpdateScreen } = require('../tsc/update/updateScreen');
     const updateScreen = new UpdateScreen(win, 32);
     const updateView = win.contentView.children.at(-1);
@@ -152,23 +135,6 @@ app.whenReady().then(async () => {
     await notificationClosed;
     notifications.dispose();
     console.log('PASS: notifications');
-    const { pluginInjection, pluginCleanup } = require('../tsc/services/pluginScripts');
-    await win.webContents.executeJavaScript(pluginInjection("quote'plugin", 'globalThis.pluginLoaded = true;'));
-    assert.equal(await win.webContents.executeJavaScript('globalThis.pluginLoaded'), true);
-    await win.webContents.executeJavaScript(pluginCleanup("quote'plugin"));
-    const { PluginProcess } = require('../tsc/services/pluginProcess');
-    const failures = [];
-    const worker = new PluginProcess((error) => failures.push(error.message));
-    const code = await worker.request({ kind: 'load', filename: 'test-plugin.js', source: 'let count = 0; module.exports = { contentScript: () => "/* test */", onTrackChange: () => ++count };' });
-    assert.equal(code, '/* test */');
-    assert.equal(await worker.request({ kind: 'track', track: {} }), 1);
-    await worker.dispose();
-    assert.equal(failures.length, 0);
-    const stuck = new PluginProcess((error) => failures.push(error.message));
-    await stuck.request({ kind: 'load', filename: 'stuck-plugin.js', source: 'module.exports = { onTrackChange: () => { while (true) {} } };' });
-    await assert.rejects(stuck.request({ kind: 'track', track: {} }), /остановлен/);
-    assert.equal(failures.length, 1);
-    console.log('PASS: plugin processes');
     const http = require('node:http');
     const { ProxyService } = require('../tsc/services/proxyService');
     let authenticated = false;
@@ -231,6 +197,6 @@ app.whenReady().then(async () => {
     }
     console.log('PASS: window restored from tray');
     win.destroy();
-    console.log('PASS: CSS boundary, 30 settings cycles, quoted plugin ID, isolated plugin callbacks and hung worker termination, IPC rejection, dialogs, proxy authentication and disable.');
+    console.log('PASS: CSS boundary, 30 settings cycles, IPC rejection, update screen, notifications, proxy authentication and disable.');
     app.quit();
 });

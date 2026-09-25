@@ -1,10 +1,8 @@
 import { trustLocalFile } from '../trustedViews';
-import { ViewStyles } from '../services/viewStyles';
 import { homeBlockDefaults } from '../services/homeBlocks';
 import { TEMPLATE_DEFAULTS } from '../services/presenceService';
 import { WebContentsView, BrowserWindow, ipcMain, type IpcMainInvokeEvent, type WebContents } from 'electron';
 import type ElectronStore from 'electron-store';
-import type { ThemeColors } from '../utils/colorExtractor';
 import { join } from 'path';
 import type { GpuRuntimeState } from '../services/gpuProcessMode';
 
@@ -44,21 +42,16 @@ const defaults: Record<string, string | number | boolean> = {
 
 export class SettingsManager {
     private view: WebContentsView | null = null;
-    private colors: ThemeColors | null = null;
-    private customCSS = '';
-    private styles = new ViewStyles();
     private disposed = false;
     private resize = (): void => this.updateBounds();
     private ready = (event: IpcMainInvokeEvent): void => {
         if (!this.owns(event)) return;
         const view = this.view!;
-        void this.applyStyles().then(() => {
-            if (this.view !== view || view.webContents.isDestroyed()) return;
-            view.webContents.send('update-translations');
-            view.setVisible(true);
-            view.webContents.focus();
-            return view.webContents.executeJavaScript("requestAnimationFrame(() => requestAnimationFrame(() => document.body.classList.add('visible')))");
-        }).catch((error: unknown) => {
+        if (view.webContents.isDestroyed()) return;
+        view.webContents.send('update-translations');
+        view.setVisible(true);
+        view.webContents.focus();
+        void view.webContents.executeJavaScript("requestAnimationFrame(() => requestAnimationFrame(() => document.body.classList.add('visible')))").catch((error: unknown) => {
             if (this.view === view && !view.webContents.isDestroyed()) console.error('Не удалось показать настройки:', error);
         });
     };
@@ -133,33 +126,6 @@ export class SettingsManager {
         if (!this.view || this.parentWindow.isDestroyed()) return;
         const bounds = this.parentWindow.getContentBounds();
         this.view.setBounds({ x: 0, y: 32, width: bounds.width, height: Math.max(0, bounds.height - 32) });
-    }
-    private async applyStyles(): Promise<void> {
-        const contents = this.view?.webContents;
-        if (!contents || contents.isDestroyed()) return;
-        const colors = this.colors;
-        const variables = colors
-            ? ':root{--bg-primary:' +
-              (colors.surface || colors.background) +
-              ';--bg-secondary:' +
-              colors.background +
-              ';--text-primary:' +
-              colors.text +
-              ';--accent:' +
-              (colors.accent || colors.primary) +
-              ';}'
-            : '';
-        await this.styles.apply(contents, variables + '\n' + this.customCSS).catch((error: unknown) => {
-            if (!contents.isDestroyed()) console.error('Не удалось применить тему настроек:', error);
-        });
-    }
-    public setThemeColors(colors: ThemeColors | null): void {
-        this.colors = colors;
-        void this.applyStyles();
-    }
-    public setCustomCSS(css: string): void {
-        this.customCSS = css;
-        void this.applyStyles();
     }
     public getView(): WebContentsView | null {
         return this.view;

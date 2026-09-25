@@ -34,7 +34,6 @@
                     <button data-target="home">Главная</button>
                     <button data-target="wave">Моя волна</button>
                     <button data-target="discord">Discord</button>
-                    <button data-target="extensions">Темы и плагины</button>
                     <button data-target="account">Аккаунт</button>
                     <button data-target="advanced" id="advancedNav">Дополнительно<span class="nav-dot" aria-hidden="true"></span></button>
                 </nav>
@@ -180,36 +179,6 @@
                         </div>
                     </section>
 
-                    <section class="section" id="extensions" hidden>
-                        <h2>Темы и плагины</h2>
-                        <div class="row"><span class="text">Своя тема</span></div>
-                        <div class="controls">
-                            <select id="customThemeSelector" class="input" aria-label="Своя тема">
-                                <option value="none">Без темы</option>
-                            </select>
-                            <button id="openThemesFolder" class="icon-btn" title="Открыть папку тем" aria-label="Открыть папку тем">
-                                <svg viewBox="0 0 24 24"><path d="M10 4H4a2 2 0 0 0-2 2v12a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-8z" /></svg>
-                            </button>
-                            <button id="refreshThemes" class="icon-btn" title="Перечитать папку тем" aria-label="Перечитать папку тем">
-                                <svg viewBox="0 0 24 24"><path d="M17.65 6.35A7.96 7.96 0 0 0 12 4a8 8 0 1 0 7.73 10h-2.08A6 6 0 1 1 12 6c1.66 0 3.14.69 4.22 1.78L13 11h7V4z" /></svg>
-                            </button>
-                        </div>
-                        <div class="row divided">
-                            <span class="text">Плагины</span>
-                            <span class="icons">
-                                <button id="openPluginsFolder" class="icon-btn" title="Открыть папку плагинов" aria-label="Открыть папку плагинов">
-                                    <svg viewBox="0 0 24 24"><path d="M10 4H4a2 2 0 0 0-2 2v12a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-8z" /></svg>
-                                </button>
-                                <button id="refreshPlugins" class="icon-btn" title="Перечитать папку плагинов" aria-label="Перечитать папку плагинов">
-                                    <svg viewBox="0 0 24 24"><path d="M17.65 6.35A7.96 7.96 0 0 0 12 4a8 8 0 1 0 7.73 10h-2.08A6 6 0 1 1 12 6c1.66 0 3.14.69 4.22 1.78L13 11h7V4z" /></svg>
-                                </button>
-                            </span>
-                        </div>
-                        <div class="plugin-list" id="pluginList" data-no-i18n>
-                            <div class="no-plugins">Папка плагинов пуста</div>
-                        </div>
-                    </section>
-
                     <section class="section" id="account" hidden>
                         <h2>Аккаунт</h2>
                         <div class="controls">
@@ -276,7 +245,7 @@
                             </div>
                             <div id="diagnosticsStatus" class="hint pad" role="status"></div>
                             <div class="row">
-                                <span class="text"><span>Папка данных клиента</span><span class="hint">Настройки, темы и плагины</span></span>
+                                <span class="text"><span>Папка данных клиента</span><span class="hint">Настройки и история</span></span>
                                 <button id="openDataFolder" class="btn">Открыть</button>
                             </div>
                         </div>

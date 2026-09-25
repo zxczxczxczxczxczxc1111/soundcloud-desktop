@@ -4,7 +4,6 @@ const SEND_CHANNELS = new Set([
     'settings-ready',
     'apply-changes',
     'setting-changed',
-    'show-plugin-homepage-dialog',
     'toggle-settings',
     'switch-account',
     'add-account',
@@ -15,18 +14,8 @@ const INVOKE_CHANNELS = new Set([
     'export-diagnostics',
     'get-settings-state',
     'get-current-track',
-    'apply-custom-theme',
-    'get-current-custom-theme',
-    'get-custom-themes',
-    'get-plugins',
-    'get-plugins-folder-path',
-    'get-themes-folder-path',
     'get-translations',
     'open-external-url',
-    'open-path',
-    'refresh-custom-themes',
-    'refresh-plugins',
-    'set-plugin-enabled',
     'get-accounts',
     'get-update-state',
     'open-release-page',
@@ -37,7 +26,7 @@ const INVOKE_CHANNELS = new Set([
     'remove-wave-exclusion',
 ]);
 
-const ON_CHANNELS = new Set(['presence-preview-update', 'discord-incognito-changed', 'update-translations', 'accounts-updated', 'plugins-changed', 'update-state', 'wave-exclusions-changed']);
+const ON_CHANNELS = new Set(['presence-preview-update', 'discord-incognito-changed', 'update-translations', 'accounts-updated', 'update-state', 'wave-exclusions-changed']);
 
 function isHttpsUrl(value: string): boolean {
     try {
@@ -67,9 +56,5 @@ contextBridge.exposeInMainWorld('settingsAPI', {
     openExternal: (url: string) => {
         if (!isHttpsUrl(url)) return Promise.resolve('');
         return ipcRenderer.invoke('open-external-url', url);
-    },
-    openPath: (targetPath: string) => {
-        if (typeof targetPath !== 'string' || !targetPath) return Promise.resolve('Invalid path');
-        return ipcRenderer.invoke('open-path', targetPath);
     },
 });

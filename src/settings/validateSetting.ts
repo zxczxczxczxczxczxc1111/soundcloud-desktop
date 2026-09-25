@@ -3,7 +3,7 @@ import { isGpuCompatibilityMode, type GpuCompatibilityMode } from '../services/g
 
 const booleanKeys = new Set(['adBlocker', 'proxyEnabled', 'webhookEnabled', 'displaySCSmallIcon', 'displayGithubLink', 'discordRichPresence', 'displayButtons', 'minimizeToTray', 'navigationControlsEnabled', 'trackParserEnabled', 'richPresencePreviewEnabled', 'hidePromotions', 'hideEventsNearYou', 'hideArtistUpsells', 'hideHeaderExtras', 'fullShuffle', 'autoUpdateEnabled', 'discordIncognito', 'reduceMotion', ...HOME_BLOCK_KEYS]);
 type BooleanKey = 'adBlocker' | 'proxyEnabled' | 'webhookEnabled' | 'displaySCSmallIcon' | 'displayGithubLink' | 'discordRichPresence' | 'displayButtons' | 'minimizeToTray' | 'navigationControlsEnabled' | 'trackParserEnabled' | 'richPresencePreviewEnabled' | 'hidePromotions' | 'hideEventsNearYou' | 'hideArtistUpsells' | 'hideHeaderExtras' | 'fullShuffle' | 'autoUpdateEnabled' | 'discordIncognito' | 'reduceMotion' | HomeBlockKey;
-type StringKey = 'proxyHost' | 'proxyPort' | 'proxyUsername' | 'proxyPassword' | 'webhookUrl' | 'customTheme' | DiscordTextKey;
+type StringKey = 'proxyHost' | 'proxyPort' | 'proxyUsername' | 'proxyPassword' | 'webhookUrl' | DiscordTextKey;
 /** Шаблоны строк карточки Discord и стоп-листы артистов и жанров */
 export type DiscordTextKey = 'discordLine1' | 'discordLine2' | 'discordCoverText' | 'discordHiddenArtists' | 'discordHiddenGenres';
 export const DISCORD_TEXT_KEYS: ReadonlySet<string> = new Set<DiscordTextKey>(['discordLine1', 'discordLine2', 'discordCoverText', 'discordHiddenArtists', 'discordHiddenGenres']);
@@ -20,7 +20,7 @@ export function validateSettingChange(input: unknown): input is SettingChange {
     if (key === 'webhookTriggerPercentage') return typeof value === 'number' && Number.isFinite(value) && value >= 0 && value <= 100;
     if (typeof value !== 'string') return false;
     if (key === 'proxyPassword') return value.length <= 4096;
-    if (key === 'proxyHost' || key === 'proxyUsername' || key === 'customTheme') return value.length <= 256 && !/[\r\n\0]/.test(value);
+    if (key === 'proxyHost' || key === 'proxyUsername') return value.length <= 256 && !/[\r\n\0]/.test(value);
     // Шаблон это одна строка карточки; стоп-листы бывают в несколько строк
     if (key === 'discordLine1' || key === 'discordLine2' || key === 'discordCoverText') return value.length <= 256 && !/[\r\n\0]/.test(value);
     if (key === 'discordHiddenArtists' || key === 'discordHiddenGenres') return value.length <= 4000 && !value.includes('\0');

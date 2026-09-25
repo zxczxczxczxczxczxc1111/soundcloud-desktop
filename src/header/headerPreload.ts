@@ -13,7 +13,7 @@ const SEND_CHANNELS = new Set([
     'toggle-queue',
 ]);
 
-const INVOKE_CHANNELS = new Set(['get-header-texts', 'get-navigation-controls-enabled', 'get-theme-colors', 'is-maximized']);
+const INVOKE_CHANNELS = new Set(['get-header-texts', 'get-navigation-controls-enabled', 'is-maximized']);
 
 const ON_CHANNELS = new Set([
     'header-texts',
@@ -21,7 +21,6 @@ const ON_CHANNELS = new Set([
     'navigation-controls-toggle',
     'navigation-state-changed',
     'refresh-state-changed',
-    'theme-colors-changed',
     'window-maximized-changed',
 ]);
 

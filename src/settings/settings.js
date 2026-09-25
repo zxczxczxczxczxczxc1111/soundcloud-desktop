@@ -83,117 +83,9 @@ async function initializeSettings() {
     };
     const shell = {
         openExternal: (url) => window.settingsAPI.openExternal(url),
-        openPath: (targetPath) => window.settingsAPI.openPath(targetPath),
     };
 
     // data loading functions
-    async function loadCustomThemes() {
-        try {
-            const themes = await ipcRenderer.invoke('get-custom-themes');
-            const currentTheme = await ipcRenderer.invoke('get-current-custom-theme');
-            const selector = document.getElementById('customThemeSelector');
-            if (!selector) return;
-
-            while (selector.children.length > 1) {
-                selector.removeChild(selector.lastChild);
-            }
-
-            themes.forEach((theme) => {
-                const option = document.createElement('option');
-                option.value = theme.name;
-                option.textContent = theme.name;
-                selector.appendChild(option);
-            });
-
-            selector.value = currentTheme || 'none';
-        } catch (error) {
-            console.error('Failed to load custom themes:', error);
-        }
-    }
-
-    async function loadPlugins() {
-        try {
-            const plugins = await ipcRenderer.invoke('get-plugins');
-            const list = document.getElementById('pluginList');
-            if (!list) return;
-
-            list.innerHTML = '';
-
-            if (!plugins || plugins.length === 0) {
-                const empty = document.createElement('div');
-                empty.className = 'no-plugins';
-                empty.textContent = tr('Папка плагинов пуста');
-                list.appendChild(empty);
-                return;
-            }
-
-            plugins.forEach((p) => {
-                const card = document.createElement('div');
-                card.className = 'plugin-card';
-                const hasHomepage = p.metadata.homepage && p.metadata.homepage.trim() !== '';
-                const nameClass = hasHomepage ? 'plugin-name has-homepage' : 'plugin-name';
-
-                const header = document.createElement('div');
-                header.className = 'plugin-header';
-
-                const spanWrapper = document.createElement('span');
-                const nameEl = document.createElement('span');
-                nameEl.className = nameClass;
-                nameEl.textContent = p.metadata.name || p.id;
-                if (hasHomepage) {
-                    nameEl.dataset.homepage = p.metadata.homepage;
-                    nameEl.title = tr('Открыть страницу плагина');
-                    nameEl.addEventListener('click', (e) => {
-                        e.stopPropagation();
-                        ipcRenderer.send('show-plugin-homepage-dialog', nameEl.dataset.homepage);
-                    });
-                }
-                spanWrapper.appendChild(nameEl);
-
-                const versionEl = document.createElement('span');
-                versionEl.className = 'plugin-version';
-                versionEl.textContent = 'v' + (p.metadata.version || '?');
-                spanWrapper.appendChild(versionEl);
-                header.appendChild(spanWrapper);
-
-                const toggle = document.createElement('label');
-                toggle.className = 'toggle';
-                const checkbox = document.createElement('input');
-                checkbox.type = 'checkbox';
-                checkbox.dataset.pluginId = p.id;
-                checkbox.checked = p.enabled;
-                checkbox.addEventListener('change', async (e) => {
-                    const enabled = e.target.checked;
-                    await ipcRenderer.invoke('set-plugin-enabled', p.id, enabled);
-                });
-                const slider = document.createElement('span');
-                slider.className = 'slider';
-                toggle.appendChild(checkbox);
-                toggle.appendChild(slider);
-                header.appendChild(toggle);
-                card.appendChild(header);
-
-                if (p.metadata.description) {
-                    const descEl = document.createElement('div');
-                    descEl.className = 'plugin-desc';
-                    descEl.textContent = p.metadata.description;
-                    card.appendChild(descEl);
-                }
-
-                if (p.metadata.author && p.metadata.author !== 'Unknown') {
-                    const authorEl = document.createElement('div');
-                    authorEl.className = 'plugin-author';
-                    authorEl.textContent = tr('Автор:') + ' ' + p.metadata.author;
-                    card.appendChild(authorEl);
-                }
-
-                list.appendChild(card);
-            });
-        } catch (error) {
-            console.error('Failed to load plugins:', error);
-        }
-    }
-
     async function loadAccounts() {
         try {
             const data = await ipcRenderer.invoke('get-accounts');
@@ -381,7 +273,7 @@ async function initializeSettings() {
         new MutationObserver(sync).observe(select, { childList: true, subtree: true, characterData: true });
         sync();
     }
-    for (const id of ['customThemeSelector', 'accountSelector', 'siteLanguage', 'gpuCompatibilityMode']) {
+    for (const id of ['accountSelector', 'siteLanguage', 'gpuCompatibilityMode']) {
         const select = document.getElementById(id);
         if (select) enhanceSelect(select);
     }
@@ -420,9 +312,6 @@ async function initializeSettings() {
 
     // initilization
 
-    loadCustomThemes();
-    loadPlugins();
-    ipcRenderer.on('plugins-changed', () => loadPlugins());
     loadAccounts();
 
     // account manager event listeners
@@ -448,55 +337,6 @@ async function initializeSettings() {
             ipcRenderer.send('logout-account');
         });
     }
-
-    // standard UI event listeners
-    document.getElementById('customThemeSelector')?.addEventListener('change', async (e) => {
-        const themeName = e.target.value;
-        try {
-            await ipcRenderer.invoke('apply-custom-theme', themeName);
-            ipcRenderer.send('setting-changed', { key: 'customTheme', value: themeName });
-        } catch (error) {
-            console.error('Failed to apply custom theme:', error);
-        }
-    });
-
-    document.getElementById('openThemesFolder')?.addEventListener('click', async () => {
-        try {
-            const themesPath = await ipcRenderer.invoke('get-themes-folder-path');
-            shell.openPath(themesPath);
-        } catch (error) {
-            console.error('Failed to open themes folder:', error);
-        }
-    });
-
-    document.getElementById('refreshThemes')?.addEventListener('click', async () => {
-        try {
-            await ipcRenderer.invoke('refresh-custom-themes');
-            await loadCustomThemes();
-        } catch (error) {
-            console.error('Failed to refresh themes:', error);
-        }
-    });
-
-
-
-    document.getElementById('openPluginsFolder')?.addEventListener('click', async () => {
-        try {
-            const pluginsPath = await ipcRenderer.invoke('get-plugins-folder-path');
-            shell.openPath(pluginsPath);
-        } catch (error) {
-            console.error('Failed to open plugins folder:', error);
-        }
-    });
-
-    document.getElementById('refreshPlugins')?.addEventListener('click', async () => {
-        try {
-            await ipcRenderer.invoke('refresh-plugins');
-            await loadPlugins();
-        } catch (error) {
-            console.error('Failed to refresh plugins:', error);
-        }
-    });
 
     // UI customization toggles
     document.getElementById('hidePromotions')?.addEventListener('change', (e) => {
@@ -535,7 +375,6 @@ async function initializeSettings() {
         applyLanguage();
         document.getElementById('diagnosticsStatus').textContent = '';
         loadAccounts();
-        loadPlugins();
         loadWaveExclusions();
         updatePreview(lastPreview);
     });
