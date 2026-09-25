@@ -124,18 +124,6 @@
       <sub><kbd>Ctrl</kbd> + <kbd>Shift</kbd> + <kbd>N</kbd> прячет трек из Discord. Волна и история работают как обычно.</sub>
     </td>
     <td valign="top">
-      <img src="assets/readme/icons/themes.svg" width="28" height="28" alt=""><br>
-      <b>Темы</b><br>
-      <sub>CSS-файл в папке тем меняет вид SoundCloud, правки видны сразу.</sub>
-    </td>
-    <td valign="top">
-      <img src="assets/readme/icons/plugins.svg" width="28" height="28" alt=""><br>
-      <b>Плагины</b><br>
-      <sub>Свои JS-файлы добавляют то, чего в SoundCloud нет, и работают в отдельном процессе.</sub>
-    </td>
-  </tr>
-  <tr>
-    <td valign="top">
       <img src="assets/readme/icons/proxy.svg" width="28" height="28" alt=""><br>
       <b>Прокси</b><br>
       <sub>HTTP-прокси с логином и паролем. Пароль Windows хранит в зашифрованном виде.</sub>
@@ -145,6 +133,8 @@
       <b>Вебхуки</b><br>
       <sub>Трек доиграл до нужного процента, и клиент шлёт его данные в JSON на твой адрес.</sub>
     </td>
+  </tr>
+  <tr>
     <td valign="top">
       <img src="assets/readme/icons/diagnostics.svg" width="28" height="28" alt=""><br>
       <b>Диагностика</b><br>
@@ -183,91 +173,28 @@
 </details>
 
 <details>
-<summary><b>Плагины и темы</b></summary>
-
-Готовых плагинов и тем в клиенте нет. Открой настройки по <kbd>F1</kbd>, в разделе «Темы и плагины» открой нужную папку, кинь туда файл и нажми «Перечитать».
-
-> [!WARNING]
-> Плагин запускает свой код на странице SoundCloud, где ты залогинен. Ставь только те, чей код прочитал сам или чьему автору доверяешь.
-
-Если тема или плагин что-то сломали, нажми правой кнопкой на значок клиента в трее и выбери «Сбросить тему и плагины».
-
-### Свой плагин
-
-Плагин это `.js`-файл в папке плагинов, а его ID это имя файла без расширения. Любой метод можно пропустить.
-
-```js
-/**
- * @name my-plugin
- * @author you
- * @version 1.0.0
- * @description Что делает плагин
- * @license MIT
- */
-
-module.exports = {
-    onEnable() {},
-    onDisable() {},
-
-    // track: { title, author, isPlaying, ... }
-    onTrackChange(track) {},
-
-    // Строка с кодом, который выполняется на странице SoundCloud
-    // при каждой загрузке и навигации.
-    contentScript() {
-        return `
-            (function () {
-                // Уборка при выключении плагина. Имя: __scrpc_cleanup_ + ID,
-                // где всё кроме букв, цифр и _ заменено на _.
-                window.__scrpc_cleanup_my_plugin = function () {};
-            })();
-        `;
-    },
-};
-```
-
-Хуки `onEnable`, `onDisable` и `onTrackChange` крутятся в отдельном процессе, до окна им не дотянуться. На страницу попадает только строка из `contentScript`.
-
-### Своя тема
-
-Тема это `.css`-файл в папке тем. Проще всего переопределить переменные SoundCloud в `.theme-dark`:
-
-```css
-.theme-dark {
-    --surface-color: #282828 !important;
-    --primary-color: #ebdbb2 !important;
-    --secondary-color: #a89984 !important;
-    --link-color: #83a598 !important;
-}
-```
-
-</details>
-
-<details>
 <summary><b>Как устроено</b></summary>
 
 ```mermaid
 flowchart LR
     subgraph win["Окно клиента"]
         header["Заголовок"]
-        page["soundcloud.com<br/>+ волна, тема и скрипты плагинов"]
+        page["soundcloud.com<br/>+ волна"]
         history["История · Ctrl+H"]
         settings["Настройки · F1"]
     end
 
     main["Главный процесс<br/>журнал, история и вкус волны<br/>Discord · прокси · блокировщик<br/>вебхуки · медиа · диагностика"]
-    plugins["Процесс плагинов"]
 
     header <-->|IPC| main
     page <-->|IPC| main
     history <-->|IPC| main
     settings <-->|IPC| main
-    main <--> plugins
     main --> discord[("Discord")]
     main --> hook[("Вебхук")]
 ```
 
-Заголовок, страница, история и настройки это отдельные Electron-view, у каждого свой preload. Главный процесс слушает IPC только от своих окон. Журнал прослушиваний пишется в файлы профиля, история и вкус волны считаются по нему в SQLite. Плагины живут в `utilityProcess`, и если какой-то зависнет, клиент его прибьёт. Если упадёт страница SoundCloud, клиент её перезагрузит, а сам не закроется.
+Заголовок, страница, история и настройки это отдельные Electron-view, у каждого свой preload. Главный процесс слушает IPC только от своих окон. Журнал прослушиваний пишется в файлы профиля, история и вкус волны считаются по нему в SQLite. Если упадёт страница SoundCloud, клиент её перезагрузит, а сам не закроется.
 
 </details>
 

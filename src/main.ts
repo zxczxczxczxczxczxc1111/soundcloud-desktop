@@ -8,7 +8,7 @@ import { applyPreferenceMigrations } from './settings/preferenceMigrations';
 import { isTrustedLocalSender, trustLocalFile } from './trustedViews';
 import { PlaybackController } from './services/playbackController';
 import { AdblockService } from './services/adblockService';
-import { ViewStyles, splitThemeCSS } from './services/viewStyles';
+import { ViewStyles } from './services/viewStyles';
 import { ARTIST_TOOLS_CSS, pageFeaturesScript } from './services/pageFeatures';
 import { fullShuffleScript } from './services/fullShuffle';
 import { homeBlockDefaults, homeBlocksCss, homePageScript, isHomeBlockKey } from './services/homeBlocks';
@@ -56,11 +56,8 @@ import { WebhookService } from './services/webhookService';
 import { UpdateService, type UpdateMode, type UpdateStatus } from './services/updateService';
 import { UpdateScreen } from './update/updateScreen';
 import { autoUpdater } from 'electron-updater';
-import { ThemeService } from './services/themeService';
 import { ShortcutService } from './services/shortcutService';
-import { PluginService } from './services/pluginService';
 import { audioMonitorScript } from './services/audioMonitorService';
-import { showHomepageConfirmDialog, updateDialogBounds, type ConfirmTexts } from './settings/confirmPopup';
 import type { SiteDictionary, TrackInfo } from './types';
 import { validateTrackMeta, validateTrackUpdatePayload } from './validation';
 import path from 'path';
@@ -185,9 +182,7 @@ const appLanguage = (): AppLanguage => (store.get('siteLanguage', 'ru') === 'en'
 const translationService = new TranslationService(appLanguage);
 let thumbarService: ThumbarService;
 let playbackController: PlaybackController;
-let themeService: ThemeService;
 let shortcutService: ShortcutService;
-let pluginService: PluginService;
 let tray: Tray | null = null;
 let trayMenu: Menu | null = null;
 let isQuitting = false;
@@ -332,17 +327,6 @@ function installDesktopFile() {
     }
 }
 
-// tray setup
-// Запасной выход из трея: тема с @target all или settings может спрятать саму панель настроек
-function resetThemeAndPlugins(): void {
-    if (!themeService || !pluginService) return;
-    themeService.removeCustomTheme();
-    for (const plugin of pluginService.getPlugins()) if (plugin.enabled) pluginService.setPluginEnabled(plugin.id, false);
-    if (settingsManager?.getView()) settingsManager.toggle();
-    showMainWindow();
-    notificationManager?.show(translationService.translate('themeAndPluginsReset'));
-}
-
 // Два кадра анимации страницы после показа окна: к этому времени окно нарисовано и его можно проявлять
 function pagePainted(): Promise<unknown> {
     if (!contentView || contentView.webContents.isDestroyed()) return Promise.resolve();
@@ -408,11 +392,6 @@ function headerTexts(): Record<string, string> {
     return Object.fromEntries(keys.map((key) => [key, translationService.translate(key)]));
 }
 
-function confirmTexts(): ConfirmTexts {
-    const t = (key: TranslationKeys): string => translationService.translate(key);
-    return { title: t('pluginPageTitle'), question: t('pluginPageQuestion'), cancel: t('pluginPageCancel'), open: t('pluginPageOpen') };
-}
-
 // Смена языка в F1: всё, что main рисует сам, переводится сразу; сайт и его врезки ждут перезагрузки
 function applyAppLanguage(): void {
     if (tray) {
@@ -440,10 +419,6 @@ function buildTrayMenu(): Menu {
                 showMainWindow();
                 if (settingsManager && !settingsManager.getView()) settingsManager.toggle();
             },
-        },
-        {
-            label: t('trayResetThemeAndPlugins'),
-            click: () => resetThemeAndPlugins(),
         },
         {
             id: 'discordIncognito',
@@ -563,7 +538,6 @@ function adjustContentViews() {
     });
 
     updateScreen?.layout();
-    updateDialogBounds(mainWindow);
 }
 
 function setupWindowControls() {
@@ -902,13 +876,6 @@ async function init() {
     contentView.webContents.setUserAgent(globalUserAgent);
 
     // Initialize services
-    themeService = new ThemeService(store);
-    pluginService = new PluginService(store);
-    pluginService.setContentView(contentView);
-    // hot reload custom theme CSS when files change
-    themeService.onCustomThemeUpdated(() => {
-        applyThemeToContent();
-    });
     notificationManager = new NotificationManager(mainWindow, focusTopView);
     settingsManager = new SettingsManager(
         mainWindow,
@@ -922,7 +889,6 @@ async function init() {
         closeQueueDialog,
         gpuRuntime,
     );
-    pluginService.onPluginsChanged(() => settingsManager.getView()?.webContents.send('plugins-changed'));
     proxyService = new ProxyService(contentView.webContents, store, queueToastNotification, (key) => translationService.translate(key));
     adblockService = new AdblockService(contentView.webContents.session, path.join(app.getPath('userData'), 'adblock-engine.bin'));
     presenceService = new PresenceService(store, translationService);
@@ -1164,7 +1130,6 @@ async function init() {
             if (!isTrustedLocalSender(event)) return;
 
         settingsManager.toggle();
-        applyThemeToContent();
     });
     ipcMain.removeAllListeners('toggle-history');
     ipcMain.removeAllListeners('toggle-queue');
@@ -1176,34 +1141,6 @@ async function init() {
     });
     ipcMain.on('toggle-history', (event) => {
         if (isTrustedLocalSender(event)) toggleHistory();
-    });
-
-    ipcMain.handle('confirm-open-homepage', async (_event, url: string) => {
-            if (!isTrustedLocalSender(_event)) throw new Error('Недопустимый отправитель IPC');
-
-        if (!url || typeof url !== 'string') return false;
-        const normalizedUrl = url.trim();
-        if (!/^https?:\/\//i.test(normalizedUrl)) return false;
-
-        const confirmed = await showHomepageConfirmDialog(mainWindow, normalizedUrl, confirmTexts());
-        if (confirmed) {
-            await shell.openExternal(normalizedUrl);
-        }
-
-        return confirmed;
-    });
-
-    ipcMain.on('show-plugin-homepage-dialog', async (_event, url: string) => {
-            if (!isTrustedLocalSender(_event)) return;
-
-        if (!url || typeof url !== 'string') return;
-        const normalizedUrl = url.trim();
-        if (!/^https?:\/\//i.test(normalizedUrl)) return;
-
-        const confirmed = await showHomepageConfirmDialog(mainWindow, normalizedUrl, confirmTexts());
-        if (confirmed) {
-            await shell.openExternal(normalizedUrl);
-        }
     });
 
     ipcMain.handle('open-external-url', async (_event, url: string) => {
@@ -1220,19 +1157,6 @@ async function init() {
         } catch {
             return '';
         }
-    });
-
-    ipcMain.handle('open-path', async (_event, targetPath: string) => {
-            if (!isTrustedLocalSender(_event)) throw new Error('Недопустимый отправитель IPC');
-
-        if (!targetPath || typeof targetPath !== 'string') return 'Invalid path';
-        const allowedPaths = [themeService.getThemesPath(), pluginService.getPluginsPath()].map((allowedPath) =>
-            path.resolve(allowedPath),
-        );
-        const normalizedPath = path.resolve(targetPath);
-        if (!allowedPaths.includes(normalizedPath)) return 'Blocked path';
-
-        return shell.openPath(targetPath);
     });
 
     setupWindowControls();
@@ -1367,11 +1291,6 @@ async function init() {
             await contentView.webContents.executeJavaScript(waveScript());
             await contentView.webContents.executeJavaScript(playerAreaScript());
 
-            // Re-inject all enabled plugin content scripts
-            if (pluginService) {
-                pluginService.injectAllContentScripts();
-            }
-
             if (presenceService) {
                 await presenceService.updatePresence(lastTrackInfo);
             }
@@ -1441,14 +1360,6 @@ async function init() {
             if (headerView && headerView.webContents) {
                 headerView.webContents.send('navigation-controls-toggle', data.value);
             }
-        } else if (key === 'customTheme') {
-            if (data.value === 'none') {
-                themeService.removeCustomTheme();
-            } else {
-                themeService.applyCustomTheme(data.value);
-            }
-            // Re-apply the theme to all content
-            applyThemeToContent();
         } else if (key === 'hidePromotions' || key === 'hideEventsNearYou' || key === 'hideArtistUpsells' || key === 'hideHeaderExtras' || isHomeBlockKey(key)) {
             applyThemeToContent();
         } else if (key === 'fullShuffle') {
@@ -1577,17 +1488,11 @@ function hiddenBlocksCSS(): string {
 }
 function applyThemeToContent() {
     if (!contentView || contentView.webContents.isDestroyed()) return;
-    const sections = splitThemeCSS(themeService.getCurrentCustomThemeCSS());
-    const themeColors = themeService.getCurrentThemeColors();
-    notificationManager?.setThemeColors(themeColors);
-    settingsManager?.setThemeColors(themeColors);
-    headerView?.webContents.send('theme-colors-changed', themeColors);
     const css = [
         ':root{--background-base:#121212;--background-surface:#212121;--text-base:#ffffff;}',
         // Стандартные свойства: ::-webkit-scrollbar рисуется главным потоком и отстаёт от прокрутки.
         'html{scrollbar-width:thin;scrollbar-color:rgba(255,255,255,.2) rgba(255,255,255,.05)}',
         hiddenBlocksCSS(),
-        sections.all, sections.content,
     ].join('\n');
     // До первой загрузки сайта страницы нет: стили и скрипты всё равно пропали бы, их ставит did-finish-load
     if (contentView.webContents.getURL()) {
@@ -1596,8 +1501,6 @@ function applyThemeToContent() {
         void contentView.webContents.executeJavaScript('for(const n of [document.documentElement,document.body]){n.classList.remove("theme-light");n.classList.add("theme-dark")}').catch(console.error);
         void contentView.webContents.executeJavaScript(pageFeaturesScript(store.get('hideArtistUpsells', true) === true)).catch(console.error);
     }
-    if (headerView) void viewStyles.apply(headerView.webContents, sections.all + '\n' + sections.header).catch(console.error);
-    settingsManager?.setCustomCSS(sections.all + '\n' + sections.settings);
 }
 
 function initializeShortcuts() {
@@ -1719,8 +1622,6 @@ app.on('before-quit', (event) => {
     waveJournal?.flush();
     waveSignals?.flush();
     updateService?.dispose();
-    pluginService?.dispose();
-    themeService?.dispose();
     settingsManager?.dispose();
     historyManager?.dispose();
     notificationManager?.dispose();
@@ -1828,17 +1729,6 @@ function setupTranslationHandlers() {
             enableNavigationControls: translationService.translate('enableNavigationControls'),
             enableTrackParser: translationService.translate('enableTrackParser'),
             trackParserDescription: translationService.translate('trackParserDescription'),
-            customThemes: translationService.translate('customThemes'),
-            selectCustomTheme: translationService.translate('selectCustomTheme'),
-            noTheme: translationService.translate('noTheme'),
-            openThemesFolder: translationService.translate('openThemesFolder'),
-            refreshThemes: translationService.translate('refreshThemes'),
-            customThemeDescription: translationService.translate('customThemeDescription'),
-            plugins: translationService.translate('plugins'),
-            openPluginsFolder: translationService.translate('openPluginsFolder'),
-            refreshPlugins: translationService.translate('refreshPlugins'),
-            pluginsDescription: translationService.translate('pluginsDescription'),
-            noPluginsFound: translationService.translate('noPluginsFound'),
             pressF1ToOpenSettings: translationService.translate('pressF1ToOpenSettings'),
             closeSettings: translationService.translate('closeSettings'),
             noActivityToShow: translationService.translate('noActivityToShow'),
@@ -1878,10 +1768,6 @@ function setupAudioHandler() {
             void contentView.webContents.executeJavaScript(mediaControlsScript).catch(console.error);
         }
         lastTrackInfo = result;
-
-        if (pluginService) {
-            pluginService.notifyTrackChange(result as unknown as Record<string, unknown>);
-        }
 
         void webhookService.updateTrackInfo(result, result.isPlaying, reason).catch(console.error);
         void presenceService.updatePresence(result).catch(console.error);

@@ -1,7 +1,6 @@
 import { isTrustedLocalSender, trustLocalView } from '../trustedViews';
 import { randomBytes } from 'crypto';
 import { WebContentsView, BrowserWindow, ipcMain } from 'electron';
-import type { ThemeColors } from '../utils/colorExtractor';
 import { join } from 'path';
 
 const isMac = process.platform === 'darwin';
@@ -11,7 +10,6 @@ export class NotificationManager {
     private queue: string[] = [];
     private isDisplaying = false;
     private parentWindow: BrowserWindow;
-    private themeColors: ThemeColors | null = null;
     private devMode = process.argv.includes('--dev');
     private disposed = false;
     private timer: ReturnType<typeof setTimeout> | null = null;
@@ -75,10 +73,6 @@ export class NotificationManager {
         if (!view.webContents.isDestroyed()) view.webContents.close();
     }
 
-    public setThemeColors(colors: ThemeColors | null): void {
-        this.themeColors = colors;
-    }
-
     public show(message: string): void {
         if (this.disposed) return;
         this.queue.push(message);
@@ -110,9 +104,8 @@ export class NotificationManager {
             height,
         });
 
-        // Use theme colors if available
-        const backgroundColor = this.themeColors?.surface || '#303030';
-        const textColor = this.themeColors?.text || '#ffffff';
+        const backgroundColor = '#303030';
+        const textColor = '#ffffff';
 
         const safeMessage = String(message ?? '').replace(/[&<>"']/g, (char) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[char]!);
         const nonce = randomBytes(16).toString('base64');

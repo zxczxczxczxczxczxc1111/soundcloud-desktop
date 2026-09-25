@@ -45,34 +45,6 @@ function applyTexts(next) {
     updateWindowControls();
 }
 
-function applyThemeColors(colors) {
-    if (!colors) {
-        // Reset to default - remove custom properties so CSS theme classes take effect
-        document.documentElement.style.removeProperty('--header-bg');
-        document.documentElement.style.removeProperty('--header-text');
-        document.documentElement.style.removeProperty('--header-accent');
-
-        // Also reset inline styles so CSS variables work
-        const header = document.querySelector('.custom-header');
-        if (header) {
-            header.style.removeProperty('background-color');
-            header.style.removeProperty('color');
-        }
-        return;
-    }
-
-    // Apply custom theme colors
-    document.documentElement.style.setProperty('--header-bg', colors.primary || colors.background);
-    document.documentElement.style.setProperty('--header-text', colors.text);
-    document.documentElement.style.setProperty('--header-accent', colors.accent || colors.primary);
-
-    // Update the header background
-    const header = document.querySelector('.custom-header');
-    if (header) {
-        header.style.backgroundColor = colors.surface || colors.background;
-        header.style.color = colors.text;
-    }
-}
 
 function updateNavigationState(state = {}) {
     if (!navButtons) {
@@ -210,11 +182,6 @@ document.querySelector('.title-bar')?.addEventListener('dblclick', () => {
     updateWindowControls();
 });
 
-// Listen for theme color updates
-ipcRenderer.on('theme-colors-changed', (_, colors) => {
-    applyThemeColors(colors);
-});
-
 // Listen for navigation state changes
 ipcRenderer.on('navigation-state-changed', (_, state) => {
     updateNavigationState(state);
@@ -251,13 +218,6 @@ document.addEventListener('DOMContentLoaded', () => {
         if (navControls && enabled) {
             navControls.classList.add('visible');
             navControls.classList.remove('hidden');
-        }
-    });
-
-    // Request initial theme colors
-    ipcRenderer.invoke('get-theme-colors').then((colors) => {
-        if (colors) {
-            applyThemeColors(colors);
         }
     });
 

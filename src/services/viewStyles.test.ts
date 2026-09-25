@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
-import { splitThemeCSS, ViewStyles } from './viewStyles';
+import { ViewStyles } from './viewStyles';
 
 describe('CSS остаётся данными', () => {
     it('передаёт обратные кавычки и интерполяцию в CSS API без исполнения', async () => {
@@ -12,14 +12,6 @@ describe('CSS остаётся данными', () => {
         await new ViewStyles().apply(view, css);
         expect(view.insertCSS).toHaveBeenCalledExactlyOnceWith(css);
         expect(Reflect.get(globalThis, 'compromised')).toBeUndefined();
-    });
-    it('сохраняет разделение обычной темы по представлениям', () => {
-        expect(
-            splitThemeCSS(
-                '/* @target header */ h1{color:red} /* @end */ /* @target content */ a{color:blue}',
-            ).header.trim(),
-        ).toBe('h1{color:red}');
-        expect(splitThemeCSS('body{color:red}').content).toBe('body{color:red}');
     });
     it('удаляет предыдущий стиль и объединяет быстрые обновления', async () => {
         const view = {

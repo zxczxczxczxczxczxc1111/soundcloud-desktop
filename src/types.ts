@@ -161,17 +161,6 @@ export interface Translations {
     enableNavigationControls: string;
     enableTrackParser: string;
     trackParserDescription: string;
-    customThemes: string;
-    selectCustomTheme: string;
-    noTheme: string;
-    openThemesFolder: string;
-    refreshThemes: string;
-    customThemeDescription: string;
-    plugins: string;
-    openPluginsFolder: string;
-    refreshPlugins: string;
-    pluginsDescription: string;
-    noPluginsFound: string;
     pressF1ToOpenSettings: string;
     closeSettings: string;
     noActivityToShow: string;

@@ -24,11 +24,6 @@ async function openSettings(
                 return undefined;
             case 'get-settings-state':
                 return state;
-            case 'get-custom-themes':
-            case 'get-plugins':
-                return [];
-            case 'get-current-custom-theme':
-                return 'none';
             case 'get-accounts':
                 return { accounts: [{ id: 'default', name: 'Основной аккаунт' }, { id: 'acc_1', name: 'nick_1' }], currentAccountId: 'default' };
             case 'get-update-state':
@@ -43,7 +38,7 @@ async function openSettings(
     });
     const listeners = new Map<string, (...args: unknown[]) => void>();
     const on = (channel: string, listener: (...args: unknown[]) => void): void => void listeners.set(channel, listener);
-    Object.assign(window, { settingsAPI: { send, invoke, on, openExternal: vi.fn(), openPath: vi.fn() } });
+    Object.assign(window, { settingsAPI: { send, invoke, on, openExternal: vi.fn() } });
     window.eval(readFileSync(resolve('src/settings/settingsText.js'), 'utf8'));
     window.eval(readFileSync(resolve('src/settings/settings.js'), 'utf8'));
     await vi.waitFor(() => expect(send).toHaveBeenCalledWith('settings-ready'));
@@ -126,12 +121,12 @@ function russianLeft(): string[] {
 }
 
 it('переводит панель на английский и обратно без перезагрузки', async () => {
-    const { send, emit } = await openSettings({ siteLanguage: 'ru' }, { tracks: [], artists: [{ id: 7, title: 'Станции', artist: '', url: '', at: 1 }] });
+    const { send, emit } = await openSettings({ siteLanguage: 'ru', gpuCompatibilityMode: 'auto' }, { tracks: [], artists: [{ id: 7, title: 'Станции', artist: '', url: '', at: 1 }] });
     const artists = document.getElementById('waveExcludedArtists') as HTMLElement;
     await vi.waitFor(() => expect(artists.querySelector('button')?.textContent).toBe('Вернуть'));
     expect(document.documentElement.lang).toBe('ru');
-    const theme = document.getElementById('customThemeSelector')?.parentElement?.querySelector('.dropdown-label') as HTMLElement;
-    expect(theme.textContent).toBe('Без темы');
+    const gpu = document.getElementById('gpuCompatibilityMode')?.parentElement?.querySelector('.dropdown-label') as HTMLElement;
+    expect(gpu.textContent).toBe('Автоматически');
 
     const language = document.getElementById('siteLanguage') as HTMLSelectElement;
     language.value = 'en';
@@ -146,8 +141,7 @@ it('переводит панель на английский и обратно 
     // Название совпало с подписью панели, но это данные
     expect(artists.querySelector('.excluded-title')?.textContent).toBe('Станции');
     expect(document.getElementById('waveExcludedTracks')?.textContent).toBe('Empty');
-    await vi.waitFor(() => expect(document.getElementById('pluginList')?.textContent).toBe('The plugins folder is empty'));
-    await vi.waitFor(() => expect(theme.textContent).toBe('No theme'));
+    await vi.waitFor(() => expect(gpu.textContent).toBe('Automatic'));
     emit('update-state', updateState('en'));
     expect(document.getElementById('updateHint')?.textContent).toBe('Version 0.1.0. Hint.');
     expect(russianLeft()).toEqual([]);
@@ -158,7 +152,7 @@ it('переводит панель на английский и обратно 
     expect(document.getElementById('settingsTitle')?.textContent).toBe('Настройки');
     expect(document.getElementById('proxyHost')?.getAttribute('placeholder')).toBe('Адрес');
     await vi.waitFor(() => expect(artists.querySelector('button')?.textContent).toBe('Вернуть'));
-    await vi.waitFor(() => expect(theme.textContent).toBe('Без темы'));
+    await vi.waitFor(() => expect(gpu.textContent).toBe('Автоматически'));
 });
 
 it('открывается сразу на английском, если сайт английский', async () => {

@@ -9,7 +9,6 @@ window.SETTINGS_EN = {
     'Основное': 'General',
     'Главная': 'Home',
     'Моя волна': 'My Wave',
-    'Темы и плагины': 'Themes and plugins',
     'Аккаунт': 'Account',
     'Дополнительно': 'Advanced',
 
@@ -104,17 +103,6 @@ window.SETTINGS_EN = {
     'Неизвестный артист': 'Unknown artist',
     'Под ником:': 'Under your name:',
 
-    'Своя тема': 'Custom theme',
-    'Без темы': 'No theme',
-    'Открыть папку тем': 'Open themes folder',
-    'Перечитать папку тем': 'Reload themes folder',
-    'Плагины': 'Plugins',
-    'Открыть папку плагинов': 'Open plugins folder',
-    'Перечитать папку плагинов': 'Reload plugins folder',
-    'Папка плагинов пуста': 'The plugins folder is empty',
-    'Открыть страницу плагина': 'Open plugin page',
-    'Автор:': 'Author:',
-
     'Текущий аккаунт': 'Current account',
     // Имена аккаунтов по умолчанию, остальные имена это ники с сайта
     'Основной аккаунт': 'Main account',
@@ -146,7 +134,7 @@ window.SETTINGS_EN = {
     'Журнал сохранён, его можно отправить для разбора проблемы': 'Log saved, you can send it to have the problem looked into',
     'Не удалось сохранить журнал, попробуй другую папку': 'Couldn’t save the log, try another folder',
     'Папка данных клиента': 'Client data folder',
-    'Настройки, темы и плагины': 'Settings, themes and plugins',
+    'Настройки и история': 'Settings and history',
     'Открыть': 'Open',
 
     'Проверять обновления': 'Check for updates',

@@ -4,21 +4,6 @@ interface CSSView {
     removeInsertedCSS(key: string): Promise<void>;
 }
 
-export function splitThemeCSS(css: string | null): Record<'all' | 'content' | 'header' | 'settings', string> {
-    const result = { all: '', content: '', header: '', settings: '' };
-    if (!css) return result;
-    const marker = /\/\*\s*@target\s+(all|content|header|settings)\s*\*\/([\s\S]*?)(?=\/\*\s*@target\s+|$)/gi;
-    let match: RegExpExecArray | null;
-    let found = false;
-    while ((match = marker.exec(css))) {
-        found = true;
-        const target = match[1].toLowerCase() as keyof typeof result;
-        result[target] += '\n' + match[2].replace(/\/\*\s*@end\s*\*\//gi, '');
-    }
-    if (!found) result.content = css;
-    return result;
-}
-
 export class ViewStyles {
     private states = new WeakMap<CSSView, { key: string | null; revision: number; pending: Promise<void> }>();
 
