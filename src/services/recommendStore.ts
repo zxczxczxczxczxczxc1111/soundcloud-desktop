@@ -5,9 +5,10 @@ import type { WaveTrack } from './wave';
 import { cleanStoredTrack } from './playbackStore';
 import { text } from './waveSignals';
 import {
-    IDENTITY_VERSION, familyKey, isrcOf, matchLevel, parseTrackTitle, trackCredits, trackDuration, uploadKey, uploaderId, versionKey,
+    IDENTITY_VERSION, confirmedGroups, familyKey, isrcOf, matchLevel, parseTrackTitle, trackCredits, trackDuration, uploadKey, uploaderId, versionKey,
     type RecordingLink, type TrackCredit,
 } from './trackIdentity';
+import { cleanCoverage, cleanRadarItem, type RadarEdition, type RadarItem } from './radar';
 
 // Хранилище рекомендаций: загрузки с разобранными версиями, связи записей и состояние обхода источников,
 // файл recommend-<userId>.sqlite на аккаунт. В отличие от индекса истории его не пересобрать из журнала:
@@ -36,6 +37,21 @@ export const RECOMMEND_MIGRATIONS: string[][] = [
             "count integer not null default 0, error text not null default '')",
         // Состав источника (лайки, подписки, плейлисты): удаляется только после полного обхода без продолжений
         'create table members(source text not null, key text not null, added integer not null default 0, seen_run integer not null, removed integer not null default 0, primary key(source, key)) without rowid',
+    ],
+    [
+        // Источники радара: каталог аккаунта user:<id> или свежий поиск search:<ключ имени>; status ok, gone (аккаунта нет) или failed
+        "create table catalog(key text primary key, label text not null default '', checked integer not null default 0, status text not null default '', " +
+            "error text not null default '', found integer not null default 0)",
+        // Выпуски радара: состав и порядок не меняются после записи. manual 0 только у автоматического выпуска периода,
+        // ручная пересборка добавляет ревизию того же периода
+        'create table editions(period text not null, revision integer not null, created integer not null, cutoff integer not null, status text not null, ' +
+            'manual integer not null default 0, algorithm integer not null, taste integer not null, coverage text not null, items text not null, ' +
+            'uploads text not null, primary key(period, revision)) without rowid',
+        // Задача периода: её старт задаёт бюджет сбора и переживает перезапуск
+        'create table radar_tasks(period text primary key, cutoff integer not null, zone text not null, started integer not null)',
+        'create index uploads_display on uploads(display_at)',
+        'create index uploads_created on uploads(created_at)',
+        'create index uploads_release on uploads(release_day)',
     ],
 ];
 
@@ -101,6 +117,27 @@ export interface TasteLibrary {
     uploads: TasteUpload[];
 }
 
+export type CatalogStatus = 'ok' | 'gone' | 'failed';
+/** Проверка источника радара */
+export interface CatalogCheck {
+    key: string;
+    label: string;
+    checked: number;
+    status: CatalogStatus | '';
+    error: string;
+    found: number;
+}
+export interface EditionSummary {
+    period: string;
+    revision: number;
+    created: number;
+    cutoff: number;
+    status: RadarEdition['status'];
+    manual: boolean;
+    items: number;
+    uploads: number;
+}
+
 type Values = Record<string, unknown>;
 const SQLITE_CORRUPT = 11;
 const SQLITE_NOTADB = 26;
@@ -112,6 +149,13 @@ const str = (value: unknown): string => (typeof value === 'string' ? value : '')
 export const isEntityKey = (value: unknown): value is string => typeof value === 'string' && /^sc:(track|user|playlist):[1-9]\d{0,15}$/.test(value);
 const isTrackKey = (value: unknown): value is string => isEntityKey(value) && value.startsWith('sc:track:');
 const isSource = (value: unknown): value is string => typeof value === 'string' && /^[a-z][a-z0-9:_-]{0,60}$/.test(value);
+const DAY = 86400000;
+const CATALOG_STATUSES = new Set<string>(['ok', 'gone', 'failed']);
+/** Источник радара: каталог аккаунта или поиск по ключу имени (буквы и цифры) */
+export const isCatalogKey = (value: unknown): value is string => typeof value === 'string' && /^(?:user:[1-9]\d{0,15}|search:[\p{L}\p{N}]{1,80})$/u.test(value);
+/** Период выпуска: местная дата слота */
+const isPeriod = (value: unknown): value is string => typeof value === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(value);
+const isTime = (value: unknown): value is number => typeof value === 'number' && Number.isSafeInteger(value) && value > 0;
 const time = (value: string | undefined): number => {
     const at = value ? Date.parse(value) : NaN;
     return Number.isFinite(at) && at > 0 ? at : 0;
@@ -195,6 +239,24 @@ function toTasteUpload(row: Values): TasteUpload {
     };
 }
 const TASTE_UPLOAD = 'u.id, u.uploader, u.uploader_name, u.title, u.duration, u.genre, u.tags, u.credits';
+function toEdition(row: Values): RadarEdition {
+    const list = (value: unknown): RadarItem[] => {
+        const parsed = parseJson(str(value));
+        return Array.isArray(parsed) ? parsed.map(cleanRadarItem).filter((item): item is RadarItem => item !== null) : [];
+    };
+    return {
+        period: str(row.period),
+        revision: num(row.revision),
+        created: num(row.created),
+        cutoff: num(row.cutoff),
+        status: str(row.status) === 'complete' ? 'complete' : 'partial',
+        coverage: cleanCoverage(parseJson(str(row.coverage))),
+        algorithm: num(row.algorithm),
+        taste: num(row.taste),
+        items: list(row.items),
+        uploads: list(row.uploads),
+    };
+}
 // Строка хранилища обратно в трек для сравнения версий
 const asTrack = (row: Values): WaveTrack => ({
     id: num(row.id),
@@ -340,11 +402,7 @@ export class RecommendStore {
     /** Связи записей: решения пользователя и каталога */
     public recordingLinks(userId: unknown): RecordingLink[] {
         if (!isId(userId)) return [];
-        return this.guarded(userId, (db) =>
-            (db.prepare('select a, b, source, same, at from relations order by at limit 50000').all() as Values[]).map((row) => ({
-                a: str(row.a), b: str(row.b), same: num(row.same) === 1, source: str(row.source) === 'user' ? 'user' as const : 'catalog' as const, at: num(row.at),
-            })),
-        );
+        return this.guarded(userId, (db) => this.readLinks(db));
     }
     /** Решение пользователя «та же запись» или «разные записи»; последнее решение по паре заменяет прежнее */
     public setRecordingLink(userId: unknown, a: unknown, b: unknown, same: unknown, now = Date.now()): boolean {
@@ -452,6 +510,151 @@ export class RecommendStore {
             }
             return { likes, follows, uploads };
         });
+    }
+    /** Источники радара с последней проверкой */
+    public catalogState(userId: unknown): CatalogCheck[] {
+        if (!isId(userId)) return [];
+        return this.guarded(userId, (db) => (db.prepare('select * from catalog order by key limit 20000').all() as Values[]).map((row) => {
+            const status = str(row.status);
+            return {
+                key: str(row.key), label: str(row.label), checked: num(row.checked), status: CATALOG_STATUSES.has(status) ? (status as CatalogStatus) : '',
+                error: str(row.error), found: num(row.found),
+            };
+        }));
+    }
+    /** Страница проверила источник: время ставит worker. Пустая подпись прежнюю не стирает */
+    public catalogChecked(userId: unknown, key: unknown, label: unknown, status: unknown, error: unknown, found: unknown, now = Date.now()): boolean {
+        if (!isId(userId) || !isCatalogKey(key) || typeof status !== 'string' || !CATALOG_STATUSES.has(status)) return false;
+        const count = typeof found === 'number' && Number.isSafeInteger(found) && found >= 0 ? found : 0;
+        return this.guarded(userId, (db) => {
+            db.prepare(
+                'insert into catalog(key, label, checked, status, error, found) values (?, ?, ?, ?, ?, ?) on conflict(key) do update set ' +
+                    "label = case when excluded.label != '' then excluded.label else catalog.label end, checked = excluded.checked, status = excluded.status, " +
+                    'error = excluded.error, found = excluded.found',
+            ).run(key, text(label, 200), now, status, text(error, 200), count);
+            return true;
+        });
+    }
+    /**
+     * Загрузки окна радара: публикация в [from, to] или заявленный день релиза рядом с окном (точную проверку делает радар).
+     * reuploads: ключи загрузок, у которых есть копия той же версии, опубликованная раньше хотя бы на сутки:
+     * вероятная по разбору и длительности или подтверждённая пользователем либо каталогом
+     */
+    public radarUploads(userId: unknown, from: unknown, to: unknown): { uploads: StoredUpload[]; reuploads: string[] } {
+        if (!isId(userId) || !isTime(from) || !isTime(to) || from > to) return { uploads: [], reuploads: [] };
+        const day = (at: number): string => new Date(at).toISOString().slice(0, 10);
+        return this.guarded(userId, (db) => {
+            const rows = db.prepare(
+                'select * from uploads where display_at between ? and ? or (display_at = 0 and created_at between ? and ?) or release_day between ? and ? limit 20000',
+            ).all(from, to, from, to, day(from - DAY), day(to + DAY)) as Values[];
+            const links = this.readLinks(db);
+            const groups = confirmedGroups(links);
+            const members = new Map<string, string[]>();
+            for (const [key, root] of groups) members.set(root, [...(members.get(root) ?? []), key]);
+            const peers = db.prepare('select id, uploader, uploader_name, title, duration, isrc, display_at, created_at from uploads where version_key = ? and key != ? limit 200');
+            const published = db.prepare('select display_at, created_at from uploads where key = ?');
+            const reuploads: string[] = [];
+            for (const row of rows) {
+                const key = str(row.key);
+                const at = num(row.display_at) || num(row.created_at);
+                if (!at) continue;
+                const earlier = (value: Values | undefined): boolean => {
+                    const other = value ? num(value.display_at) || num(value.created_at) : 0;
+                    return other > 0 && other <= at - DAY;
+                };
+                const root = groups.get(key);
+                if (root && (members.get(root) ?? []).some((mate) => mate !== key && earlier(published.get(mate) as Values | undefined))) {
+                    reuploads.push(key);
+                    continue;
+                }
+                const version = str(row.version_key);
+                if (!version) continue;
+                const track = asTrack(row);
+                for (const peer of peers.all(version, key) as Values[]) {
+                    if (!earlier(peer)) continue;
+                    const level = matchLevel(track, asTrack(peer), links);
+                    if (level === 'confirmed' || level === 'probable') {
+                        reuploads.push(key);
+                        break;
+                    }
+                }
+            }
+            return { uploads: rows.map(toUpload), reuploads };
+        });
+    }
+    /** Есть ли автоматический выпуск периода и когда начата его задача. Выпуск с отсечкой ближе трёх суток
+     *  тоже считается: после смены зоны неделя не собирается второй раз */
+    public radarStatus(userId: unknown, period: unknown, cutoff: unknown): { published: boolean; started: number } {
+        if (!isId(userId) || !isPeriod(period) || !isTime(cutoff)) return { published: false, started: 0 };
+        return this.guarded(userId, (db) => ({
+            published: db.prepare('select 1 from editions where manual = 0 and (period = ? or abs(cutoff - ?) < ?) limit 1').get(period, cutoff, 3 * DAY) !== undefined,
+            started: num((db.prepare('select started from radar_tasks where period = ?').get(period) as Values | undefined)?.started),
+        }));
+    }
+    /** Задача периода: создаётся один раз; повторный вызов после перезапуска возвращает прежний старт */
+    public radarTask(userId: unknown, period: unknown, cutoff: unknown, zone: unknown, now = Date.now()): { started: number } | null {
+        if (!isId(userId) || !isPeriod(period) || !isTime(cutoff) || typeof zone !== 'string' || !zone || zone.length > 64) return null;
+        return this.guarded(userId, (db) => this.transaction(db, () => {
+            db.prepare('insert into radar_tasks(period, cutoff, zone, started) values (?, ?, ?, ?) on conflict(period) do nothing').run(period, cutoff, zone, now);
+            db.prepare('delete from radar_tasks where cutoff < ?').run(cutoff - 60 * DAY);
+            return { started: num((db.prepare('select started from radar_tasks where period = ?').get(period) as Values).started) };
+        }));
+    }
+    /**
+     * Записать выпуск одной транзакцией. Автоматический не пишется, если у периода (или соседнего по отсечке) он уже есть:
+     * тогда null. Ручная пересборка добавляет следующую ревизию, прежние остаются для играющей очереди
+     */
+    public saveEdition(userId: unknown, edition: RadarEdition, manual: boolean): RadarEdition | null {
+        if (!isId(userId) || !isPeriod(edition.period) || !isTime(edition.cutoff)) return null;
+        return this.guarded(userId, (db) => this.transaction(db, () => {
+            if (!manual && db.prepare('select 1 from editions where manual = 0 and (period = ? or abs(cutoff - ?) < ?) limit 1').get(edition.period, edition.cutoff, 3 * DAY))
+                return null;
+            const revision = num((db.prepare('select max(revision) as last from editions where period = ?').get(edition.period) as Values | undefined)?.last) + 1;
+            db.prepare(
+                'insert into editions(period, revision, created, cutoff, status, manual, algorithm, taste, coverage, items, uploads) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
+            ).run(
+                edition.period, revision, edition.created, edition.cutoff, edition.status, manual ? 1 : 0, edition.algorithm, edition.taste,
+                JSON.stringify(edition.coverage), JSON.stringify(edition.items), JSON.stringify(edition.uploads),
+            );
+            return { ...edition, revision };
+        }));
+    }
+    /** Архив: выпуски новые сверху, без состава */
+    public editions(userId: unknown, limit: unknown = 100): EditionSummary[] {
+        if (!isId(userId)) return [];
+        const count = typeof limit === 'number' && Number.isSafeInteger(limit) && limit > 0 ? Math.min(limit, 1000) : 100;
+        return this.guarded(userId, (db) => (db.prepare(
+            'select period, revision, created, cutoff, status, manual, json_array_length(items) as items, json_array_length(uploads) as uploads ' +
+                'from editions order by period desc, revision desc limit ?',
+        ).all(count) as Values[]).map((row) => ({
+            period: str(row.period), revision: num(row.revision), created: num(row.created), cutoff: num(row.cutoff),
+            status: str(row.status) === 'complete' ? 'complete' as const : 'partial' as const, manual: num(row.manual) === 1, items: num(row.items), uploads: num(row.uploads),
+        })));
+    }
+    /** Выпуск целиком; без ревизии последняя ревизия периода */
+    public edition(userId: unknown, period: unknown, revision?: unknown): RadarEdition | null {
+        if (!isId(userId) || !isPeriod(period)) return null;
+        return this.guarded(userId, (db) => {
+            const row = (isId(revision)
+                ? db.prepare('select * from editions where period = ? and revision = ?').get(period, revision)
+                : db.prepare('select * from editions where period = ? order by revision desc limit 1').get(period)) as Values | undefined;
+            return row ? toEdition(row) : null;
+        });
+    }
+    /** Направления последних count выпусков до периода (последняя ревизия каждого): для мягкой поддержки редких вкусов */
+    public radarDirections(userId: unknown, before: unknown, count = 4): string[][] {
+        if (!isId(userId) || !isPeriod(before)) return [];
+        return this.guarded(userId, (db) => (db.prepare(
+            'select e.items from editions e where e.period < ? and e.revision = (select max(revision) from editions where period = e.period) order by e.period desc limit ?',
+        ).all(before, count) as Values[]).map((row) => {
+            const items = parseJson(str(row.items));
+            return Array.isArray(items) ? items.map(cleanRadarItem).filter((item): item is RadarItem => item !== null).map((item) => item.direction) : [];
+        }));
+    }
+    private readLinks(db: DatabaseSync): RecordingLink[] {
+        return (db.prepare('select a, b, source, same, at from relations order by at limit 50000').all() as Values[]).map((row) => ({
+            a: str(row.a), b: str(row.b), same: num(row.same) === 1, source: str(row.source) === 'user' ? 'user' as const : 'catalog' as const, at: num(row.at),
+        }));
     }
     public close(): void {
         for (const db of this.handles.values()) if (db.isOpen) db.close();

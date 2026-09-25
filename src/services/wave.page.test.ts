@@ -1270,3 +1270,80 @@ it('P3: текстовый поиск находит другие версии �
     const ids = [...document.querySelectorAll<HTMLElement>('#sc-wave .scw-tile[data-track]')].map((tile) => Number(tile.dataset.track));
     expect(ids.every((id) => id >= 7000)).toBe(true);
 });
+
+type RadarCollect = (budgetMs: number, staleBefore: number) => Promise<unknown>;
+const radarBridge = (plan: object[]) => ({
+    syncState: vi.fn(async () => []),
+    syncStart: vi.fn(async () => null),
+    syncPage: vi.fn(async () => true),
+    syncFinish: vi.fn(async () => ({})),
+    recordUploads: vi.fn(async (_user: number, tracks: object[]) => tracks.length),
+    radarPlan: vi.fn(async () => plan),
+    catalogChecked: vi.fn(async () => true),
+});
+
+it('P6: сбор радара обходит несвежие источники фоном, листает каталог до старых загрузок, отказ отмечает отказом', async () => {
+    const now = Date.now();
+    const recommend = radarBridge([
+        { key: 'user:5', kind: 'user', id: 5, q: '', label: '', checked: 0, status: '', weight: 1 },
+        { key: 'user:6', kind: 'user', id: 6, q: '', label: 'Fresh', checked: now, status: 'ok', weight: 1 },
+        { key: 'user:7', kind: 'user', id: 7, q: '', label: 'Seven', checked: 0, status: '', weight: 0.4 },
+        { key: 'search:artistname', kind: 'search', id: 0, q: 'Artist Name', label: 'Artist Name', checked: 0, status: '', weight: 0.8 },
+    ]);
+    Object.assign(window, { soundcloudAPI: { recommend } });
+    const iso = (at: number): string => new Date(at).toISOString();
+    const site = fakeSite(relatedTracks, (name, path, query) => {
+        const id = (path as { id?: number }).id;
+        if (name === 'userTracks' && id === 5 && !query.offset) return {
+            collection: [
+                { id: 51, kind: 'track', title: 'New', user: { id: 5, username: 'Five' }, created_at: iso(now - 86400000) },
+                { id: 52, kind: 'track', title: 'Older', user: { id: 5, username: 'Five' }, created_at: iso(now - 20 * 86400000) },
+            ],
+            next_href: 'https://api-v2.soundcloud.com/users/5/tracks?offset=2&limit=50&client_id=secret',
+        };
+        if (name === 'userTracks' && id === 5) return { collection: [{ id: 53, kind: 'track', title: 'Old', user: { id: 5, username: 'Five' }, created_at: iso(now - 60 * 86400000) }], next_href: 'https://api-v2.soundcloud.com/x?offset=3' };
+        if (name === 'userTracks' && id === 7) return Promise.reject({ status: 404, headers: {} });
+        if (name === 'searchCategory' && query['filter.created_at'] === 'last_week') return { collection: [{ id: 61, kind: 'track', title: 'Fresh Find' }] };
+        return undefined;
+    });
+    window.eval(waveScript());
+    await vi.advanceTimersByTimeAsync(100);
+    const collect = (window as unknown as { __scRadarCollect: RadarCollect }).__scRadarCollect;
+    const pending = collect(60000, now - 3600000);
+    await vi.advanceTimersByTimeAsync(20000);
+    expect(await pending).toEqual({ user: 77, checked: 3, remaining: 0, stopped: '' });
+    const userTracks = site.api.callEndpoint.mock.calls.filter(([name]) => name === 'userTracks').map(([, path, query]) => [path, query]);
+    expect(userTracks).toEqual([[{ id: 5 }, { limit: 50 }], [{ id: 5 }, { offset: '2', limit: '50' }], [{ id: 7 }, { limit: 50 }]]);
+    expect(site.api.callEndpoint).toHaveBeenCalledWith('searchCategory', { category: 'tracks' }, { q: 'Artist Name', limit: 50, 'filter.created_at': 'last_week' });
+    expect(recommend.recordUploads.mock.calls.map(([, tracks]) => tracks.map((track) => (track as { id: number }).id))).toEqual([[51, 52, 53], [61]]);
+    expect(recommend.catalogChecked.mock.calls).toEqual([
+        [77, 'user:5', 'Five', 'ok', '', 3], [77, 'search:artistname', 'Artist Name', 'ok', '', 1], [77, 'user:7', 'Seven', 'gone', 'missing', 0],
+    ]);
+});
+
+it('P6: сбор радара не пишет чужому аккаунту и останавливается при потере входа', async () => {
+    const recommend = radarBridge([
+        { key: 'user:5', kind: 'user', id: 5, q: '', label: '', checked: 0, status: '', weight: 1 },
+        { key: 'user:8', kind: 'user', id: 8, q: '', label: '', checked: 0, status: '', weight: 0.5 },
+    ]);
+    Object.assign(window, { soundcloudAPI: { recommend } });
+    let me = 77;
+    fakeSite(relatedTracks, (name) => {
+        if (name === 'me') return { id: me };
+        if (name === 'userTracks') return Promise.reject({ status: 401, headers: {} });
+        return undefined;
+    });
+    window.eval(waveScript());
+    await vi.advanceTimersByTimeAsync(100);
+    const collect = (window as unknown as { __scRadarCollect: RadarCollect }).__scRadarCollect;
+    me = 78;
+    let pending = collect(60000, Date.now());
+    await vi.advanceTimersByTimeAsync(5000);
+    expect(await pending).toEqual({ user: 77, checked: 0, remaining: 2, stopped: 'account-changed' });
+    expect(recommend.catalogChecked).not.toHaveBeenCalled();
+    me = 77;
+    pending = collect(60000, Date.now());
+    await vi.advanceTimersByTimeAsync(5000);
+    expect(await pending).toEqual({ user: 77, checked: 0, remaining: 2, stopped: 'auth' });
+    expect(recommend.catalogChecked.mock.calls).toEqual([[77, 'user:5', '', 'failed', 'auth', 0]]);
+});

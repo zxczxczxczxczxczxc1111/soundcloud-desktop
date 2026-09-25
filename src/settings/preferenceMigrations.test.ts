@@ -21,6 +21,14 @@ it('сохраняет прежнее включение NVIDIA и новый р
         expect(store.values.gpuCompatibilityMode).toBe(mode);
     }
 });
+it('зону радара записывает один раз из системной, выбранную после этого не трогает', () => {
+    const store = memoryStore({});
+    applyPreferenceMigrations(store);
+    expect(store.values.radarZone).toBe(new Intl.DateTimeFormat().resolvedOptions().timeZone);
+    store.set('radarZone', 'Asia/Tokyo');
+    applyPreferenceMigrations(store);
+    expect(store.values.radarZone).toBe('Asia/Tokyo');
+});
 it('включает блокировку рекламы один раз, а выключенную после этого не трогает', () => {
     const store = memoryStore({ adBlocker: false });
     applyPreferenceMigrations(store);

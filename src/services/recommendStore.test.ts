@@ -4,6 +4,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, expect, it, vi } from 'vitest';
 import { RECOMMEND_MIGRATIONS, RecommendStore } from './recommendStore';
+import type { RadarEdition } from './radar';
 
 const folders: string[] = [];
 const stores: RecommendStore[] = [];
@@ -143,19 +144,34 @@ it('A18: миграция в транзакции с копией прежней
     stores.splice(0).forEach((store) => store.close());
     const broken = [...RECOMMEND_MIGRATIONS, ['create table extra(x integer)', 'insert into nowhere values (1)']];
     expect(() => open(directory, broken).uploads(77, ['sc:track:1'])).toThrow();
+    const current = RECOMMEND_MIGRATIONS.length;
     const check = new DatabaseSync(join(directory, 'recommend-77.sqlite'));
-    expect(check.prepare('pragma user_version').get()).toEqual({ user_version: 1 });
+    expect(check.prepare('pragma user_version').get()).toEqual({ user_version: current });
     expect(check.prepare("select count(*) as n from sqlite_master where name = 'extra'").get()).toEqual({ n: 0 });
     check.close();
     const fixed = [...RECOMMEND_MIGRATIONS, ['create table extra(x integer)']];
     expect(open(directory, fixed).uploads(77, ['sc:track:1'])).toHaveLength(1);
-    expect(existsSync(join(directory, 'recommend-77.v1.sqlite'))).toBe(true);
+    expect(existsSync(join(directory, 'recommend-77.v' + current + '.sqlite'))).toBe(true);
     stores.splice(0).forEach((store) => store.close());
     // Файл новее клиента не трогается
     expect(() => open(directory).uploads(77, ['sc:track:1'])).toThrow(/более новой версией/);
     const again = new DatabaseSync(join(directory, 'recommend-77.sqlite'));
-    expect(again.prepare('pragma user_version').get()).toEqual({ user_version: 2 });
+    expect(again.prepare('pragma user_version').get()).toEqual({ user_version: current + 1 });
     again.close();
+});
+
+it('хранилище первой схемы поднимается до радара на месте: загрузки и обход целы, копия прежней схемы рядом', () => {
+    const directory = folder();
+    const old = open(directory, RECOMMEND_MIGRATIONS.slice(0, 1));
+    old.recordUploads(77, [track(1, 'Song', 1)], 10);
+    old.syncStart(77, 'likes', false, 10);
+    stores.splice(0).forEach((store) => store.close());
+    const store = open(directory);
+    expect(store.uploads(77, ['sc:track:1'])).toHaveLength(1);
+    expect(store.syncState(77)).toMatchObject([{ source: 'likes', run: 1 }]);
+    expect(store.editions(77)).toEqual([]);
+    expect(store.catalogChecked(77, 'user:5', 'Five', 'ok', '', 3, 100)).toBe(true);
+    expect(existsSync(join(directory, 'recommend-77.v1.sqlite'))).toBe(true);
 });
 
 it('испорченный файл откладывается рядом, а не удаляется', () => {
@@ -165,4 +181,84 @@ it('испорченный файл откладывается рядом, а н
     const store = open(directory);
     expect(store.recordUploads(77, [track(1, 'Song', 1)], 10)).toBe(1);
     expect(readdirSync(directory).some((name) => /^recommend-77\.broken-\d+\.sqlite$/.test(name))).toBe(true);
+});
+
+const DAY = 86400000;
+const iso = (at: number): string => new Date(at).toISOString().replace(/\.\d{3}Z$/, 'Z');
+const edition = (period: string, cutoff: number, directions: string[] = []): RadarEdition => ({
+    period, revision: 0, created: cutoff + 1000, cutoff, status: 'complete', coverage: { accounts: 1, checked: 1, failed: 0, searches: 0, searchesDone: 0 },
+    algorithm: 1, taste: 2, uploads: [],
+    items: directions.map((direction, index) => ({
+        key: 'sc:track:' + (index + 1), id: index + 1, title: 'T' + index, artist: 'A', kind: 'release', at: cutoff - DAY, heard: false,
+        score: 0.5, base: 0.5, bonus: 0, penalty: 0, direction, reason: { kind: 'taste' },
+    })),
+});
+
+it('источники радара: проверка с отметкой времени worker, пустая подпись не стирает прежнюю, чужие ключи отклоняются', () => {
+    const store = open(folder());
+    expect(store.catalogChecked(77, 'user:5', 'Five', 'ok', '', 12, 100)).toBe(true);
+    expect(store.catalogChecked(77, 'user:5', '', 'failed', 'rate', 0, 200)).toBe(true);
+    expect(store.catalogChecked(77, 'search:artistname', 'Artist Name', 'gone', '', 0, 300)).toBe(true);
+    expect(store.catalogChecked(77, 'user:0', 'x', 'ok', '', 0)).toBe(false);
+    expect(store.catalogChecked(77, 'search:a b', 'x', 'ok', '', 0)).toBe(false);
+    expect(store.catalogChecked(77, 'user:5', 'x', 'done', '', 0)).toBe(false);
+    expect(store.catalogState(77)).toEqual([
+        { key: 'search:artistname', label: 'Artist Name', checked: 300, status: 'gone', error: '', found: 0 },
+        { key: 'user:5', label: 'Five', checked: 200, status: 'failed', error: 'rate', found: 0 },
+    ]);
+});
+
+it('окно радара: публикация или день релиза в окне; перезалив виден по более ранней копии той же версии', () => {
+    const store = open(folder());
+    const cutoff = Date.parse('2026-09-25T06:00:00Z');
+    const fresh = iso(cutoff - 3 * DAY);
+    store.recordUploads(77, [
+        // Старая загрузка той же версии и её свежий перезалив на другом канале
+        track(1, 'Artist - Song', 1, { created_at: iso(cutoff - 400 * DAY) }),
+        track(2, 'Artist - Song', 2, { created_at: fresh, duration: 181000 }),
+        // Другая версия той же песни: не перезалив
+        track(3, 'Artist - Song (Slowed)', 3, { created_at: fresh }),
+        // Скрыто загружена давно, опубликована в окне
+        track(4, 'Late', 4, { created_at: iso(cutoff - 90 * DAY), display_date: fresh }),
+        // Старая публикация с заявленным релизом в окне
+        track(5, 'Label Song', 5, { created_at: iso(cutoff - 90 * DAY), release_date: iso(cutoff - 2 * DAY) }),
+        track(6, 'Too Old', 6, { created_at: iso(cutoff - 60 * DAY) }),
+        // Пользователь подтвердил: 7 и 8 одна запись, 8 выложена раньше
+        track(7, 'Renamed', 7, { created_at: fresh }),
+        track(8, 'Original Name', 8, { created_at: iso(cutoff - 200 * DAY) }),
+    ], 10);
+    store.setRecordingLink(77, 'sc:track:7', 'sc:track:8', true, 20);
+    const window = store.radarUploads(77, cutoff - 28 * DAY, cutoff);
+    expect(window.uploads.map((upload) => upload.id).sort((a, b) => a - b)).toEqual([2, 3, 4, 5, 7]);
+    expect(window.reuploads.sort()).toEqual(['sc:track:2', 'sc:track:7']);
+    expect(store.radarUploads(77, cutoff, cutoff - DAY)).toEqual({ uploads: [], reuploads: [] });
+});
+
+it('A17: задача периода одна и переживает перезапуск; неделя не дублируется ни повтором, ни сменой зоны', () => {
+    const directory = folder();
+    const store = open(directory);
+    const cutoff = Date.parse('2026-09-25T06:00:00Z');
+    expect(store.radarTask(77, '2026-09-25', cutoff, 'Europe/Moscow', 1000)).toEqual({ started: 1000 });
+    store.close();
+    const reopened = open(directory);
+    expect(reopened.radarTask(77, '2026-09-25', cutoff, 'Europe/Moscow', 5000)).toEqual({ started: 1000 });
+    expect(reopened.radarStatus(77, '2026-09-25', cutoff)).toEqual({ published: false, started: 1000 });
+    expect(reopened.saveEdition(77, edition('2026-09-25', cutoff, ['phonk']), false)).toMatchObject({ period: '2026-09-25', revision: 1 });
+    expect(reopened.radarStatus(77, '2026-09-25', cutoff).published).toBe(true);
+    // Повтор автоматического выпуска и соседний период после смены зоны не записываются
+    expect(reopened.saveEdition(77, edition('2026-09-25', cutoff, ['pop']), false)).toBeNull();
+    expect(reopened.saveEdition(77, edition('2026-09-24', cutoff - 11 * 3600000, ['pop']), false)).toBeNull();
+    expect(reopened.radarStatus(77, '2026-09-24', cutoff - 11 * 3600000).published).toBe(true);
+    // Ручная пересборка добавляет ревизию, прежняя остаётся
+    expect(reopened.saveEdition(77, edition('2026-09-25', cutoff, ['jazz']), true)).toMatchObject({ revision: 2 });
+    expect(reopened.edition(77, '2026-09-25')?.items.map((item) => item.direction)).toEqual(['jazz']);
+    expect(reopened.edition(77, '2026-09-25', 1)?.items.map((item) => item.direction)).toEqual(['phonk']);
+    expect(reopened.saveEdition(77, edition('2026-10-02', cutoff + 7 * DAY, ['rock']), false)).toMatchObject({ revision: 1 });
+    expect(reopened.editions(77).map((item) => [item.period, item.revision, item.manual, item.items])).toEqual([
+        ['2026-10-02', 1, false, 1], ['2026-09-25', 2, true, 1], ['2026-09-25', 1, false, 1],
+    ]);
+    // Направления прошлых выпусков: последняя ревизия каждого периода
+    expect(reopened.radarDirections(77, '2026-10-09')).toEqual([['rock'], ['jazz']]);
+    expect(reopened.edition(78, '2026-09-25')).toBeNull();
+    expect(reopened.radarTask(77, '../x', cutoff, 'Europe/Moscow')).toBeNull();
 });

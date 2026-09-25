@@ -9,12 +9,13 @@ import * as identity from './trackIdentity';
 import * as sources from './pageSources';
 import type { SyncBridge } from './pageSources';
 import type { RecordingLink } from './trackIdentity';
+import type { RadarCollectResult } from './radarSchedule';
 
 // Разбор версий и сеть подбора живут в своих модулях. Функции страницы зовут их по голому имени: в Node имя
 // берётся отсюда, на странице из объявлений identityHelpers и sourceHelpers в той же обёртке.
 // Именованный импорт превратился бы в trackIdentity_1.copyKey и на странице не нашёлся
 const { confirmedCopies, confirmedGroups, copyKey, copyKeys, familyKey, matchLevel, nameKey, parseTrackTitle, searchQueries, trackCredits } = identity;
-const { createDispatcher, createSearchCache, likeItems, entityItems, syncSource } = sources;
+const { classifyFailure, createDispatcher, createSearchCache, likeItems, entityItems, syncSource } = sources;
 
 export interface WaveTrack {
     id: number;
@@ -875,7 +876,12 @@ export interface WaveWindow extends Window {
         waveSignals?: { add(userId: number, signals: PlaySignal[]): void };
         waveShelf?: { load(userId: number): Promise<unknown>; save(userId: number, snapshot: object): Promise<unknown> };
         // Хранилище рекомендаций в worker: обход библиотеки и загрузки с разбором версий
-        recommend?: SyncBridge & { syncState(user: number): Promise<unknown>; recordingLinks?(user: number): Promise<unknown> };
+        recommend?: SyncBridge & {
+            syncState(user: number): Promise<unknown>;
+            recordingLinks?(user: number): Promise<unknown>;
+            radarPlan?(user: number): Promise<unknown>;
+            catalogChecked?(user: number, key: string, label: string, status: string, error: string, found: number): Promise<unknown>;
+        };
         reportWaveEmpty?(counts: { seen: number; artistTracks: number; moodTags: number }): void;
         sendTrackMeta?(meta: TrackMeta): void;
         openHistory?(): void;
@@ -1357,6 +1363,91 @@ export function installWave(config: WaveConfig, createPlayback: typeof installPl
             }
         })().catch((error: unknown) => console.warn('Библиотека: обход не завершён', error)).finally(() => { librarySync = null; });
         return librarySync;
+    }
+
+    // Сбор каталога для радара (раздел 8 плана): main зовёт по расписанию с бюджетом времени. Какие источники смотреть,
+    // решает worker (подписки, кураторы и любимые участники из вкуса); страница только ходит на сайт фоном через
+    // диспетчер и пишет найденное. Отказ источника отмечается отказом, а не пустым каталогом
+    let radarCollect: Promise<RadarCollectResult> | null = null;
+    host.__scRadarCollect = (budgetMs: unknown, staleBefore: unknown): Promise<RadarCollectResult> => {
+        radarCollect ??= collectRadar(typeof budgetMs === 'number' ? budgetMs : 0, typeof staleBefore === 'number' ? staleBefore : 0)
+            .finally(() => { radarCollect = null; });
+        return radarCollect;
+    };
+    async function collectRadar(budgetMs: number, staleBefore: number): Promise<RadarCollectResult> {
+        const bridge = host.soundcloudAPI?.recommend;
+        const result: RadarCollectResult = { user: 0, checked: 0, remaining: 0, stopped: '' };
+        if (!api || !bridge?.radarPlan || !bridge.catalogChecked || !bridge.recordUploads) return { ...result, stopped: 'no-api' };
+        const deadline = Date.now() + Math.max(0, Math.min(budgetMs, 600000));
+        const user = await ensureUser();
+        result.user = user;
+        if (!user) return { ...result, stopped: 'auth' };
+        const loaded = await bridge.radarPlan(user);
+        const plan = (Array.isArray(loaded) ? loaded : []).flatMap((value) => {
+            const item = value && typeof value === 'object' ? (value as Record<string, unknown>) : {};
+            const kind = item.kind === 'search' ? 'search' as const : 'user' as const;
+            const id = typeof item.id === 'number' && Number.isSafeInteger(item.id) ? item.id : 0;
+            const q = typeof item.q === 'string' ? item.q : '';
+            if (typeof item.key !== 'string' || (kind === 'user' ? id <= 0 : !q)) return [];
+            return [{
+                key: item.key, kind, id, q, label: typeof item.label === 'string' ? item.label : '', status: item.status,
+                checked: typeof item.checked === 'number' ? item.checked : 0, weight: typeof item.weight === 'number' ? item.weight : 0,
+            }];
+        });
+        // Несвежие первыми самые давние; источник с отказом повторяется не чаще раза в 10 минут
+        const retryBefore = Date.now() - 10 * 60000;
+        const due = plan.filter((source) => source.checked < staleBefore || (source.status === 'failed' && source.checked < retryBefore))
+            .sort((a, b) => a.checked - b.checked || b.weight - a.weight);
+        result.remaining = due.length;
+        if (!due.length) return result;
+        // Сайт мог сменить вход без перезагрузки: чужой каталог в хранилище этого аккаунта не пишется
+        try {
+            if (((await backgroundCall('me', {}, {})) as { id?: unknown } | null)?.id !== user) return { ...result, stopped: 'account-changed' };
+        } catch (error) {
+            return { ...result, stopped: classifyFailure(error, Date.now()).kind === 'auth' ? 'auth' : '' };
+        }
+        // Окно радара 28 дней до слота, слот не старше недели: каталог листается до загрузок старше 35 дней
+        const from = Date.now() - 35 * 86400000;
+        for (const source of due) {
+            if (disposed || Date.now() >= deadline) break;
+            let label = source.label;
+            try {
+                const tracks = source.kind === 'user' ? await accountTracks(source.id, from) : await freshSearch(source.q);
+                if (source.kind === 'user') label = tracks.find((track) => track.user?.id === source.id)?.user?.username ?? label;
+                if (tracks.length && typeof await bridge.recordUploads(user, tracks) !== 'number') throw new Error('Загрузки радара не записаны');
+                await bridge.catalogChecked(user, source.key, label, 'ok', '', tracks.length);
+            } catch (error) {
+                const failure = classifyFailure(error, Date.now());
+                await bridge.catalogChecked(user, source.key, label, failure.kind === 'missing' ? 'gone' : 'failed', failure.kind, 0)
+                    .catch((cause: unknown) => console.warn('Радар: отказ источника не записан', cause));
+                if (failure.kind === 'auth') return { ...result, stopped: 'auth' };
+            }
+            result.checked++;
+            result.remaining--;
+        }
+        return result;
+    }
+    // Каталог аккаунта от новых к старым по дате загрузки; старые записи тоже пишутся: по ним видно перезаливы
+    async function accountTracks(id: number, from: number): Promise<WaveTrack[]> {
+        const tracks: WaveTrack[] = [];
+        let query: Record<string, string | number> | null = { limit: 50 };
+        for (let page = 0; page < 4 && query && !disposed; page++) {
+            const body = await backgroundCall('userTracks', { id }, query);
+            const list = (body as { collection?: unknown } | null)?.collection;
+            if (!Array.isArray(list)) throw new Error('Неожиданный ответ userTracks');
+            const found = list.map(asTrack).filter((track): track is WaveTrack => !!track);
+            tracks.push(...found);
+            if (!found.length || Math.min(...found.map((track) => Date.parse(track.created_at ?? '') || 0)) < from) break;
+            query = nextQuery(body);
+        }
+        return tracks;
+    }
+    // Свежее за неделю по имени любимого участника по всему каталогу, без привязки к аккаунту
+    async function freshSearch(q: string): Promise<WaveTrack[]> {
+        const body = await backgroundCall('searchCategory', { category: 'tracks' }, { q, limit: 50, 'filter.created_at': 'last_week' });
+        const list = (body as { collection?: unknown } | null)?.collection;
+        if (!Array.isArray(list)) throw new Error('Неожиданный ответ searchCategory');
+        return list.map(asTrack).filter((track): track is WaveTrack => !!track);
     }
 
     // Текстовый поиск треков по всему каталогу, без привязки к аккаунту; ответ живёт в кэше, ошибка не кэшируется
@@ -4079,6 +4170,7 @@ export function installWave(config: WaveConfig, createPlayback: typeof installPl
         delete host.__scQueue;
         delete host.__scSaveSession;
         delete host.__scResume;
+        delete host.__scRadarCollect;
     };
     host.__disposeWave = dispose;
     // Выход из приложения: main забирает недописанное вместе с текущим прослушиванием,

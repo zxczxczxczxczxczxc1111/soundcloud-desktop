@@ -256,6 +256,10 @@ contextBridge.exposeInMainWorld('soundcloudAPI', {
             ipcRenderer.invoke('soundcloud:recommend:syncFinish', user, source, run, status, error),
         syncState: (user: number) => ipcRenderer.invoke('soundcloud:recommend:syncState', user),
         libraryMembers: (user: number, source: string) => ipcRenderer.invoke('soundcloud:recommend:libraryMembers', user, source),
+        // Радар: план обхода источников и отметка проверки источника
+        radarPlan: (user: number) => ipcRenderer.invoke('soundcloud:recommend:radarPlan', user),
+        catalogChecked: (user: number, key: string, label: string, status: string, error: string, found: number) =>
+            ipcRenderer.invoke('soundcloud:recommend:catalogChecked', user, key, label, status, error, found),
     },
     playback: (command: string) => {
         if (['play', 'pause', 'next', 'previous'].includes(command)) ipcRenderer.send('soundcloud:playback', command);

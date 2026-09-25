@@ -5,6 +5,7 @@ import { TasteService, type TasteMark } from './tasteModel';
 import { WaveExclusions } from './waveExclusions';
 import { PlaybackStore } from './playbackStore';
 import { RecommendStore } from './recommendStore';
+import { RadarService } from './radar';
 import type { LibraryReply, LibraryRequest } from './libraryService';
 
 const { directory } = workerData as { directory: string };
@@ -15,6 +16,7 @@ const overrides = new Map<number, TasteMark[]>();
 const taste = new TasteService(directory, index, (userId) => overrides.get(userId) ?? new WaveExclusions(directory).load(userId).more.map((entry) => ({
     id: entry.id, artist: entry.artistId ?? 0, genre: entry.genre ?? '', tags: entry.tags ?? '', at: entry.at,
 })), (userId, played) => recommend.tasteLibrary(userId, played));
+const radar = new RadarService(recommend, index, taste, (userId) => new WaveExclusions(directory).load(userId));
 function run(request: LibraryRequest): unknown {
     switch (request.method) {
         case 'sync': return index.sync(...request.args);
@@ -45,6 +47,13 @@ function run(request: LibraryRequest): unknown {
         case 'syncFinish': return recommend.syncFinish(...request.args);
         case 'syncState': return recommend.syncState(...request.args);
         case 'libraryMembers': return recommend.libraryMembers(...request.args);
+        case 'catalogChecked': return recommend.catalogChecked(...request.args);
+        case 'radarPlan': return radar.plan(...request.args);
+        case 'radarStatus': return recommend.radarStatus(...request.args);
+        case 'radarTask': return recommend.radarTask(...request.args);
+        case 'radarBuild': return radar.build(...request.args);
+        case 'radarEditions': return recommend.editions(...request.args);
+        case 'radarEdition': return recommend.edition(...request.args);
     }
 }
 parentPort?.on('message', (request: LibraryRequest | { method: 'close' }) => {

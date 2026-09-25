@@ -1,5 +1,6 @@
 import { trustLocalFile } from '../trustedViews';
 import { homeBlockDefaults } from '../services/homeBlocks';
+import { DEFAULT_RADAR_SCHEDULE } from '../services/radarSchedule';
 import { TEMPLATE_DEFAULTS } from '../services/presenceService';
 import { WebContentsView, BrowserWindow, ipcMain, type IpcMainInvokeEvent, type WebContents } from 'electron';
 import type ElectronStore from 'electron-store';
@@ -19,6 +20,8 @@ const defaults: Record<string, string | number | boolean> = {
     gpuCompatibilityMode: 'auto',
     siteLanguage: 'ru',
     ...homeBlockDefaults,
+    radarDay: DEFAULT_RADAR_SCHEDULE.day,
+    radarTime: DEFAULT_RADAR_SCHEDULE.time,
     adBlocker: true,
     proxyEnabled: false,
     proxyHost: '',

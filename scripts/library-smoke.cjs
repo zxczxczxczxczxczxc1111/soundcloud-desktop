@@ -51,7 +51,29 @@ module.exports = async function librarySmoke() {
         const tasteMs = performance.now() - tasteStart;
         assert.ok(profile.tracks.length > 0 && profile.artists.length > 0);
         assert.ok(profile.credits.some(([key]) => key === 'artist0'), 'liked uploads must feed credits');
-        console.log(`PASS: library worker, 50000 plays in ${Math.round(syncedMs)} ms, main heartbeat ${beats}, account isolation, recommend store 2000 uploads in ${Math.round(recordMs)} ms, taste in ${Math.round(tasteMs)} ms`);
+        // Радар: 20000 свежих загрузок аккаунтов из вкуса, план обхода, выпуск один раз за период
+        const fresh = new Date(now - 2 * 86400000).toISOString();
+        const releases = Array.from({ length: 20000 }, (_, i) => ({
+            id: 200000 + i, kind: 'track', title: 'Release ' + i, user_id: 1 + i % 300, user: { id: 1 + i % 300, username: 'Artist ' + i % 300 },
+            duration: 150000 + i * 7, created_at: fresh, genre: 'electronic',
+        }));
+        for (let i = 0; i < releases.length; i += 5000) await library.request('recordUploads', 77, releases.slice(i, i + 5000));
+        const plan = await library.request('radarPlan', 77);
+        assert.ok(plan.some((source) => source.kind === 'user') && plan.some((source) => source.kind === 'search' && /^Artist \d+$/.test(source.q)), 'taste curators and credits must be radar sources');
+        for (const source of plan) assert.equal(await library.request('catalogChecked', 77, source.key, '', 'ok', '', 1), true);
+        const cutoff = now - 3600000;
+        assert.deepEqual(await library.request('radarStatus', 77, '2026-09-25', cutoff), { published: false, started: 0 });
+        assert.ok((await library.request('radarTask', 77, '2026-09-25', cutoff, 'Europe/Moscow')).started > 0);
+        const radarStart = performance.now();
+        const built = await library.request('radarBuild', 77, '2026-09-25', cutoff, false, false);
+        const radarMs = performance.now() - radarStart;
+        assert.equal(built.published, true);
+        assert.equal(built.edition.status, 'complete');
+        assert.equal(built.edition.items.length, 50);
+        assert.equal((await library.request('radarBuild', 77, '2026-09-25', cutoff, true, false)).published, false);
+        assert.equal((await library.request('radarEditions', 77)).length, 1);
+        assert.equal((await library.request('radarEdition', 77, '2026-09-25')).items.length, 50);
+        console.log(`PASS: library worker, 50000 plays in ${Math.round(syncedMs)} ms, main heartbeat ${beats}, account isolation, recommend store 2000 uploads in ${Math.round(recordMs)} ms, taste in ${Math.round(tasteMs)} ms, radar of 20000 uploads from ${plan.length} sources in ${Math.round(radarMs)} ms`);
     } finally {
         clearInterval(heartbeat);
         const closing = library.close();

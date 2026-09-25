@@ -4,6 +4,7 @@ import type { HistoryIndex } from './historyIndex';
 import type { TasteService, TasteMark } from './tasteModel';
 import type { PlaybackStore } from './playbackStore';
 import type { RecommendStore } from './recommendStore';
+import type { RadarService } from './radar';
 
 type Operation<F extends (...args: never[]) => unknown> = { args: Parameters<F>; result: ReturnType<F> };
 export interface LibraryOperations {
@@ -35,6 +36,13 @@ export interface LibraryOperations {
     syncFinish: Operation<RecommendStore['syncFinish']>;
     syncState: Operation<RecommendStore['syncState']>;
     libraryMembers: Operation<RecommendStore['libraryMembers']>;
+    catalogChecked: Operation<RecommendStore['catalogChecked']>;
+    radarPlan: Operation<RadarService['plan']>;
+    radarStatus: Operation<RecommendStore['radarStatus']>;
+    radarTask: Operation<RecommendStore['radarTask']>;
+    radarBuild: Operation<RadarService['build']>;
+    radarEditions: Operation<RecommendStore['editions']>;
+    radarEdition: Operation<RecommendStore['edition']>;
 }
 export type LibraryRequest = { [K in keyof LibraryOperations]: { id: number; method: K; args: LibraryOperations[K]['args'] } }[keyof LibraryOperations];
 export interface LibraryReply { id: number; value?: unknown; error?: string }
@@ -76,7 +84,7 @@ export class LibraryService {
     }
     public request<K extends keyof LibraryOperations>(method: K, ...args: LibraryOperations[K]['args']): Promise<LibraryOperations[K]['result']> {
         try {
-            if (method === 'sync' || method === 'profile' || method === 'view') this.flush();
+            if (method === 'sync' || method === 'profile' || method === 'view' || method === 'radarBuild') this.flush();
             const worker = this.start();
             const id = ++this.sequence;
             return new Promise((resolve, reject) => {

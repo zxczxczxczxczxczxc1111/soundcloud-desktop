@@ -20,6 +20,7 @@ import { WaveExclusions } from './services/waveExclusions';
 import { WaveShelf } from './services/waveShelf';
 import { WaveSignals } from './services/waveSignals';
 import { LibraryService } from './services/libraryService';
+import { DEFAULT_RADAR_SCHEDULE, RadarScheduler, cleanCollectResult, cleanSchedule } from './services/radarSchedule';
 import { HistoryManager } from './history/historyManager';
 import { AwayTracker } from './services/awayTracker';
 import { OPEN_PROTOCOL, parseOpenLink } from './services/openLink';
@@ -41,6 +42,7 @@ import {
     components,
     dialog,
     powerMonitor,
+    net,
     type IpcMainEvent,
     type NativeImage,
 } from 'electron';
@@ -136,6 +138,8 @@ const store = new Store<Record<string, unknown>>({
         reduceMotion: false,
         siteLanguage: 'ru',
         ...homeBlockDefaults,
+        radarDay: DEFAULT_RADAR_SCHEDULE.day,
+        radarTime: DEFAULT_RADAR_SCHEDULE.time,
         accounts: [{ id: 'default', name: 'Основной аккаунт' }],
         currentAccountId: 'default',
     },
@@ -169,6 +173,7 @@ let waveExclusions: WaveExclusions | null = null;
 let waveSignals: WaveSignals | null = null;
 let historyManager: HistoryManager | null = null;
 let listeningLibrary: LibraryService | null = null;
+let radarScheduler: RadarScheduler | null = null;
 let presenceService: PresenceService;
 let webhookService: WebhookService;
 let updateService: UpdateService | null = null;
@@ -747,6 +752,7 @@ async function init() {
     powerMonitor.on('resume', () => {
         diagnostics.record('system.resume');
         if (contentView && !contentView.webContents.isDestroyed()) void contentView.webContents.executeJavaScript('window.__scResume?.()').catch(console.error);
+        radarScheduler?.wake();
     });
     powerMonitor.on('lock-screen', () => awayTracker.lock());
     powerMonitor.on('unlock-screen', () => awayTracker.unlock());
@@ -1035,6 +1041,35 @@ async function init() {
     historyManager?.dispose();
     const library = new LibraryService(path.join(app.getPath('userData'), 'wave'), () => waveSignals?.flush());
     listeningLibrary = library;
+    // Пятничный радар: расписание здесь, сбор каталога на странице сайта, выпуск считает и пишет worker
+    radarScheduler?.stop();
+    const radarPage = async (script: string): Promise<unknown> =>
+        contentView && !contentView.webContents.isDestroyed() ? contentView.webContents.executeJavaScript(script) as Promise<unknown> : null;
+    radarScheduler = new RadarScheduler({
+        now: () => Date.now(),
+        schedule: () => cleanSchedule(store.get('radarDay'), store.get('radarTime'), store.get('radarZone')),
+        online: () => net.isOnline(),
+        user: async () => {
+            const id = await radarPage('window.__scWhoAmI ? window.__scWhoAmI() : 0');
+            return typeof id === 'number' && Number.isSafeInteger(id) && id > 0 ? id : 0;
+        },
+        status: (user, period, at) => library.request('radarStatus', user, period, at),
+        task: async (user, period, at, zone) => {
+            const task = await library.request('radarTask', user, period, at, zone);
+            if (!task) throw new Error('Задача радара не создана');
+            return task;
+        },
+        collect: async (_user, budgetMs, staleBefore) =>
+            cleanCollectResult(await radarPage('window.__scRadarCollect ? window.__scRadarCollect(' + Math.round(budgetMs) + ', ' + Math.round(staleBefore) + ') : null')),
+        build: async (user, period, at, force) => {
+            const outcome = await library.request('radarBuild', user, period, at, force, false);
+            return { published: outcome.published, waiting: outcome.waiting };
+        },
+        changed: (state) => {
+            if (state.error) console.warn('Радар: ' + state.phase + ' ' + state.period + ' ' + state.error);
+        },
+    });
+    radarScheduler.start();
     const playbackChannels = ['loadSession', 'saveSession', 'loadCatalog', 'saveCatalog', 'listMixes', 'saveMix', 'removeMix'] as const;
     for (const method of playbackChannels) {
         const channel = 'soundcloud:library:' + method;
@@ -1055,7 +1090,9 @@ async function init() {
     }
     // Хранилище рекомендаций: загрузки с версиями, связи записей и обход источников. Ввод проверяет worker,
     // аккаунт задаёт файл, ответ прошлого прогона обхода отклоняется по номеру прогона
-    const recommendChannels = ['recordUploads', 'uploads', 'recordingLinks', 'setRecordingLink', 'syncStart', 'syncPage', 'syncFinish', 'syncState', 'libraryMembers'] as const;
+    const recommendChannels = [
+        'recordUploads', 'uploads', 'recordingLinks', 'setRecordingLink', 'syncStart', 'syncPage', 'syncFinish', 'syncState', 'libraryMembers', 'radarPlan', 'catalogChecked',
+    ] as const;
     for (const method of recommendChannels) {
         const channel = 'soundcloud:recommend:' + method;
         ipcMain.removeHandler(channel);
@@ -1063,7 +1100,7 @@ async function init() {
             if (!isTrustedSoundCloudSender(event)) throw new Error('Недопустимый отправитель рекомендаций');
             if (typeof userId !== 'number' || !Number.isSafeInteger(userId) || userId <= 0) throw new Error('Пользователь не определён');
             // Время операций ставит worker: страница передаёт только данные
-            const [a, b, c, d] = args;
+            const [a, b, c, d, e] = args;
             switch (method) {
                 case 'recordUploads': return library.request(method, userId, a);
                 case 'uploads': return library.request(method, userId, a);
@@ -1074,6 +1111,8 @@ async function init() {
                 case 'syncFinish': return library.request(method, userId, a, b, c, d);
                 case 'syncState': return library.request(method, userId);
                 case 'libraryMembers': return library.request(method, userId, a);
+                case 'radarPlan': return library.request(method, userId);
+                case 'catalogChecked': return library.request(method, userId, a, b, c, d, e);
             }
         });
     }
@@ -1311,6 +1350,8 @@ async function init() {
         }
         store.set(key, data.value);
         if (key.startsWith('proxy') || key === 'adBlocker') networkSettingsDirty = true;
+        // Новое расписание может сделать выпуск уже наступившим; повтор недели отсекает хранилище
+        if (key === 'radarDay' || key === 'radarTime' || key === 'radarZone') radarScheduler?.wake(5000);
         if (key === 'siteLanguage') {
             pageReloadNeeded = true;
             applyAppLanguage();
@@ -1589,6 +1630,7 @@ app.on('activate', function () {
 let waveSignalsTaken = false;
 let libraryStopped = false;
 app.on('before-quit', (event) => {
+    radarScheduler?.stop();
     // Последнее прослушивание страница отдаёт до закрытия окон: её pagehide приходит уже после записи журнала
     if (!waveSignalsTaken && waveSignals && contentView && !contentView.webContents.isDestroyed()) {
         waveSignalsTaken = true;

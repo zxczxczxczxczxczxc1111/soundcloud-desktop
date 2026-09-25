@@ -1,5 +1,6 @@
 import { HOME_BLOCK_KEYS, homeBlockDefaults } from '../services/homeBlocks';
 import { isGpuCompatibilityMode } from '../services/gpuProcessMode';
+import { isTimeZone, systemTimeZone } from '../services/radarSchedule';
 
 interface PreferenceStore {
     get(key: string): unknown;
@@ -22,4 +23,6 @@ export function applyPreferenceMigrations(store: PreferenceStore): void {
         for (const key of HOME_BLOCK_KEYS) store.set(key, homeBlockDefaults[key]);
         store.set('homeLayoutApplied', true);
     }
+    // Радар живёт по сохранённой зоне: смена системной зоны в поездке не сдвигает пятницу сама собой
+    if (!isTimeZone(store.get('radarZone'))) store.set('radarZone', systemTimeZone());
 }
