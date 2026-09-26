@@ -324,4 +324,10 @@ contextBridge.exposeInMainWorld('soundcloudAPI', {
         load: (userId: number): Promise<unknown> => ipcRenderer.invoke('soundcloud:wave-shelf:load', userId),
         save: (userId: number, snapshot: object): Promise<unknown> => ipcRenderer.invoke('soundcloud:wave-shelf:save', userId, snapshot),
     },
+    // «Моя музыка»: выбор источников и режим из настроек, слышанное в клиенте за 3 дня; ввод проверяет main
+    waveLibrary: {
+        load: (): Promise<unknown> => ipcRenderer.invoke('soundcloud:wave-library:load'),
+        save: (value: object): Promise<unknown> => ipcRenderer.invoke('soundcloud:wave-library:save', value),
+        heard: (userId: number): Promise<unknown> => ipcRenderer.invoke('soundcloud:wave-library:heard', userId),
+    },
 });

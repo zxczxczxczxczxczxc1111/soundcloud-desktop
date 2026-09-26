@@ -285,8 +285,9 @@ export function buildTaste(
             cache.set(play.id, item);
         }
         if (play.likedNow) likedInPlay.add(play.id);
-        // Трек, поданный волной, весит в плюс меньше выбранного руками. Простой системы (away) не штрафуется: раздел 1 плана
-        const positive = play.source.startsWith('wave:') && !play.picked ? P.wavePositive : 1;
+        // Трек, поданный волной, весит в плюс меньше выбранного руками. Простой системы (away) не штрафуется: раздел 1 плана.
+        // «Моя музыка» играет собранное самим человеком, это собственный выбор без скидки (Э7)
+        const positive = play.source.startsWith('wave:') && play.source !== 'wave:library' && !play.picked ? P.wavePositive : 1;
         const origin = originOf(play.at, item.record, play.likedNow || play.picked, true);
         // Само прослушивание насыщается по суткам, лайк во время него явное действие и идёт целиком
         const weights = playWeights({ heard: play.heard, dur: play.dur, end: play.end, likedNow: false, covered: play.covered, endedBy: play.endedBy });

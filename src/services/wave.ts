@@ -11,12 +11,15 @@ import type { SyncBridge } from './pageSources';
 import type { MatchLevel, RecordingLink } from './trackIdentity';
 import type { RadarCollectResult, RadarState } from './radarSchedule';
 import type { RadarReason } from './radar';
+import * as libraryMix from './libraryMix';
+import type { LibraryEntry, LibraryMode, MyMusicSetting } from './libraryMix';
 
-// Разбор версий и сеть подбора живут в своих модулях. Функции страницы зовут их по голому имени: в Node имя
+// Разбор версий, сеть подбора и пул «Моей музыки» живут в своих модулях. Функции страницы зовут их по голому имени: в Node имя
 // берётся отсюда, на странице из объявлений identityHelpers и sourceHelpers в той же обёртке.
 // Именованный импорт превратился бы в trackIdentity_1.copyKey и на странице не нашёлся
 const { confirmedCopies, confirmedGroups, copyKey, copyKeys, familyKey, matchLevel, nameKey, parseTrackTitle, performerKey, searchQueries, trackCredits, versionKey } = identity;
 const { classifyFailure, createDispatcher, createSearchCache, likeItems, entityItems, syncSource } = sources;
+const { isLibraryMode, isLibrarySource, libraryOrder, libraryPool } = libraryMix;
 
 export interface WaveTrack {
     id: number;
@@ -60,7 +63,9 @@ export type WaveReason =
     | { kind: 'group'; name: string }
     | { kind: 'version'; seed: string }
     /** Позиция радара: why это готовая короткая причина из выпуска */
-    | { kind: 'radar'; why: string };
+    | { kind: 'radar'; why: string }
+    /** Трек «Моей музыки»: name это плейлист, из которого он пришёл, пусто у лайков */
+    | { kind: 'library'; name: string };
 export interface WaveCandidate {
     track: WaveTrack;
     reason: WaveReason;
@@ -104,7 +109,10 @@ export type WaveTexts = Record<
     | 'menuVersions' | 'menuHideFamily' | 'menuShowFamily' | 'toastFamilyHidden' | 'toastFamilyShown' | 'versionsTitle' | 'versionsSame'
     | 'versionsOther' | 'versionsLoading' | 'versionsEmpty' | 'versionsFailed' | 'versionsLink' | 'versionsUnlink' | 'versionsProbable'
     | 'versionsConfirmed' | 'versionsThis' | 'toastLinked' | 'toastUnlinked' | 'dialogClose' | 'radarPost' | 'rowPlay'
-    | 'radarAlbum' | 'radarEp' | 'radarSingle' | 'radarCompilation' | 'radarGroupAll' | 'radarGroupQueued',
+    | 'radarAlbum' | 'radarEp' | 'radarSingle' | 'radarCompilation' | 'radarGroupAll' | 'radarGroupQueued'
+    | 'library' | 'libraryLikes' | 'libraryOrder' | 'libraryShuffle' | 'librarySmart' | 'libraryOrderTip' | 'libraryShuffleTip' | 'librarySmartTip'
+    | 'libraryPlay' | 'libraryPick' | 'libraryLoading' | 'libraryFailed' | 'libraryBuilding' | 'libraryEmpty' | 'libraryList' | 'libraryMore'
+    | 'libraryModes' | 'whyLibrary' | 'whyLibraryLikes' | 'seedLibrary',
     string
 >;
 
@@ -166,6 +174,14 @@ export const WAVE_TEXTS: Record<'ru' | 'en', WaveTexts> = {
         toastLinked: 'Отмечено: та же запись', toastUnlinked: 'Отмечено: другая запись', dialogClose: 'Закрыть', radarPost: 'Новая загрузка',
         radarAlbum: 'Альбом · {n}', radarEp: 'EP · {n}', radarSingle: 'Сингл · {n}', radarCompilation: 'Сборник · {n}', radarGroupAll: 'Слушать все {n}',
         radarGroupQueued: 'Следующими в очереди: {count}',
+        library: 'Моя музыка', libraryLikes: 'Лайки', libraryOrder: 'По порядку', libraryShuffle: 'Перемешать', librarySmart: 'Умное перемешивание',
+        libraryOrderTip: 'Источники в том порядке, в каком выбраны: плейлисты как на сайте, лайки от новых к старым. Играет всё',
+        libraryShuffleTip: 'Случайный порядок, один артист не идёт подряд. Слышанное за последние 3 дня не играет',
+        librarySmartTip: 'Как «Перемешать», плюс после каждых трёх своих треков похожий, которого у тебя ещё нет',
+        libraryPlay: 'Слушать мою музыку', libraryPick: 'Выбери лайки или плейлисты', libraryLoading: 'Загружаю плейлисты…',
+        libraryFailed: 'Плейлисты не загрузились', libraryBuilding: 'Собираю треки…', libraryEmpty: 'В выбранном нечего играть',
+        libraryList: 'Список треков', libraryMore: 'Показать ещё', libraryModes: 'Порядок',
+        whyLibrary: 'Из плейлиста {name}', whyLibraryLikes: 'Из твоих лайков', seedLibrary: 'Моя музыка: {seed}',
     },
     en: {
         wave: 'My Wave', similar: 'Similar', fresh: 'New', anyGenre: 'Any genre', genreInput: 'Genres, comma separated', fromLikes: 'From your likes',
@@ -225,6 +241,14 @@ export const WAVE_TEXTS: Record<'ru' | 'en', WaveTexts> = {
         toastLinked: 'Marked as the same recording', toastUnlinked: 'Marked as a different recording', dialogClose: 'Close', radarPost: 'New upload',
         radarAlbum: 'Album · {n}', radarEp: 'EP · {n}', radarSingle: 'Single · {n}', radarCompilation: 'Compilation · {n}', radarGroupAll: 'Play all {n}',
         radarGroupQueued: 'Up next: {count}',
+        library: 'My music', libraryLikes: 'Likes', libraryOrder: 'In order', libraryShuffle: 'Shuffle', librarySmart: 'Smart shuffle',
+        libraryOrderTip: 'Sources in the order you picked them: playlists as on SoundCloud, likes newest first. Plays everything',
+        libraryShuffleTip: 'Random order, no artist twice in a row. Skips what you heard in the last 3 days',
+        librarySmartTip: 'Like Shuffle, plus a similar track you don’t have yet after every three of yours',
+        libraryPlay: 'Play my music', libraryPick: 'Pick likes or playlists', libraryLoading: 'Loading playlists…',
+        libraryFailed: 'Couldn’t load playlists', libraryBuilding: 'Collecting tracks…', libraryEmpty: 'Nothing to play in your picks',
+        libraryList: 'Track list', libraryMore: 'Show more', libraryModes: 'Order',
+        whyLibrary: 'From playlist {name}', whyLibraryLikes: 'From your likes', seedLibrary: 'My music: {seed}',
     },
 };
 
@@ -615,6 +639,7 @@ export function reasonText(reason: WaveReason, texts: WaveTexts): string {
         case 'group': return fillText(texts.whyGroup, { name: reason.name });
         case 'version': return fillText(texts.whyVersion, { seed: reason.seed });
         case 'radar': return reason.why || texts.whyRadar;
+        case 'library': return reason.name ? fillText(texts.whyLibrary, { name: reason.name }) : texts.whyLibraryLikes;
     }
 }
 
@@ -1030,6 +1055,8 @@ export interface WaveWindow extends Window {
         waveTaste?: { load(userId: number): Promise<unknown> };
         waveSignals?: { add(userId: number, signals: PlaySignal[]): void };
         waveShelf?: { load(userId: number): Promise<unknown>; save(userId: number, snapshot: object): Promise<unknown> };
+        // «Моя музыка»: выбор и режим в настройках, слышанное в клиенте за 3 дня
+        waveLibrary?: { load(): Promise<unknown>; save(value: object): Promise<unknown>; heard(userId: number): Promise<unknown> };
         // Хранилище рекомендаций в worker: обход библиотеки и загрузки с разбором версий
         recommend?: SyncBridge & {
             syncState(user: number): Promise<unknown>;
@@ -1134,20 +1161,39 @@ export function installWave(config: WaveConfig, createPlayback: typeof installPl
     // Волна от трека, артиста или плейлиста из меню по ПКМ: зёрна вместо вкуса, жанр не действует.
     // own это треки самого артиста, они идут в подборку; derived это найденное, от него волна едет дальше.
     // У подборок полки и набора из меню own это сама подборка
-    type SeedKind = WaveLinkKind | 'daily' | 'forgotten' | 'group' | 'tracks' | 'radar';
+    type SeedKind = WaveLinkKind | 'daily' | 'forgotten' | 'group' | 'tracks' | 'radar' | 'library';
     interface Seed {
         kind: SeedKind;
         title: string;
         tracks: WaveTrack[];
         own: WaveTrack[];
-        /** own по порядку впереди найденного (fixed) или через один с ним (blend); без order own тасуется с найденным */
-        order?: 'fixed' | 'blend';
+        /** own по порядку впереди найденного (fixed), через один с ним (blend) или три к одному (smart); без order own тасуется с найденным */
+        order?: 'fixed' | 'blend' | 'smart';
         /** Свой режим подбора у подборки полки, переключатель на неё не действует */
         mode?: WaveMode;
         /** Номер карточки полки, от которой идёт волна */
         card?: number;
+        /** «Моя музыка»: выбранные источники и режим; left это номера оставшихся треков из сессии, пока пул не собран заново */
+        library?: { pick: string[]; mode: LibraryMode; left?: number[] };
     }
     let seed: Seed | null = null;
+    // «Моя музыка» (Э7): выбор и режим из настроек, плейлисты аккаунта для выбора, план игры (пул в порядке режима,
+    // key это выбор и режим) и откуда пришёл каждый трек пула. Плейлисты кешируются на 10 минут: «По порядку»
+    // берёт порядок у сайта в момент запуска
+    let myMusic: MyMusicSetting = { mode: 'shuffle', pick: {} };
+    let myMusicPromise: Promise<void> | null = null;
+    interface LibraryPlaylist { id: number; title: string; count: number; own: boolean }
+    let librarySources: LibraryPlaylist[] | 'loading' | 'failed' | null = null;
+    let libraryPlan: { key: string; at: number; used: boolean; pool: LibraryEntry<WaveTrack>[]; entries: LibraryEntry<WaveTrack>[] } | null = null;
+    let libraryPlanPromise: Promise<void> | null = null;
+    let libraryPlanFailed = false;
+    let libraryListOpen = false;
+    let libraryShown = 100;
+    let libraryRetryAt = 0;
+    const libraryFrom = new Map<number, string>();
+    const playlistCache = new Map<number, { at: number; title: string; tracks: WaveTrack[] }>();
+    // Три к одному в «Умном перемешивании»: сколько своих подряд уже встало, счёт идёт через порции очереди
+    let ownRun = 0;
     // Подборка, которая играет впереди найденного или вперемешку с ним
     let ownQueue: WaveCandidate[] = [];
     let derivedSeeds: WaveTrack[] = [];
@@ -1249,7 +1295,14 @@ export function installWave(config: WaveConfig, createPlayback: typeof installPl
         const saved = items.flatMap((item) => item.sound ? [{ track: { ...item.sound.attributes, id: item.sound.id }, explicit: item.explicit === true, wave: ours.has(item), reason: known.get(item.sound.id)?.reason }] : []);
         if (saved.length !== items.length) return null;
         return { version: 1, at: Date.now(), items: saved, index, position: positionOf(p.getCurrentSound()), paused: !p.isPlaying(),
-            active, mode, genre, seed, fallback: fallbackBefore ?? p.getState('fallbackEnabled') === true };
+            active, mode, genre, seed: savedSeed(), fallback: fallbackBefore ?? p.getState('fallbackEnabled') === true };
+    }
+    // «Моя музыка» кладёт в сессию выбор, режим и номера оставшихся треков, без самих треков: пул на тысячи треков
+    // переписывался бы мегабайтами каждые 5 секунд. После перезапуска он собирается заново и идёт с того же места
+    function savedSeed(): Seed | null {
+        if (seed?.kind !== 'library' || !seed.library) return seed;
+        const left = seed.library.left ?? (ownAdded ? ownQueue.map((item) => item.track.id) : seed.own.map((track) => track.id));
+        return { ...seed, tracks: [], own: [], library: { pick: seed.library.pick, mode: seed.library.mode, left: left.slice(0, 5000) } };
     }
     function restoreSnapshot(saved: PlaybackSnapshot, tracks: WaveTrack[]): boolean {
         const p = player; if (!p || disposed) return false;
@@ -1555,17 +1608,19 @@ export function installWave(config: WaveConfig, createPlayback: typeof installPl
         return librarySync;
     }
     // Плейлист целиком: сайт отдаёт все номера одним ответом (до 500), первые треки целиком, остальные заготовками
-    // {id, kind, policy}; заготовки добираются trackBatch по 50. Порядок плейлиста сохраняется, трек, которого сайт
-    // не отдал (удалён или закрыт), в состав не входит
-    async function libraryPlaylist(id: number): Promise<{ collection: WaveTrack[] }> {
-        const body = (await backgroundCall('playlist', { id }, {})) as { tracks?: unknown } | null;
+    // {id, kind, policy}; заготовки добираются trackBatch по 50, по два запроса сразу. Порядок плейлиста сохраняется,
+    // трек, которого сайт не отдал (удалён или закрыт), в состав не входит. Обход идёт фоном, «Моя музыка» сразу
+    async function libraryPlaylist(id: number, send: typeof call = backgroundCall): Promise<{ title: string; collection: WaveTrack[] }> {
+        const body = (await send('playlist', { id }, {})) as { title?: unknown; tracks?: unknown } | null;
         const listed = Array.isArray(body?.tracks) ? body.tracks.map(asTrack).filter((track): track is WaveTrack => !!track) : null;
         if (!listed) throw new Error('Плейлист ' + id + ' пришёл без списка треков');
         const full = new Map(listed.filter((track) => typeof track.title === 'string').map((track) => [track.id, track]));
         const missing = listed.filter((track) => !full.has(track.id)).map((track) => track.id);
-        for (let i = 0; i < missing.length; i += 50)
-            for (const track of tracksOf(await backgroundCall('trackBatch', {}, { ids: missing.slice(i, i + 50).join(',') }))) full.set(track.id, track);
-        return { collection: listed.map((track) => full.get(track.id)).filter((track): track is WaveTrack => !!track) };
+        for (let i = 0; i < missing.length && !disposed; i += 100)
+            await Promise.all([missing.slice(i, i + 50), missing.slice(i + 50, i + 100)].filter((part) => part.length).map(async (part) => {
+                for (const track of tracksOf(await send('trackBatch', {}, { ids: part.join(',') }))) full.set(track.id, track);
+            }));
+        return { title: typeof body?.title === 'string' ? body.title.trim() : '', collection: listed.map((track) => full.get(track.id)).filter((track): track is WaveTrack => !!track) };
     }
 
     // Сбор каталога для радара (раздел 8 плана): main зовёт по расписанию с бюджетом времени. Какие источники смотреть,
@@ -1884,12 +1939,29 @@ export function installWave(config: WaveConfig, createPlayback: typeof installPl
         const p = await ensureProfile();
         await Promise.all([ensureExclusions(), ensureTaste()]);
         if (own !== generation) return 0;
+        // «Моя музыка» из сессии: пул собирается заново, иначе своё не встанет в очередь
+        if (seed?.kind === 'library' && seed.library?.left) {
+            await resumeLibrary(seed);
+            if (own !== generation) return 0;
+            if (seed?.library?.left) throw new Error('Пул «Моей музыки» не собран');
+        }
         const found: WaveCandidate[] = [];
         const filter = currentFilter();
+        // Подмешанное к своей музыке и похожее после неё новое для библиотеки: лайков там нет
+        if (seed?.kind === 'library') for (const id of p.liked) filter.excludedTracks.add(id);
         if (seed && !ownAdded) {
             ownAdded = true;
             const current = seed;
-            if (current.order) {
+            if (current.kind === 'library') {
+                // Пул отфильтрован своим фильтром при сборке: миксы и недавно слышанное остаются, копии уже склеены
+                for (const track of current.own) {
+                    if (taken.has(track.id)) continue;
+                    taken.add(track.id);
+                    for (const key of copyKeys(track)) signatures.add(key);
+                    ownQueue.push({ track, reason: { kind: 'library', name: libraryFrom.get(track.id) ?? '' } });
+                }
+                if (current.order === 'fixed' && ownQueue.length >= BATCH) return ownQueue.length;
+            } else if (current.order) {
                 const reason: WaveReason = current.kind === 'daily' ? { kind: 'daily' } : current.kind === 'forgotten' ? { kind: 'forgotten' } : { kind: 'group', name: current.title };
                 // Радар играет выпуск целиком: «Уже слышал» и недавно игравшее в нём остаются, запреты проверены при запуске
                 const ownFilter: WaveFilter = current.kind === 'radar' ? { ...filter, recent: new Set<number>() } : filter;
@@ -2026,7 +2098,8 @@ export function installWave(config: WaveConfig, createPlayback: typeof installPl
         return found.length;
     }
     // Сколько треков можно взять сейчас: подборка вперемешку с найденным тратится не быстрее найденного
-    const ready = (): number => pool.length + (seed?.order === 'blend' ? Math.min(ownQueue.length, pool.length + 1) : ownQueue.length);
+    const ready = (): number => pool.length + (seed?.order === 'blend' ? Math.min(ownQueue.length, pool.length + 1)
+        : seed?.order === 'smart' ? Math.min(ownQueue.length, 3 * (pool.length + 1)) : ownQueue.length);
     function ensurePool(need: number): Promise<void> {
         if (ready() >= need || exhausted) return Promise.resolve();
         if (!gathering) {
@@ -2043,12 +2116,15 @@ export function installWave(config: WaveConfig, createPlayback: typeof installPl
         }
         return gathering;
     }
-    // Подборка идёт по своему порядку, найденное с разнесёнными артистами
+    // Подборка идёт по своему порядку, найденное с разнесёнными артистами.
+    // «Умное перемешивание»: после каждых трёх своих один найденный, пока найденное есть
     function takeFromPool(count: number): WaveCandidate[] {
         const picked: WaveCandidate[] = [];
         const blend = seed?.order === 'blend';
+        const smart = seed?.order === 'smart';
         while (picked.length < count && (ownQueue.length || pool.length)) {
-            const fromOwn = ownQueue.length > 0 && (!blend || !pool.length || picked.length % 2 === 0);
+            const fromOwn = ownQueue.length > 0 && (smart ? !pool.length || ownRun < 3 : !blend || !pool.length || picked.length % 2 === 0);
+            if (smart) ownRun = fromOwn ? ownRun + 1 : 0;
             const item = fromOwn ? ownQueue.shift() : pickSpaced(pool, 1, recentArtists)[0];
             if (!item) break;
             if (!fromOwn) pool = pool.filter((entry) => entry !== item);
@@ -2066,6 +2142,7 @@ export function installWave(config: WaveConfig, createPlayback: typeof installPl
         exhausted = false;
         gathering = null;
         ownAdded = false;
+        ownRun = 0;
         artistFallbackDone = false;
         fallbackMood = null;
         seenCount = 0;
@@ -2334,6 +2411,7 @@ export function installWave(config: WaveConfig, createPlayback: typeof installPl
             case 'group': return fillText(T.seedGroup, { seed: current.title });
             case 'tracks': return fillText(T.seedTracks, { seed: current.title });
             case 'radar': return current.title;
+            case 'library': return short ? T.library : fillText(T.seedLibrary, { seed: current.title });
         }
     }
     function waveLabel(): string {
@@ -2963,6 +3041,298 @@ export function installWave(config: WaveConfig, createPlayback: typeof installPl
             showToast(T.toastFailed);
         });
     }
+    // ===== «Моя музыка» (Э7): свои лайки и плейлисты целиком, три режима порядка =====
+    const LIBRARY_TTL = 10 * 60000;
+    const pickedSources = (): string[] => (userId ? myMusic.pick[String(userId)] : undefined) ?? ['likes'];
+    const planKey = (pick: string[], mode: LibraryMode): string => pick.join(',') + '|' + mode;
+    // Выбор и режим из настроек, main их уже проверил. Не прочитались: лайки и «Перемешать» до перезагрузки страницы
+    function ensureMyMusic(): Promise<void> {
+        myMusicPromise ??= (async () => {
+            const loaded = (await host.soundcloudAPI?.waveLibrary?.load()) as { mode?: unknown; pick?: unknown } | null | undefined;
+            if (!loaded || !isLibraryMode(loaded.mode) || !loaded.pick || typeof loaded.pick !== 'object') return;
+            const pick: Record<string, string[]> = {};
+            for (const [user, list] of Object.entries(loaded.pick as Record<string, unknown>)) if (Array.isArray(list)) pick[user] = list.filter(isLibrarySource);
+            myMusic = { mode: loaded.mode, pick };
+        })().catch((error: unknown) => console.warn('Моя музыка: выбор не прочитан', error)).finally(render);
+        return myMusicPromise;
+    }
+    function saveMyMusic(): void {
+        const bridge = host.soundcloudAPI?.waveLibrary;
+        if (!bridge) return;
+        bridge.save(myMusic).then((saved) => {
+            if (saved !== true) console.warn('Моя музыка: выбор не сохранён');
+        }, (error: unknown) => console.warn('Моя музыка: выбор не сохранён', error));
+    }
+    // Источник в выбор или из выбора; порядок выбора это порядок «По порядку». Аккаунтов в настройке не больше 20
+    function toggleLibrarySource(key: string): void {
+        if (!userId || !isLibrarySource(key)) return;
+        const list = pickedSources();
+        const next = list.includes(key) ? list.filter((item) => item !== key) : [...list, key].slice(0, 100);
+        const others = Object.entries(myMusic.pick).filter(([user]) => user !== String(userId)).slice(0, 19);
+        myMusic = { mode: myMusic.mode, pick: { ...Object.fromEntries(others), [String(userId)]: next } };
+        saveMyMusic();
+        if (libraryListOpen && next.length) void ensureLibraryPlan(false);
+        render();
+    }
+    function setLibraryMode(next: LibraryMode): void {
+        if (next === myMusic.mode) return;
+        myMusic = { mode: next, pick: myMusic.pick };
+        saveMyMusic();
+        const current = seed;
+        if (active && current?.kind === 'library') void reorderLibrary(current, next).catch((error: unknown) => console.warn('Моя музыка: порядок не сменился', error));
+        else if (libraryListOpen) void ensureLibraryPlan(false);
+        render();
+    }
+    // Плейлисты аккаунта для выбора: свои без альбомов и сохранённые (альбомы среди них), названия у сайта на сессию
+    function ensureLibrarySources(): void {
+        if (librarySources !== null) return;
+        librarySources = 'loading';
+        void (async () => {
+            const user = await ensureUser();
+            if (!user) throw new Error('Пользователь не определён');
+            const lists: LibraryPlaylist[] = [];
+            const info = (value: unknown, own: boolean): void => {
+                const item = value && typeof value === 'object' ? (value as { id?: unknown; title?: unknown; track_count?: unknown; tracks?: unknown }) : null;
+                if (!item || !isId(item.id) || lists.some((list) => list.id === item.id)) return;
+                const count = typeof item.track_count === 'number' ? item.track_count : Array.isArray(item.tracks) ? item.tracks.length : 0;
+                lists.push({ id: item.id, title: (typeof item.title === 'string' ? item.title.trim() : '') || '…', count, own });
+            };
+            let query: Record<string, string | number> | null = { limit: 50 };
+            for (let page = 0; query && page < 10 && !disposed; page++) {
+                const body = await call('userPlaylistsWithoutAlbums', { id: user }, query);
+                for (const item of collection(body)) info(item, true);
+                query = nextQuery(body);
+            }
+            const saved: number[] = [];
+            query = { limit: 200 };
+            for (let page = 0; query && page < 5 && !disposed; page++) {
+                const body = await call('playlistLikesIds', {}, query);
+                for (const value of collection(body)) {
+                    const id = typeof value === 'number' ? value : (value as { id?: unknown } | null)?.id;
+                    if (isId(id) && !saved.includes(id)) saved.push(id);
+                }
+                query = nextQuery(body);
+            }
+            // Сохранённый плейлист, которого сайт не отдал (удалён или закрыт), в выбор не попадает
+            const bodies = await Promise.all(saved.slice(0, 50).map((id) => call('playlist', { id }, {}).catch((error: unknown) => {
+                console.warn('Моя музыка: сохранённый плейлист не загружен', error);
+                return null;
+            })));
+            for (const body of bodies) info(body, false);
+            librarySources = lists;
+        })().catch((error: unknown) => {
+            librarySources = 'failed';
+            console.warn('Моя музыка: плейлисты не загружены', error);
+        }).finally(render);
+    }
+    const playlistName = (id: number): string =>
+        (Array.isArray(librarySources) ? librarySources.find((list) => list.id === id)?.title : undefined) ?? playlistCache.get(id)?.title ?? '';
+    // Слышанное за 3 дня для перемешивания: прослушивания в клиенте от 30 секунд и история сайта, туда попадает и телефон.
+    // История не ответила: правило держится на журнале клиента
+    let libraryHeardCache: { at: number; ids: Set<number> } | null = null;
+    async function libraryHeard(): Promise<Set<number>> {
+        if (libraryHeardCache && Date.now() - libraryHeardCache.at < 5 * 60000) return libraryHeardCache.ids;
+        const since = Date.now() - 3 * 86400000;
+        const ids = new Set<number>();
+        const user = await ensureUser();
+        try {
+            const client = user ? await host.soundcloudAPI?.waveLibrary?.heard(user) : [];
+            if (Array.isArray(client)) for (const id of client) if (isId(id)) ids.add(id);
+        } catch (error) {
+            console.warn('Моя музыка: слышанное в клиенте не прочитано', error);
+        }
+        try {
+            let query: Record<string, string | number> | null = { limit: 200 };
+            for (let page = 0; query && page < 5 && !disposed; page++) {
+                const body = await call('playHistoryTracks', {}, query);
+                // Без played_at возраст записей не узнать: хватит первой страницы
+                let older = false;
+                let dated = false;
+                for (const value of collection(body)) {
+                    const entry = value as { played_at?: unknown; track?: unknown } | null;
+                    const track = asTrack(entry?.track);
+                    const at = typeof entry?.played_at === 'number' ? entry.played_at : 0;
+                    if (at) dated = true;
+                    if (at && at < since) older = true;
+                    else if (track) ids.add(track.id);
+                }
+                query = older || !dated ? null : nextQuery(body);
+            }
+        } catch (error) {
+            console.warn('Моя музыка: история сайта не загружена', error);
+        }
+        libraryHeardCache = { at: Date.now(), ids };
+        return ids;
+    }
+    // Трек пула: всё, что можно послушать. «Не нравится», скрытые аккаунты и «Не сейчас» отсекаются, скрытые версии
+    // семьи нет (свою библиотеку человек собрал сам), миксы длиннее 15 минут остаются, в отличие от волны
+    const libraryKeeps = (track: WaveTrack): boolean =>
+        (track.kind === undefined || track.kind === 'track') && track.streamable !== false && track.policy !== 'SNIP' && track.policy !== 'BLOCK' &&
+        !disliked().has(track.id) && !excludedArtists.has(trackArtist(track)) && !marked(laterTracks, track.id) && !marked(laterArtists, trackArtist(track));
+    // Пул по выбору целиком: весь каталог лайков от новых к старым и плейлисты в порядке сайта
+    async function collectLibrary(pick: string[]): Promise<LibraryEntry<WaveTrack>[]> {
+        const p = await ensureProfile();
+        await ensureExclusions();
+        const sources: Array<{ key: string; name: string; tracks: WaveTrack[] }> = [];
+        for (const key of pick) {
+            if (disposed) break;
+            if (key === 'likes') {
+                try {
+                    await expandLibrary(p);
+                } catch (error) {
+                    // Каталог собран, но не сохранился на диск: играем его. Не дошли страницы лайков: пул был бы неполным
+                    if (p.likesCursor) throw error;
+                    console.warn('Моя музыка: каталог лайков не сохранён', error);
+                }
+                const rank = new Map([...p.liked].map((id, index) => [id, index]));
+                sources.push({ key, name: '', tracks: p.likedTracks.slice().sort((a, b) => (rank.get(a.id) ?? 0) - (rank.get(b.id) ?? 0)) });
+                continue;
+            }
+            const id = Number(key.slice('playlist:'.length));
+            let list = playlistCache.get(id);
+            if (!list || Date.now() - list.at >= LIBRARY_TTL) {
+                const loaded = await libraryPlaylist(id, call);
+                list = { at: Date.now(), title: loaded.title, tracks: loaded.collection };
+                playlistCache.set(id, list);
+            }
+            sources.push({ key, name: list.title || playlistName(id) || '…', tracks: list.tracks });
+        }
+        const pool = libraryPool(sources, libraryKeeps, copyKeys, copyKey);
+        for (const entry of pool) libraryFrom.set(entry.track.id, entry.from);
+        return pool;
+    }
+    async function orderLibrary(pool: LibraryEntry<WaveTrack>[], mode: LibraryMode): Promise<LibraryEntry<WaveTrack>[]> {
+        const heard = mode === 'order' ? new Set<number>() : await libraryHeard();
+        return libraryOrder(pool, mode, trackArtist, (track) => heard.has(track.id), Math.random);
+    }
+    // План игры для текущего выбора и режима. Собранный пул живёт 10 минут; fresh перемешивает заново уже сыгранный план
+    function ensureLibraryPlan(fresh: boolean): Promise<void> {
+        const pick = pickedSources();
+        const mode = myMusic.mode;
+        const key = planKey(pick, mode);
+        const plan = libraryPlan;
+        const alive = !!plan && Date.now() - plan.at < LIBRARY_TTL;
+        if (plan && alive && plan.key === key && !(fresh && plan.used)) return Promise.resolve();
+        if (libraryPlanPromise) return libraryPlanPromise;
+        libraryPlanFailed = false;
+        const run = (async () => {
+            const samePool = !!plan && alive && plan.key.startsWith(pick.join(',') + '|');
+            const pool = samePool && plan ? plan.pool : await collectLibrary(pick);
+            const entries = await orderLibrary(pool, mode);
+            // Выбор сменился, пока собирали: план для прежнего не нужен
+            if (planKey(pickedSources(), myMusic.mode) !== key) return;
+            libraryPlan = { key, at: samePool && plan ? plan.at : Date.now(), used: false, pool, entries };
+            libraryShown = 100;
+        })().catch((error: unknown) => {
+            libraryPlanFailed = true;
+            console.warn('Моя музыка: пул не собран', error);
+        }).finally(() => {
+            libraryPlanPromise = null;
+            if (libraryListOpen && !libraryPlanFailed && libraryPlan?.key !== planKey(pickedSources(), myMusic.mode) && pickedSources().length) void ensureLibraryPlan(false);
+            render();
+        });
+        libraryPlanPromise = run;
+        render();
+        return run;
+    }
+    // Волна от своей музыки: пул впереди похожего; fromId играет первым, дальше показанный план с него по кругу
+    async function startLibrary(fromId = 0): Promise<void> {
+        const pick = pickedSources();
+        if (!pick.length) {
+            showToast(T.libraryPick);
+            return;
+        }
+        const request = ++seedRequest;
+        try {
+            await Promise.all([ensureProfile(), ensureExclusions()]);
+            await ensureLibraryPlan(!fromId);
+            const plan = libraryPlan;
+            const mode = myMusic.mode;
+            if (request !== seedRequest || disposed) return;
+            if (!plan || plan.key !== planKey(pick, mode)) {
+                showToast(T.toastFailed);
+                return;
+            }
+            const entries = plan.entries.filter((entry) => libraryKeeps(entry.track));
+            if (!entries.length) {
+                showToast(T.libraryEmpty);
+                return;
+            }
+            const at = fromId ? entries.findIndex((entry) => entry.track.id === fromId) : -1;
+            const first = at >= 0 ? entries[at].track : null;
+            const own = (at >= 0 ? [...entries.slice(at + 1), ...entries.slice(0, at)] : entries).map((entry) => entry.track);
+            plan.used = true;
+            const names = pick.map((key) => (key === 'likes' ? T.libraryLikes : playlistName(Number(key.slice('playlist:'.length))))).filter(Boolean);
+            const title = names.length > 2 ? names.slice(0, 2).join(', ') + ' +' + (names.length - 2) : names.join(', ');
+            await beginSeed(request, {
+                seed: { kind: 'library', title: title || T.library, own, tracks: shuffleInPlace(plan.pool.map((entry) => entry.track)), order: mode === 'smart' ? 'smart' : 'fixed', mode: 'similar', library: { pick, mode } },
+                first,
+            });
+        } catch (error) {
+            if (request !== seedRequest) return;
+            console.warn('Моя музыка: не запустилась', error);
+            showToast(T.toastFailed);
+        }
+    }
+    // Сессия после перезапуска: пул собирается заново из каталога и плейлистов, дальше те же оставшиеся треки по порядку.
+    // Не собрался: номера остаются в сессии, следующая попытка через 15 секунд
+    async function resumeLibrary(current: Seed): Promise<void> {
+        const library = current.library;
+        if (!library?.left || Date.now() < libraryRetryAt) return;
+        try {
+            const pool = await collectLibrary(library.pick);
+            if (seed !== current || !library.left) return;
+            const byId = new Map(pool.map((entry) => [entry.track.id, entry]));
+            const rest = library.left.flatMap((id) => byId.get(id) ?? []);
+            current.own = rest.map((entry) => entry.track);
+            current.tracks = shuffleInPlace(pool.map((entry) => entry.track));
+            delete library.left;
+            libraryRetryAt = 0;
+            if (planKey(library.pick, library.mode) === planKey(pickedSources(), myMusic.mode))
+                libraryPlan = { key: planKey(library.pick, library.mode), at: Date.now(), used: true, pool, entries: rest };
+        } catch (error) {
+            libraryRetryAt = Date.now() + 15000;
+            console.warn('Моя музыка: пул из сессии не собран', error);
+        }
+    }
+    // Смена режима во время игры: текущий трек доигрывает, дальше несыгранное из пула в новом порядке
+    async function reorderLibrary(current: Seed, next: LibraryMode): Promise<void> {
+        const library = current.library;
+        const plan = libraryPlan;
+        if (!library || !plan || !plan.key.startsWith(library.pick.join(',') + '|')) {
+            if (library) library.mode = next;
+            return;
+        }
+        const { items, index } = queueView();
+        const played = new Set(items.slice(0, index + 1).flatMap((item) => (item.sound ? [item.sound.id] : [])));
+        const ahead = items.slice(index + 1).flatMap((item) => (item.sound && ours.has(item) ? [item.sound.id] : []));
+        const entries = await orderLibrary(plan.pool.filter((entry) => !played.has(entry.track.id)), next);
+        if (seed !== current || !active) return;
+        library.mode = next;
+        current.order = next === 'smart' ? 'smart' : 'fixed';
+        current.own = entries.filter((entry) => libraryKeeps(entry.track)).map((entry) => entry.track);
+        libraryPlan = { ...plan, key: planKey(library.pick, next), used: true, entries };
+        resetGeneration();
+        // Стоявшие впереди треки пула уходят из очереди вместе со старым порядком и снова доступны новому
+        for (const id of ahead) taken.delete(id);
+        await restartAhead();
+    }
+    // План, который показывает список: у играющей «Моей музыки» её собственный, иначе для текущего выбора и режима
+    function shownPlan(): typeof libraryPlan {
+        const library = seed?.kind === 'library' && active ? seed.library : undefined;
+        const keys = [planKey(pickedSources(), myMusic.mode), ...(library ? [planKey(library.pick, library.mode)] : [])];
+        return libraryPlan && keys.includes(libraryPlan.key) ? libraryPlan : null;
+    }
+    function libraryRowClick(id: number): void {
+        const item = active && player && seed?.kind === 'library' ? player.getQueue().slice().find((entry) => ours.has(entry) && entry.sound?.id === id) : undefined;
+        if (item && player) {
+            jumped = true;
+            player.setCurrentItem(item, {});
+            if (!player.isPlaying()) player.playCurrent({ userInitiated: true });
+            setTimeout(render, 150);
+        } else void startLibrary(id);
+    }
+
     // ===== Пятничный радар: выпуск из worker, карточки на полке, архив, «Все найденные», пересборка =====
     // Ответ main уже проверен там; здесь только форма, чтобы не упасть на чужом
     function asRadarRows(list: unknown): RadarRow[] {
@@ -3960,7 +4330,14 @@ export function installWave(config: WaveConfig, createPlayback: typeof installPl
         '.scw-mix-title b{display:block;font-size:16px;line-height:22px;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}',
         '.scw-mix-title span{color:var(--scw-muted)}',
         '.scw-mix .scw-hint{padding:8px 0 12px}',
-        '.scw-mix-rows{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));grid-auto-flow:row dense;column-gap:16px;max-height:432px;overflow-y:auto;margin:0 -8px;padding-bottom:8px;scrollbar-width:thin;scrollbar-color:rgba(255,255,255,.2) transparent}',
+        '.scw-mix-rows,.scw-lib-rows{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));grid-auto-flow:row dense;column-gap:16px;max-height:432px;overflow-y:auto;margin:0 -8px;padding-bottom:8px;scrollbar-width:thin;scrollbar-color:rgba(255,255,255,.2) transparent}',
+        // «Моя музыка»: плашка того же вида, что раскрытая подборка; источники чипами, режимы переключателем волны
+        '.scw-lib{padding:16px 16px 8px;border-radius:6px;background:var(--scw-film)}',
+        '.scw-lib-src{margin-bottom:12px}',
+        '#sc-wave .scw-lib .scw-chip{max-width:280px;overflow:hidden;text-overflow:ellipsis}',
+        '.scw-chip-n{margin-left:6px;font-weight:400;opacity:.7}',
+        '.scw-lib .scw-mix-head{flex-wrap:wrap}',
+        '#sc-wave .scw-lib-more{grid-column:1/-1;justify-self:center;margin:8px 0}',
         '#sc-wave .scw-row{display:grid;grid-template-columns:40px minmax(0,1fr) auto;align-items:center;gap:12px;height:48px;padding:4px 8px;border-radius:4px;text-align:left;min-width:0;cursor:pointer;box-sizing:border-box}',
         '#sc-wave .scw-row:hover{background:var(--scw-film)}',
         '.scw-row .scw-art{width:40px;height:40px;margin:0}',
@@ -4606,6 +4983,94 @@ export function installWave(config: WaveConfig, createPlayback: typeof installPl
         box.append(rows);
         return box;
     }
+    // «Моя музыка» над подборками: источники, режим с подсказками, «Слушать» и список пула в порядке игры
+    function renderLibrary(): HTMLElement[] {
+        if (state === 'unavailable' || !host.soundcloudAPI?.waveLibrary) return [];
+        void ensureMyMusic();
+        // Плейлисты для выбора спрашиваются после первой подборки волны, чтобы не спорить с ней за ответы сайта
+        if (librarySources === null && (state !== 'loading' || active)) ensureLibrarySources();
+        const pick = pickedSources();
+        const box = el('div', 'scw-lib');
+        box.setAttribute('role', 'region');
+        box.setAttribute('aria-label', T.library);
+        const chips = el('div', 'scw-mix-tools scw-lib-src');
+        const chip = (key: string, label: string, count: number): void => {
+            const node = el('button', 'scw-chip', label);
+            node.type = 'button';
+            node.dataset.act = 'lib-source';
+            node.dataset.source = key;
+            node.setAttribute('aria-pressed', String(pick.includes(key)));
+            if (count) node.append(el('span', 'scw-chip-n', String(count)));
+            chips.append(node);
+        };
+        chip('likes', T.libraryLikes, profile?.liked.size ?? 0);
+        if (Array.isArray(librarySources)) for (const list of librarySources) chip('playlist:' + list.id, list.title, list.count);
+        else if (librarySources === 'failed') chips.append(el('span', 'scw-hint', T.libraryFailed), textButton('lib-retry', T.retry));
+        else chips.append(el('span', 'scw-hint', T.libraryLoading));
+        const head = el('div', 'scw-mix-head');
+        const mine = !!seed && seed.kind === 'library' && active;
+        const playing = mine && !!player?.isPlaying();
+        const play = button('scw-mix-play', 'lib-play', playing ? T.pause : T.libraryPlay, playing ? 'pause' : 'play');
+        play.title = playing ? T.pause : T.libraryPlay;
+        play.disabled = !pick.length && !mine;
+        const titles = el('div', 'scw-mix-title');
+        const names = pick.map((key) => (key === 'likes' ? T.libraryLikes : playlistName(Number(key.slice('playlist:'.length))))).filter(Boolean);
+        const plan = shownPlan();
+        const count = plan ? plan.entries.filter((entry) => libraryKeeps(entry.track)).length : 0;
+        const status = el('span', '', libraryPlanPromise ? T.libraryBuilding : plan ? countText(count, T.tracksCount, T.lang) : '');
+        status.setAttribute('role', 'status');
+        titles.append(el('b', '', names.join(', ') || T.libraryPick), status);
+        const seg = el('div', 'scw-seg');
+        seg.setAttribute('role', 'radiogroup');
+        seg.setAttribute('aria-label', T.libraryModes);
+        const modes: Array<[LibraryMode, string, string]> = [['order', T.libraryOrder, T.libraryOrderTip], ['shuffle', T.libraryShuffle, T.libraryShuffleTip], ['smart', T.librarySmart, T.librarySmartTip]];
+        for (const [value, label, tip] of modes) {
+            const option = el('button', '', label);
+            option.type = 'button';
+            option.setAttribute('role', 'radio');
+            option.setAttribute('aria-checked', String(myMusic.mode === value));
+            option.setAttribute('aria-description', tip);
+            option.dataset.act = 'lib-mode';
+            option.dataset.lmode = value;
+            option.dataset.tip = tip;
+            seg.append(option);
+        }
+        const list = textButton('lib-list', T.libraryList);
+        list.setAttribute('aria-expanded', String(libraryListOpen));
+        head.append(play, titles, seg, list);
+        box.append(chips, head);
+        if (libraryListOpen) box.append(libraryRows(plan));
+        return [el('div', 'scw-shelf-h', T.library), box];
+    }
+    function libraryRows(plan: typeof libraryPlan): HTMLElement {
+        const hint = (text: string): HTMLElement => {
+            const line = el('div', 'scw-hint', text);
+            line.setAttribute('role', 'status');
+            return line;
+        };
+        if (!pickedSources().length && !plan) return hint(T.libraryPick);
+        if (!plan) {
+            if (libraryPlanPromise || !libraryPlanFailed) return hint(T.libraryBuilding);
+            const failed = el('div', 'scw-shelf-error');
+            failed.append(hint(T.toastFailed), textButton('lib-rebuild', T.retry));
+            return failed;
+        }
+        const entries = plan.entries.filter((entry) => libraryKeeps(entry.track));
+        if (!entries.length) return hint(T.libraryEmpty);
+        const rows = el('div', 'scw-lib-rows');
+        const now = active ? player?.getCurrentSound()?.id ?? 0 : 0;
+        for (const entry of entries.slice(0, libraryShown)) {
+            const { row, end } = trackRow(entry.track, now);
+            end.append(el('span', 'scw-row-d', formatTime(entry.track.full_duration || entry.track.duration || 0)));
+            rows.append(row);
+        }
+        if (entries.length > libraryShown) {
+            const more = textButton('lib-more', T.libraryMore);
+            more.classList.add('scw-lib-more');
+            rows.append(more);
+        }
+        return rows;
+    }
     // rowsAt: прокрутка списка подборки, когда секция вернулась на страницу и своя прокрутка списка потеряна
     function render(rowsAt?: number): void {
         if (!section) return;
@@ -4614,11 +5079,14 @@ export function installWave(config: WaveConfig, createPlayback: typeof installPl
         const focused = focusedNode ? focusedNode.dataset.act ?? focusedNode.dataset.mode ?? focusedNode.dataset.role ?? '' : '';
         // У карточек полки одни действия на всех: фокус возвращается по номеру карточки, в строке списка по треку и месту в строке
         const focusedCard = focusedNode?.dataset.card;
+        // Источник и режим «Моей музыки» делят одно действие на все кнопки: фокус возвращается по ключу кнопки
+        const focusedSource = focusedNode?.dataset.source ?? focusedNode?.dataset.lmode;
         const focusedRow = focusedNode?.closest<HTMLElement>('.scw-row[data-track]');
         const focusedTrack = focusedRow?.dataset.track;
         const focusedPart = focusedRow && focusedNode ? [...focusedRow.querySelectorAll('button, a')].indexOf(focusedNode) : -1;
         // Пересборка секции не должна сбрасывать прокрутку списка подборки
         const rowsScroll = rowsAt ?? section.querySelector('.scw-mix-rows')?.scrollTop ?? 0;
+        const libraryScroll = section.querySelector('.scw-lib-rows')?.scrollTop ?? 0;
         section.textContent = '';
         section.setAttribute('aria-label', T.wave);
         section.append(renderHead());
@@ -4672,9 +5140,11 @@ export function installWave(config: WaveConfig, createPlayback: typeof installPl
             cover.innerHTML = '<svg viewBox="0 0 200 200" fill="none"><circle cx="100" cy="100" r="76" stroke="currentColor" opacity=".07"/><circle cx="100" cy="100" r="57" stroke="currentColor" opacity=".12"/><path d="M48 96v8m13-22v36m13-43v50m13-61v72m13-84v96m13-75v54m13-44v34m13-43v52m13-36v20" stroke="currentColor" stroke-width="3" stroke-linecap="round" opacity=".7"/></svg>';
         }
         body.append(info, cover);
-        section.append(body, ...renderTiles(), ...renderShelf());
+        section.append(body, ...renderTiles(), ...renderLibrary(), ...renderShelf());
         const rowsBox = section.querySelector('.scw-mix-rows');
         if (rowsBox) rowsBox.scrollTop = rowsScroll;
+        const libraryBox = section.querySelector('.scw-lib-rows');
+        if (libraryBox) libraryBox.scrollTop = libraryScroll;
         if (focusedTrack) {
             const row = '.scw-row[data-track="' + focusedTrack + '"] ';
             const parts = section.querySelectorAll<HTMLElement>(row + 'button, ' + row + 'a');
@@ -4682,7 +5152,9 @@ export function installWave(config: WaveConfig, createPlayback: typeof installPl
         } else if (focused) {
             const again = focusedCard !== undefined
                 ? section.querySelector<HTMLElement>('[data-act="' + focused + '"][data-card="' + focusedCard + '"]')
-                : section.querySelector<HTMLElement>('[data-act="' + focused + '"],[data-mode="' + focused + '"],[data-role="' + focused + '"]');
+                : focusedSource !== undefined
+                    ? section.querySelector<HTMLElement>('[data-act="' + focused + '"][data-source="' + focusedSource + '"],[data-act="' + focused + '"][data-lmode="' + focusedSource + '"]')
+                    : section.querySelector<HTMLElement>('[data-act="' + focused + '"],[data-mode="' + focused + '"],[data-role="' + focused + '"]');
             again?.focus();
             if (again instanceof HTMLInputElement) again.setSelectionRange(again.value.length, again.value.length);
         }
@@ -4806,16 +5278,18 @@ export function installWave(config: WaveConfig, createPlayback: typeof installPl
         tip.classList.remove('on');
     }
     function onOver(event: MouseEvent): void {
-        const target = event.target instanceof Element ? event.target.closest('.scw-tile, .scw-card, .scw-row, .scw-track, .scw-artist, .scw-why') : null;
+        const target = event.target instanceof Element ? event.target.closest('[data-tip], .scw-tile, .scw-card, .scw-row, .scw-track, .scw-artist, .scw-why') : null;
         if (target === tipFor) return;
         hideTip();
         if (!target) return;
+        // Подсказка кнопки (режимы «Моей музыки») показывается всегда, остальное только обрезанным
+        const hint = target instanceof HTMLElement ? target.dataset.tip ?? '' : '';
         const card = target.classList.contains('scw-tile') || target.classList.contains('scw-card');
-        const lines = card || target.classList.contains('scw-row') ? [...target.querySelectorAll('.scw-t1, .scw-t2, .scw-t3, .scw-row-t b, .scw-row-t span')] : [target];
-        if (!lines.some(cut)) return;
+        const lines = hint ? [] : card || target.classList.contains('scw-row') ? [...target.querySelectorAll('.scw-t1, .scw-t2, .scw-t3, .scw-row-t b, .scw-row-t span')] : [target];
+        if (!hint && !lines.some(cut)) return;
         tipFor = target;
         tipTimer = setTimeout(() => {
-            tip.textContent = '';
+            tip.textContent = hint;
             lines.forEach((line, index) => tip.append(el(index ? 'span' : 'b', '', line.textContent ?? '')));
             if (!tip.isConnected) document.body.append(tip);
             // У карточки полки подсказка над обложкой (низ занят кнопкой «слушать»), у остального над самим элементом
@@ -4861,6 +5335,10 @@ export function installWave(config: WaveConfig, createPlayback: typeof installPl
         // Трек раскрытой подборки: уже в очереди этой подборки, значит переход к нему; иначе подборка с него.
         // Кнопки внутри строки (метка группы радара) идут своими действиями ниже
         const row = target.closest('[data-act]') ? null : target.closest<HTMLElement>('.scw-row[data-track]');
+        if (row && row.closest('.scw-lib')) {
+            libraryRowClick(Number(row.dataset.track));
+            return;
+        }
         if (row && openCard !== null) {
             const id = Number(row.dataset.track);
             const item = active && player && seed?.card === openCard ? player.getQueue().slice().find((entry) => ours.has(entry) && entry.sound?.id === id) : undefined;
@@ -4901,6 +5379,37 @@ export function installWave(config: WaveConfig, createPlayback: typeof installPl
                 else toggleMix(index);
                 return;
             }
+            case 'lib-source':
+                toggleLibrarySource(control.dataset.source ?? '');
+                return;
+            case 'lib-mode':
+                if (isLibraryMode(control.dataset.lmode)) setLibraryMode(control.dataset.lmode);
+                return;
+            case 'lib-play':
+                // Играющая «Моя музыка»: пауза и продолжение, как большая кнопка
+                if (seed?.kind === 'library' && active && player) {
+                    if (player.isPlaying()) player.pauseCurrent({ userInitiated: true });
+                    else player.playCurrent({ userInitiated: true });
+                    setTimeout(render, 150);
+                } else void startLibrary();
+                return;
+            case 'lib-list':
+                libraryListOpen = !libraryListOpen;
+                if (libraryListOpen && pickedSources().length) void ensureLibraryPlan(false);
+                render();
+                return;
+            case 'lib-more':
+                libraryShown += 100;
+                render();
+                return;
+            case 'lib-retry':
+                librarySources = null;
+                ensureLibrarySources();
+                render();
+                return;
+            case 'lib-rebuild':
+                void ensureLibraryPlan(false);
+                return;
             case 'radar-found':
                 toggleFound();
                 return;
@@ -5066,6 +5575,7 @@ export function installWave(config: WaveConfig, createPlayback: typeof installPl
             const id = tile ? Number(tile.dataset.track) : 0;
             const track = id
                 ? known.get(id)?.track ?? preview.find((item) => item.track.id === id)?.track ?? shelfTracks.get(id) ?? radarTracks.get(id)
+                    ?? libraryPlan?.pool.find((entry) => entry.track.id === id)?.track
                 : node.closest('.scw-body') ? currentCandidate()?.track : undefined;
             return track ? fromTrack(track) : null;
         }
@@ -5537,7 +6047,7 @@ const pageHelpers = [
     normalizeTag, tagKeys, genreKeys, genreCanon, genreParts, genreMain, parseGenres, formatGenres, genreKeysFor, classifyLink, canonicalUrl, trackMatchesGenre, trackArtist,
     isWaveEligible, acceptCandidate, pickSpaced, tasteMaps, tasteScore, tasteOrder, tasteReason, applyTasteReasons, shuffleInPlace, topGenres, fillText, reasonText, shapeSamples,
     artworkUrl, formatTime, playEnd, siteSource, moodTags, trackPath, localDay, countText, tasteGroups, forgottenPicks, artistNames, isNewArtist, spreadBy, pickFinds,
-    ...identity.identityHelpers, ...sources.sourceHelpers, installPlaybackPage, installPlaybackRecovery,
+    ...identity.identityHelpers, ...sources.sourceHelpers, ...libraryMix.libraryHelpers, installPlaybackPage, installPlaybackRecovery,
 ];
 
 export function waveScript(): string {

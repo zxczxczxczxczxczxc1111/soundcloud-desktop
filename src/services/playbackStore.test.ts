@@ -41,6 +41,19 @@ it('волна от радара переживает перезапуск: ис
     expect(loaded?.items[0].reason).toEqual({ kind: 'radar', why: 'New from Alpha' });
     expect(loaded?.seed).toMatchObject({ kind: 'radar', title: 'Release Radar, 25 September', order: 'fixed', own: [{ id: 42 }, { id: 43 }] });
 });
+it('Э7: «Моя музыка» переживает перезапуск выбором, режимом и номерами оставшихся треков, без самих треков', () => {
+    const store = open(); const saved = snapshot();
+    saved.items[0].reason = { kind: 'library', name: 'Mine' };
+    saved.seed = { kind: 'library', title: 'Likes, Mine', tracks: [], own: [], order: 'smart', mode: 'similar', library: { pick: ['likes', 'playlist:8', 'album:1', 'likes'], mode: 'smart', left: [5, 6, -1, 7] } };
+    store.saveSession(77, saved);
+    const loaded = store.loadSession(77);
+    expect(loaded?.items[0].reason).toEqual({ kind: 'library', name: 'Mine' });
+    expect(loaded?.seed).toEqual({ kind: 'library', title: 'Likes, Mine', tracks: [], own: [], order: 'smart', mode: 'similar', library: { pick: ['likes', 'playlist:8'], mode: 'smart', left: [5, 6, 7] } });
+    // Без выбора пул не собрать: источник не восстанавливается, очередь остаётся
+    saved.seed = { kind: 'library', title: 'x', tracks: [], own: [], library: { pick: [], mode: 'order' } };
+    expect(cleanPlaybackSnapshot(saved)?.seed).toBeNull();
+    expect(cleanPlaybackSnapshot(saved)?.items).toHaveLength(1);
+});
 it('не портит предыдущий снимок некорректным вводом', () => {
     const store = open(); store.saveSession(77, snapshot());
     expect(store.saveSession(77, { ...snapshot(), index: 4 })).toBe(false);

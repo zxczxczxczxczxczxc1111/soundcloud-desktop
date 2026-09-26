@@ -3,9 +3,15 @@ import { join } from 'node:path';
 import { randomUUID } from 'node:crypto';
 import type { WaveReason, WaveTrack } from './wave';
 import { artworkOf, text, trackPathOf } from './waveSignals';
+import { isLibraryMode, isLibrarySource, type LibraryMode } from './libraryMix';
 
 export interface SavedQueueItem { track: WaveTrack; explicit: boolean; wave: boolean; reason?: WaveReason }
-export interface SavedSeed { kind: 'track' | 'artist' | 'playlist' | 'daily' | 'forgotten' | 'group' | 'tracks' | 'radar'; title: string; tracks: WaveTrack[]; own: WaveTrack[]; order?: 'fixed' | 'blend'; mode?: 'similar' | 'fresh' }
+/** «Моя музыка»: выбранные источники, режим и номера оставшихся треков; сами треки не хранятся, пул собирается заново */
+export interface SavedLibrary { pick: string[]; mode: LibraryMode; left?: number[] }
+export interface SavedSeed {
+    kind: 'track' | 'artist' | 'playlist' | 'daily' | 'forgotten' | 'group' | 'tracks' | 'radar' | 'library'; title: string; tracks: WaveTrack[]; own: WaveTrack[];
+    order?: 'fixed' | 'blend' | 'smart'; mode?: 'similar' | 'fresh'; library?: SavedLibrary;
+}
 export interface PlaybackSnapshot {
     version: 1; at: number; items: SavedQueueItem[]; index: number; position: number; paused: boolean;
     active: boolean; mode: 'similar' | 'fresh'; genre: string | null; seed: SavedSeed | null; fallback: boolean;
@@ -56,9 +62,18 @@ function cleanReason(input: unknown): WaveReason | undefined {
         case 'artistTrack': case 'tasteArtist': return { kind: value.kind, artist };
         case 'group': return { kind: value.kind, name: text(value.name, 200) };
         case 'radar': return { kind: value.kind, why: text(value.why, 300) };
+        case 'library': return { kind: value.kind, name: text(value.name, 200) };
         case 'newArtist': case 'seedTrack': case 'restored': case 'daily': case 'forgotten': return { kind: value.kind };
         default: return undefined;
     }
+}
+function cleanSavedLibrary(input: unknown): SavedLibrary | null {
+    const value = object(input);
+    if (!Array.isArray(value.pick) || !isLibraryMode(value.mode)) return null;
+    const pick = [...new Set(value.pick.slice(0, 100).filter(isLibrarySource))];
+    if (!pick.length) return null;
+    const left = Array.isArray(value.left) ? value.left.slice(0, 5000).filter(isId) : undefined;
+    return { pick, mode: value.mode, ...(left ? { left } : {}) };
 }
 export function cleanPlaybackSnapshot(input: unknown): PlaybackSnapshot | null {
     const value = object(input);
@@ -74,10 +89,14 @@ export function cleanPlaybackSnapshot(input: unknown): PlaybackSnapshot | null {
     if (!items.length || index < 0 || index >= items.length) return null;
     const rawSeed = object(value.seed);
     const kind = String(rawSeed.kind);
-    const seed: SavedSeed | null = ['track', 'artist', 'playlist', 'daily', 'forgotten', 'group', 'tracks', 'radar'].includes(kind) ? {
+    const library = cleanSavedLibrary(rawSeed.library);
+    // «Моя музыка» без выбора не восстановится: пул не из чего собрать
+    const known = ['track', 'artist', 'playlist', 'daily', 'forgotten', 'group', 'tracks', 'radar'].includes(kind) || (kind === 'library' && !!library);
+    const seed: SavedSeed | null = known ? {
         kind: kind as SavedSeed['kind'], title: text(rawSeed.title, 200), tracks: tracks(rawSeed.tracks, 5000), own: tracks(rawSeed.own, 5000),
-        order: rawSeed.order === 'fixed' || rawSeed.order === 'blend' ? rawSeed.order : undefined,
+        order: rawSeed.order === 'fixed' || rawSeed.order === 'blend' || rawSeed.order === 'smart' ? rawSeed.order : undefined,
         mode: rawSeed.mode === 'fresh' ? 'fresh' : 'similar',
+        ...(kind === 'library' && library ? { library } : {}),
     } : null;
     return { version: 1, at: Date.now(), items, index, position: typeof value.position === 'number' && Number.isFinite(value.position) ? Math.max(0, Math.min(value.position, 86400000)) : 0,
         paused: value.paused, active: value.active === true, mode: value.mode === 'fresh' ? 'fresh' : 'similar', genre: text(value.genre, 300) || null, seed, fallback: value.fallback === true };

@@ -15,7 +15,7 @@ export const BACKUP_SETTING_KEYS: readonly string[] = [
     'discordRichPresence', 'displaySCSmallIcon', 'displayGithubLink', 'displayButtons', 'statusDisplayType', 'discordIncognito', 'richPresencePreviewEnabled',
     'discordLine1', 'discordLine2', 'discordCoverText', 'discordHiddenArtists', 'discordHiddenGenres',
     'minimizeToTray', 'navigationControlsEnabled', 'trackParserEnabled', 'autoUpdateEnabled', 'reduceMotion', 'fullShuffle', 'siteLanguage',
-    'hidePromotions', 'hideEventsNearYou', 'hideArtistUpsells', 'hideHeaderExtras', ...HOME_BLOCK_KEYS, 'radarDay', 'radarTime', 'radarZone',
+    'hidePromotions', 'hideEventsNearYou', 'hideArtistUpsells', 'hideHeaderExtras', ...HOME_BLOCK_KEYS, 'radarDay', 'radarTime', 'radarZone', 'myMusic',
 ];
 /** Отметки переноса настроек: без них перенос при следующем запуске затёр бы восстановленное */
 export const BACKUP_MIGRATION_MARKS: readonly string[] = ['adBlockerDefaultApplied', 'homeLayoutApplied'];

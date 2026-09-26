@@ -75,6 +75,9 @@ it('волна ослабляет плюсы, но не минусы; прост
     expect(weightOf(wave.tracks, 1)).toBeCloseTo(blended(0.7, HOUR_AGE), 2);
     // Выбранный кликом трек волны весит как выбранный на сайте
     expect(weightOf(picked.tracks, 1)).toBeCloseTo(blended(1, HOUR_AGE), 2);
+    // «Моя музыка» играет собранное самим человеком: без скидки волны (Э7)
+    const library = buildTaste([...confident, play({ id: 1, source: 'wave:library' })], [], empty, NOW).profile;
+    expect(weightOf(library.tracks, 1)).toBeCloseTo(blended(1, HOUR_AGE), 2);
     expect(weightOf(away.tracks, 1)).toBeCloseTo(weightOf(site.tracks, 1) ?? 0, 6);
     expect(weightOf(away.artists, 10)).toBeCloseTo(weightOf(site.artists, 10) ?? 0, 6);
     expect(weightOf(skipped.tracks, 1)).toBeCloseTo(-1, 2);

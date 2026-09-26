@@ -1915,3 +1915,191 @@ it('P7: «Скрыть другие версии» пишет семью с за
     rightClick(row.querySelector('.soundTitle__title')!);
     expect(menuActs()).toContain('hide-family');
 });
+
+// «Моя музыка» (Э7): 12 лайков новыми первыми (303 это микс на 40 минут), свой плейлист 8 с общим с лайками 302
+// и заготовками, сохранённый плейлист 9; мост настроек и слышанного в клиенте
+const libTrack = (id: number, extra: Partial<WaveTrack> = {}): WaveTrack => ({
+    id, kind: 'track', title: 'L' + id, duration: 200000, user_id: 500 + id, user: { id: 500 + id, username: 'U' + id }, permalink_url: 'https://soundcloud.com/u' + id + '/l' + id, ...extra,
+});
+const libLikes = Array.from({ length: 12 }, (_, i) => libTrack(301 + i, i === 2 ? { duration: 40 * 60000 } : {}));
+const libAll = [...libLikes, libTrack(351), libTrack(352), libTrack(361), libTrack(362)];
+function libraryExtra(history: Array<{ id: number; at: number }> = []): Extra {
+    return (name, path, query) => {
+        const id = Number((path as { id?: unknown }).id);
+        if (name === 'soundLikesIds') return { collection: libLikes.map((track) => track.id) };
+        if (name === 'trackBatch') return libAll.filter((track) => String(query.ids).split(',').includes(String(track.id)));
+        if (name === 'playHistoryTracks') return { collection: history.map((entry) => ({ played_at: entry.at, track: libTrack(entry.id) })) };
+        if (name === 'userPlaylistsWithoutAlbums') return { collection: [{ id: 8, title: 'Mine', track_count: 3 }] };
+        if (name === 'playlistLikesIds') return { collection: [9] };
+        if (name === 'playlist' && id === 8) return { id: 8, title: 'Mine', tracks: [libTrack(302), { id: 351, kind: 'track' }, { id: 352, kind: 'track' }] };
+        if (name === 'playlist' && id === 9) return { id: 9, title: 'Saved', track_count: 2, tracks: [libTrack(361), libTrack(362)] };
+        return undefined;
+    };
+}
+function libraryBridge(setting: object | null = null, heard: number[] = []) {
+    return { load: vi.fn(async () => setting), save: vi.fn(async () => true), heard: vi.fn(async () => heard) };
+}
+// Мост сессии и каталога: сохранённый снимок читается из loadSession, записанный виден в saveSession
+function sessionStore() {
+    return {
+        loadSession: vi.fn(async (): Promise<PlaybackSnapshot | null> => null), saveSession: vi.fn<(user: number, snapshot: unknown) => Promise<boolean>>(async () => true),
+        loadCatalog: vi.fn(async () => null), saveCatalog: vi.fn(async () => true), listMixes: vi.fn(async () => []), saveMix: vi.fn(), removeMix: vi.fn(async () => true),
+    };
+}
+const queuedIds = (site: ReturnType<typeof fakeSite>): number[] => site.player.getQueue().slice().map((item) => item.sound.id);
+const libChip = (key: string): HTMLButtonElement => document.querySelector<HTMLButtonElement>('#sc-wave [data-act="lib-source"][data-source="' + key + '"]')!;
+const libMode = (mode: string): HTMLButtonElement => document.querySelector<HTMLButtonElement>('#sc-wave [data-act="lib-mode"][data-lmode="' + mode + '"]')!;
+
+it('Э7: раздел над подборками, выбор источников и режим в настройках, «По порядку» играет лайки от новых, плейлист по порядку и миксы', async () => {
+    const site = fakeSite(relatedTracks, libraryExtra());
+    const bridge = libraryBridge();
+    Object.assign(window, { soundcloudAPI: { waveLibrary: bridge } });
+    window.eval(waveScript());
+    await vi.advanceTimersByTimeAsync(2000);
+    const box = document.querySelector('#sc-wave .scw-lib')!;
+    expect(box.previousElementSibling?.textContent).toBe('My music');
+    expect([...box.querySelectorAll<HTMLElement>('[data-act="lib-source"]')].map((node) => [node.dataset.source, node.textContent, node.getAttribute('aria-pressed')])).toEqual([
+        ['likes', 'Likes12', 'true'], ['playlist:8', 'Mine3', 'false'], ['playlist:9', 'Saved2', 'false'],
+    ]);
+    expect(libMode('shuffle').getAttribute('aria-checked')).toBe('true');
+    // Подсказка режима при наведении, без обрезки текста
+    libMode('smart').dispatchEvent(new MouseEvent('mouseover', { bubbles: true }));
+    await vi.advanceTimersByTimeAsync(400);
+    expect(document.querySelector('.scw-tip.on')?.textContent).toBe('Like Shuffle, plus a similar track you don’t have yet after every three of yours');
+    libChip('playlist:8').click();
+    expect(bridge.save).toHaveBeenLastCalledWith({ mode: 'shuffle', pick: { 77: ['likes', 'playlist:8'] } });
+    libMode('order').click();
+    expect(bridge.save).toHaveBeenLastCalledWith({ mode: 'order', pick: { 77: ['likes', 'playlist:8'] } });
+    document.querySelector<HTMLButtonElement>('#sc-wave [data-act="lib-play"]')!.click();
+    await vi.advanceTimersByTimeAsync(2000);
+    expect(queuedIds(site).slice(0, 10)).toEqual([301, 302, 303, 304, 305, 306, 307, 308, 309, 310]);
+    // Дальше по очереди оставшиеся лайки, трек плейлиста без повтора 302, потом похожие от пула
+    site.setItems(site.player.getQueue().slice(), 7);
+    await vi.advanceTimersByTimeAsync(1100);
+    const ids = queuedIds(site);
+    expect(ids.slice(10, 14)).toEqual([311, 312, 351, 352]);
+    expect(ids.slice(14).every((id) => id > 1000)).toBe(true);
+    expect(new Set(ids).size).toBe(ids.length);
+    expect(document.querySelector('#sc-wave .scw-hint')?.textContent).toBe('My music: Likes, Mine');
+    site.setItems(site.player.getQueue().slice(), 12);
+    await vi.advanceTimersByTimeAsync(1100);
+    expect(document.querySelector('#sc-wave .scw-why')?.textContent).toBe('From playlist Mine');
+    expect(document.querySelector('#sc-wave [data-act="lib-play"]')?.getAttribute('aria-label')).toBe('Pause');
+});
+
+it('Э7: перемешивание без слышанного за 3 дня (клиент и история сайта) и без «Не нравится», артист не подряд', async () => {
+    const now = Date.now();
+    const site = fakeSite(relatedTracks, libraryExtra([{ id: 302, at: now - 3600000 }, { id: 311, at: now - 5 * 86400000 }]));
+    const bridge = libraryBridge({ mode: 'shuffle', pick: { 77: ['likes', 'playlist:8'] } }, [301]);
+    Object.assign(window, { soundcloudAPI: { waveLibrary: bridge, waveExclusions: { load: vi.fn(async () => ({ tracks: [{ id: 304, title: 'L304', artist: 'U304', url: '' }] })), set: vi.fn() } } });
+    window.eval(waveScript());
+    await vi.advanceTimersByTimeAsync(2000);
+    document.querySelector<HTMLButtonElement>('#sc-wave [data-act="lib-play"]')!.click();
+    await vi.advanceTimersByTimeAsync(2000);
+    expect(bridge.heard).toHaveBeenCalledWith(77);
+    site.setItems(site.player.getQueue().slice(), 7);
+    await vi.advanceTimersByTimeAsync(1100);
+    // 301 слышан в клиенте, 302 на сайте час назад, 304 «Не нравится»; 311 слышан пять дней назад и играет
+    const allowed = [303, 305, 306, 307, 308, 309, 310, 311, 312, 351, 352];
+    const own = queuedIds(site).slice(0, allowed.length);
+    expect([...own].sort((a, b) => a - b)).toEqual(allowed);
+    const artists = own.map((id) => 500 + id);
+    for (let i = 1; i < artists.length; i++) expect(artists[i]).not.toBe(artists[i - 1]);
+});
+
+it('Э7: если правило трёх дней выбило всё выбранное, перемешивание играет его целиком', async () => {
+    fakeSite(relatedTracks, libraryExtra());
+    const bridge = libraryBridge({ mode: 'shuffle', pick: { 77: ['likes', 'playlist:8'] } }, libAll.map((track) => track.id));
+    Object.assign(window, { soundcloudAPI: { waveLibrary: bridge } });
+    window.eval(waveScript());
+    await vi.advanceTimersByTimeAsync(2000);
+    document.querySelector<HTMLButtonElement>('#sc-wave [data-act="lib-list"]')!.click();
+    await vi.advanceTimersByTimeAsync(2000);
+    expect(document.querySelector('#sc-wave .scw-lib .scw-mix-title span')?.textContent).toBe('14 tracks');
+    expect(document.querySelectorAll('#sc-wave .scw-lib .scw-row')).toHaveLength(14);
+});
+
+it('Э7: «Умное перемешивание» ставит после каждых трёх своих похожий трек, которого нет в лайках', async () => {
+    const site = fakeSite(relatedTracks, libraryExtra());
+    Object.assign(window, { soundcloudAPI: { waveLibrary: libraryBridge({ mode: 'smart', pick: { 77: ['likes'] } }) } });
+    window.eval(waveScript());
+    await vi.advanceTimersByTimeAsync(2000);
+    document.querySelector<HTMLButtonElement>('#sc-wave [data-act="lib-play"]')!.click();
+    await vi.advanceTimersByTimeAsync(2000);
+    const ids = queuedIds(site).slice(0, 10);
+    const liked = new Set(libLikes.map((track) => track.id));
+    expect(ids.map((id) => liked.has(id))).toEqual([true, true, true, false, true, true, true, false, true, true]);
+    site.setItems(site.player.getQueue().slice(), 3);
+    await vi.advanceTimersByTimeAsync(1100);
+    expect(document.querySelector('#sc-wave .scw-why')?.textContent).toMatch(/^Similar to L3\d\d$/);
+});
+
+it('Э7: сессия хранит выбор, режим и оставшиеся номера без треков; после перезапуска пул собирается заново и идёт с того же места', async () => {
+    fakeSite(relatedTracks, libraryExtra());
+    const store = sessionStore();
+    Object.assign(window, { soundcloudAPI: { library: store, waveLibrary: libraryBridge({ mode: 'order', pick: { 77: ['likes', 'playlist:8'] } }) } });
+    window.eval(waveScript());
+    await vi.advanceTimersByTimeAsync(2000);
+    document.querySelector<HTMLButtonElement>('#sc-wave [data-act="lib-play"]')!.click();
+    await vi.advanceTimersByTimeAsync(2000);
+    await (window as WaveWindow).__scSaveSession?.();
+    const saved = store.saveSession.mock.calls[store.saveSession.mock.calls.length - 1][1] as PlaybackSnapshot;
+    expect(saved.seed).toMatchObject({ kind: 'library', tracks: [], own: [], order: 'fixed', library: { pick: ['likes', 'playlist:8'], mode: 'order', left: [311, 312, 351, 352] } });
+    window.dispatchEvent(new Event('pagehide'));
+
+    // Перезапуск: в очереди два трека, впереди в сессии 351 и 311
+    const restored: PlaybackSnapshot = {
+        version: 1, at: Date.now(), index: 0, position: 1000, paused: true, active: true, mode: 'similar', genre: null, fallback: true,
+        items: [libTrack(301), libTrack(302)].map((track) => ({ track, wave: true, explicit: false, reason: { kind: 'library', name: '' } })),
+        seed: { kind: 'library', title: 'Likes, Mine', tracks: [], own: [], order: 'fixed', mode: 'similar', library: { pick: ['likes', 'playlist:8'], mode: 'order', left: [351, 311] } },
+    };
+    const again = fakeSite(relatedTracks, libraryExtra());
+    store.loadSession.mockResolvedValue(restored);
+    Object.assign(window, { soundcloudAPI: { library: store, waveLibrary: libraryBridge({ mode: 'order', pick: { 77: ['likes', 'playlist:8'] } }) } });
+    window.eval(waveScript());
+    await vi.advanceTimersByTimeAsync(3000);
+    expect(queuedIds(again).slice(0, 4)).toEqual([301, 302, 351, 311]);
+    expect(again.player.isPlaying()).toBe(false);
+});
+
+it('Э7: смена режима во время игры пересобирает очередь после текущего трека из несыгранного', async () => {
+    const site = fakeSite(relatedTracks, libraryExtra());
+    const store = sessionStore();
+    Object.assign(window, { soundcloudAPI: { library: store, waveLibrary: libraryBridge({ mode: 'order', pick: { 77: ['likes', 'playlist:8'] } }) } });
+    window.eval(waveScript());
+    await vi.advanceTimersByTimeAsync(2000);
+    document.querySelector<HTMLButtonElement>('#sc-wave [data-act="lib-play"]')!.click();
+    await vi.advanceTimersByTimeAsync(2000);
+    site.setItems(site.player.getQueue().slice(), 1);
+    await vi.advanceTimersByTimeAsync(1100);
+    libMode('shuffle').click();
+    await vi.advanceTimersByTimeAsync(2000);
+    const ids = queuedIds(site);
+    expect(ids.slice(0, 2)).toEqual([301, 302]);
+    const pool = new Set([...libLikes.map((track) => track.id), 351, 352]);
+    expect(ids.slice(2, 12).every((id) => pool.has(id) && id !== 301 && id !== 302)).toBe(true);
+    expect(new Set(ids).size).toBe(ids.length);
+    await (window as WaveWindow).__scSaveSession?.();
+    const saved = store.saveSession.mock.calls[store.saveSession.mock.calls.length - 1][1] as PlaybackSnapshot;
+    expect(saved.seed?.library?.mode).toBe('shuffle');
+    expect(saved.seed?.library?.left).toHaveLength(2);
+});
+
+it('Э7: список пула со ссылками и меню по ПКМ до запуска, трек из списка играет первым, дальше план с него по кругу', async () => {
+    const site = fakeSite(relatedTracks, libraryExtra());
+    Object.assign(window, { soundcloudAPI: { waveLibrary: libraryBridge({ mode: 'order', pick: { 77: ['likes', 'playlist:8'] } }) } });
+    window.eval(waveScript());
+    await vi.advanceTimersByTimeAsync(2000);
+    document.querySelector<HTMLButtonElement>('#sc-wave [data-act="lib-list"]')!.click();
+    await vi.advanceTimersByTimeAsync(2000);
+    const rows = [...document.querySelectorAll<HTMLElement>('#sc-wave .scw-lib .scw-row')];
+    expect(rows.map((row) => Number(row.dataset.track))).toEqual([301, 302, 303, 304, 305, 306, 307, 308, 309, 310, 311, 312, 351, 352]);
+    expect(rows[12].querySelector('a.scw-link')?.getAttribute('href')).toBe('/u351/l351');
+    expect(document.querySelector('#sc-wave .scw-lib .scw-mix-title span')?.textContent).toBe('14 tracks');
+    rightClick(rows[12].querySelector('b')!);
+    expect(menuActs()).toContain('wave-track');
+    document.body.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
+    rows[12].click();
+    await vi.advanceTimersByTimeAsync(2000);
+    expect(queuedIds(site).slice(0, 5)).toEqual([351, 352, 301, 302, 303]);
+});

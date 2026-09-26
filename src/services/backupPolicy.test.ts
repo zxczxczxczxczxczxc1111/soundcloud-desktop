@@ -8,6 +8,9 @@ it('настройки копии: только свои ключи с пров�
         gpuCompatibilityMode: 'on', gpuCompatibility: true, theme: 'light', backupFolder: 'D:/x', adBlockerDefaultApplied: true, homeLayoutApplied: 'yes',
         homeWave: false, statusDisplayType: 2, webhookTriggerPercentage: 101,
     })).toEqual({ adBlocker: true, radarZone: 'Europe/Moscow', discordLine1: '{track}', adBlockerDefaultApplied: true, homeWave: false, statusDisplayType: 2 });
+    // «Моя музыка» в копии: выбор источников и режим, битый выбор отбрасывается целиком
+    expect(cleanBackupSettings({ myMusic: { mode: 'smart', pick: { 77: ['likes', 'playlist:8'] } } })).toEqual({ myMusic: { mode: 'smart', pick: { 77: ['likes', 'playlist:8'] } } });
+    expect(cleanBackupSettings({ myMusic: { mode: 'smart', pick: { 77: ['../x'] } } })).toEqual({});
     expect(cleanBackupSettings(null)).toEqual({});
     expect(cleanBackupSettings(['adBlocker'])).toEqual({});
     for (const key of ['proxyPassword', 'webhookUrl', 'accounts', 'currentAccountId', 'gpuCompatibilityMode', 'theme']) expect(BACKUP_SETTING_KEYS).not.toContain(key);

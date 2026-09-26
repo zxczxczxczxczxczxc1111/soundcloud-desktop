@@ -1,6 +1,7 @@
 import { HOME_BLOCK_KEYS, type HomeBlockKey } from '../services/homeBlocks';
 import { isGpuCompatibilityMode, type GpuCompatibilityMode } from '../services/gpuProcessMode';
 import { isRadarDay, isRadarTime, isTimeZone } from '../services/radarSchedule';
+import { isMyMusicSetting, type MyMusicSetting } from '../services/libraryMix';
 
 const booleanKeys = new Set(['adBlocker', 'proxyEnabled', 'webhookEnabled', 'displaySCSmallIcon', 'displayGithubLink', 'discordRichPresence', 'displayButtons', 'minimizeToTray', 'navigationControlsEnabled', 'trackParserEnabled', 'richPresencePreviewEnabled', 'hidePromotions', 'hideEventsNearYou', 'hideArtistUpsells', 'hideHeaderExtras', 'fullShuffle', 'autoUpdateEnabled', 'discordIncognito', 'reduceMotion', ...HOME_BLOCK_KEYS]);
 type BooleanKey = 'adBlocker' | 'proxyEnabled' | 'webhookEnabled' | 'displaySCSmallIcon' | 'displayGithubLink' | 'discordRichPresence' | 'displayButtons' | 'minimizeToTray' | 'navigationControlsEnabled' | 'trackParserEnabled' | 'richPresencePreviewEnabled' | 'hidePromotions' | 'hideEventsNearYou' | 'hideArtistUpsells' | 'hideHeaderExtras' | 'fullShuffle' | 'autoUpdateEnabled' | 'discordIncognito' | 'reduceMotion' | HomeBlockKey;
@@ -9,7 +10,7 @@ type StringKey = 'proxyHost' | 'proxyPort' | 'proxyUsername' | 'proxyPassword' |
 export type DiscordTextKey = 'discordLine1' | 'discordLine2' | 'discordCoverText' | 'discordHiddenArtists' | 'discordHiddenGenres';
 export const DISCORD_TEXT_KEYS: ReadonlySet<string> = new Set<DiscordTextKey>(['discordLine1', 'discordLine2', 'discordCoverText', 'discordHiddenArtists', 'discordHiddenGenres']);
 export type SettingChange = { key: BooleanKey; value: boolean } | { key: StringKey; value: string } | { key: 'webhookTriggerPercentage' | 'statusDisplayType'; value: number } | { key: 'siteLanguage'; value: 'ru' | 'en' } | { key: 'gpuCompatibilityMode'; value: GpuCompatibilityMode }
-    | { key: 'radarDay'; value: number } | { key: 'radarTime' | 'radarZone'; value: string };
+    | { key: 'radarDay'; value: number } | { key: 'radarTime' | 'radarZone'; value: string } | { key: 'myMusic'; value: MyMusicSetting };
 
 export function validateSettingChange(input: unknown): input is SettingChange {
     if (!input || typeof input !== 'object' || Array.isArray(input)) return false;
@@ -24,6 +25,8 @@ export function validateSettingChange(input: unknown): input is SettingChange {
     if (key === 'radarDay') return isRadarDay(value);
     if (key === 'radarTime') return isRadarTime(value);
     if (key === 'radarZone') return isTimeZone(value);
+    // «Моя музыка»: режим и выбранные источники по аккаунтам
+    if (key === 'myMusic') return isMyMusicSetting(value);
     if (typeof value !== 'string') return false;
     if (key === 'proxyPassword') return value.length <= 4096;
     if (key === 'proxyHost' || key === 'proxyUsername') return value.length <= 256 && !/[\r\n\0]/.test(value);

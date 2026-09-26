@@ -1016,7 +1016,7 @@ async function init() {
     // Отметки волны («Не нравится», скрытые артисты, «Не сейчас», «Больше такого»): ставит страница, снимает и F1
     const exclusions = new WaveExclusions(path.join(app.getPath('userData'), 'wave'));
     waveExclusions = exclusions;
-    for (const channel of ['soundcloud:wave-exclusions:load', 'soundcloud:wave-exclusions:set', 'get-wave-exclusions', 'remove-wave-exclusion', 'soundcloud:wave-taste', 'soundcloud:wave-shelf:load', 'soundcloud:wave-shelf:save']) ipcMain.removeHandler(channel);
+    for (const channel of ['soundcloud:wave-exclusions:load', 'soundcloud:wave-exclusions:set', 'get-wave-exclusions', 'remove-wave-exclusion', 'soundcloud:wave-taste', 'soundcloud:wave-shelf:load', 'soundcloud:wave-shelf:save', 'soundcloud:wave-library:load', 'soundcloud:wave-library:save', 'soundcloud:wave-library:heard']) ipcMain.removeHandler(channel);
     ipcMain.handle('soundcloud:wave-exclusions:load', (event, userId: unknown) =>
         isTrustedSoundCloudSender(event) ? exclusions.load(userId) : null,
     );
@@ -1196,6 +1196,30 @@ async function init() {
     ipcMain.handle('soundcloud:wave-shelf:save', (event, userId: unknown, snapshot: unknown) =>
         isTrustedSoundCloudSender(event) ? shelf.save(userId, snapshot) : false,
     );
+    // «Моя музыка»: выбор источников и режим живут в настройках (попадают в резервную копию), ввод проверяется как смена в F1
+    ipcMain.handle('soundcloud:wave-library:load', (event) => {
+        if (!isTrustedSoundCloudSender(event)) return null;
+        const value = store.get('myMusic');
+        return validateSettingChange({ key: 'myMusic', value }) ? value : null;
+    });
+    ipcMain.handle('soundcloud:wave-library:save', (event, value: unknown) => {
+        if (!isTrustedSoundCloudSender(event)) return false;
+        const change = { key: 'myMusic', value };
+        if (!validateSettingChange(change)) return false;
+        applySettingChange(change);
+        return true;
+    });
+    // Слышанное в клиенте за 3 дня от 30 секунд: в перемешивании «Моей музыки» оно не играет
+    ipcMain.handle('soundcloud:wave-library:heard', async (event, userId: unknown) => {
+        if (!isTrustedSoundCloudSender(event) || typeof userId !== 'number' || !Number.isSafeInteger(userId) || userId <= 0) return [];
+        try {
+            const plays = await library.request('tastePlays', userId, Date.now() - 3 * 86400000);
+            return [...new Set(plays.filter((play) => play.heard >= 30000).map((play) => play.id))].slice(0, 20000);
+        } catch (error) {
+            console.warn('Слышанное за 3 дня не прочитано:', error);
+            return [];
+        }
+    });
     historyManager = new HistoryManager(mainWindow, library, {
         site: () => (contentView.webContents.isDestroyed() ? null : contentView.webContents),
         fallbackUser: () => waveExclusions?.currentUser() ?? 0,
