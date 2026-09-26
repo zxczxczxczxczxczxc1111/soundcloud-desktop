@@ -1179,6 +1179,24 @@ it('полка без модели вкуса (main не ответил) не х
     expect(shelf.save).toHaveBeenCalledOnce();
 });
 
+it('треки плейлистов идут в жанры полки своей долей напрямую, а не через тысячу весов вкуса', async () => {
+    const liked = Array.from({ length: 16 }, (_, i): WaveTrack => ({
+        id: 2001 + i, kind: 'track', duration: 200000, title: 'Like ' + i, user_id: 500 + (i % 8), user: { id: 500 + (i % 8), username: 'Tech' + (i % 8) }, genre: 'Techno', tag_list: '',
+    }));
+    const playlists = Array.from({ length: 10 }, (_, i) => ({ id: 3001 + i, artist: 700 + i, title: 'Jazz ' + i, artistName: 'Cat' + i, genre: 'Jazz', tags: '', path: '', artwork: '', dur: 200000, share: 0.3 }));
+    fakeSite(relatedTracks, (name, _path, query) => {
+        if (name === 'soundLikesIds') return { collection: liked.map((track) => track.id) };
+        if (name === 'trackBatch') return batchOf(liked)(query);
+        return undefined;
+    });
+    const shelf = { load: vi.fn(async () => ({ snapshot: null, recent: [], playlists })), save: vi.fn(async () => true) };
+    Object.assign(window, { soundcloudAPI: { waveShelf: shelf } });
+    window.eval(waveScript());
+    await vi.advanceTimersByTimeAsync(100);
+    const [, saved] = shelf.save.mock.calls[0] as unknown as [number, { cards: Array<{ kind: string; title: string; ids: number[] }> }];
+    expect(saved.cards.find((card) => card.kind === 'group' && card.title === 'Jazz')?.ids).toHaveLength(10);
+});
+
 it('жанр полки: не больше 5 треков одного артиста, в подписи артисты, характерные именно для этого жанра', async () => {
     const make = (id: number, artist: number, name: string, genre: string, tags: string): WaveTrack => ({ id, kind: 'track', duration: 200000, title: 'Like ' + id, user_id: artist, user: { id: artist, username: name }, genre, tag_list: tags });
     const liked = [

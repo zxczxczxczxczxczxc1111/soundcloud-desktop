@@ -2852,7 +2852,7 @@ export function installWave(config: WaveConfig, createPlayback: typeof installPl
     const SHELF_FORMAT = 3;
     const SHELF_ARTIST_CAP = 5;
     // Прослушанное от 30 секунд из индекса истории: main отдаёт его вместе со снимком
-    interface HeardTrack { id: number; artist: number; title: string; artistName: string; genre: string; tags: string; path: string; artwork: string; dur: number }
+    interface HeardTrack { id: number; artist: number; title: string; artistName: string; genre: string; tags: string; path: string; artwork: string; dur: number; share?: number }
     let shelf: Shelf | null = null;
     let shelfPromise: Promise<void> | null = null;
     let shelfFailedAt = 0;
@@ -2957,7 +2957,8 @@ export function installWave(config: WaveConfig, createPlayback: typeof installPl
         return list.flatMap((value): HeardTrack[] => {
             const item = value && typeof value === 'object' ? (value as Record<string, unknown>) : null;
             if (!item || !isId(item.id)) return [];
-            return [{ id: item.id, artist: isId(item.artist) ? item.artist : 0, title: text(item.title), artistName: text(item.artistName), genre: text(item.genre), tags: text(item.tags), path: text(item.path), artwork: text(item.artwork), dur: typeof item.dur === 'number' ? item.dur : 0 }];
+            return [{ id: item.id, artist: isId(item.artist) ? item.artist : 0, title: text(item.title), artistName: text(item.artistName), genre: text(item.genre), tags: text(item.tags), path: text(item.path), artwork: text(item.artwork), dur: typeof item.dur === 'number' ? item.dur : 0,
+                ...(typeof item.share === 'number' && item.share > 0 && item.share <= 1 ? { share: item.share } : {}) }];
         });
     }
     // Подборки на сутки: все лайки из каталога, вкус из main, похожие на любимое.
@@ -2998,7 +2999,10 @@ export function installWave(config: WaveConfig, createPlayback: typeof installPl
         // своим положительным весом во вкусе (трек плейлиста его получает из плейлиста): пропущенное туда не попадает
         const likedSet = new Set(liked.map((track) => track.id));
         const listened = heardMain.flatMap((entry) => {
-            const weight = weights?.get(entry.id) ?? 0;
+            // Трек плейлиста весит своей долей лайка напрямую: вкус хранит тысячу самых весомых треков, слабые плейлистные
+            // из него выпадают. Минус во вкусе (пропускал, не нравится) всё равно убирает трек
+            const fromTaste = weights?.get(entry.id) ?? 0;
+            const weight = fromTaste < 0 ? fromTaste : Math.max(fromTaste, entry.share ?? 0);
             if (weight <= 0 || likedSet.has(entry.id) || p.liked.has(entry.id)) return [];
             const track = heardTrack(entry);
             return isWaveEligible(track) && !isExcluded(track) ? [{ track, weight }] : [];

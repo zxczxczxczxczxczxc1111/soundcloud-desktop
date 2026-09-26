@@ -18,6 +18,7 @@ import { playerAreaScript } from './services/playerArea';
 import { WaveJournal } from './services/waveJournal';
 import { WaveExclusions } from './services/waveExclusions';
 import { WaveShelf } from './services/waveShelf';
+import { TASTE_PARAMS } from './services/tasteParams';
 import { WaveSignals } from './services/waveSignals';
 import { LibraryService } from './services/libraryService';
 import type { BackupRestoreOutcome, BackupSaveOutcome } from './services/backup';
@@ -1186,13 +1187,15 @@ async function init() {
             console.warn('Недавние прослушивания для подборок не прочитаны:', error);
         }
         // Треки своих и сохранённых плейлистов из хранилища рекомендаций: жанры полки берут и их (Э6).
-        // Пути и обложки там нет: обложки карточки берутся у лайков, треки при раскрытии перечитывает trackBatch
-        let playlists: ShelfTrack[] = [];
+        // Пути и обложки там нет: обложки карточки берутся у лайков, треки при раскрытии перечитывает trackBatch.
+        // share это доля лайка, как в модели вкуса: вкус хранит только тысячу самых весомых треков, и слабые плейлистные
+        // из него выпадают, поэтому полка получает долю напрямую
+        let playlists: Array<ShelfTrack & { share: number }> = [];
         try {
             if (typeof userId === 'number' && Number.isSafeInteger(userId) && userId > 0)
                 playlists = (await library.request('playlistTracks', userId)).flatMap((entry) => (entry.upload ? [{
                     id: entry.id, artist: entry.upload.uploader, title: entry.upload.title, artistName: entry.upload.uploaderName, genre: entry.upload.genre,
-                    tags: entry.upload.tags, path: '', artwork: '', dur: entry.upload.duration,
+                    tags: entry.upload.tags, path: '', artwork: '', dur: entry.upload.duration, share: entry.own ? TASTE_PARAMS.playlistOwn : TASTE_PARAMS.playlistSaved,
                 }] : [])).slice(0, 5000);
         } catch (error) {
             console.warn('Треки плейлистов для подборок не прочитаны:', error);
