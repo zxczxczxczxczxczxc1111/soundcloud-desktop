@@ -4,6 +4,7 @@ import {
     moodTags, normalizeTag, trackPath, parseGenres, pickSpaced, reasonText, shapeSamples, topGenres, trackMatchesGenre,
     applyTasteReasons, tagKeys, tasteMaps, tasteOrder, tasteReason, tasteScore, type TasteMaps, type WaveCandidate, type WaveFilter, type WaveTrack,
     countText, forgottenPicks, localDay, pickFinds, tasteGroups, capPerArtist, artistNames, isNewArtist, spreadBy, genreCanon, genreParts, genreMain,
+    rememberRecent,
 } from './wave';
 import { copyKeys, familyKey, versionKey } from './trackIdentity';
 
@@ -369,6 +370,17 @@ describe('подборки', () => {
     it('в подборке не больше заданного числа треков одного артиста, порядок сохраняется', () => {
         const list = [1, 1, 2, 1, 3, 1, 2].map((artist, i) => track(10 + i, { user_id: artist }));
         expect(capPerArtist(list, 2).map((entry) => entry.id)).toEqual([10, 11, 12, 14, 16]);
+    });
+
+    it('журнал страницы после предела забывает самые старые треки, а не перестаёт записывать', () => {
+        const seen = new Set<number>();
+        for (let id = 1; id <= 5000; id++) expect(rememberRecent(seen, id, 5000)).toBe(true);
+        expect(rememberRecent(seen, 7, 5000)).toBe(false);
+        expect(rememberRecent(seen, 5001, 5000)).toBe(true);
+        expect(seen.size).toBe(5000);
+        expect(seen.has(1)).toBe(false);
+        expect(rememberRecent(seen, 1, 5000)).toBe(true);
+        expect(seen.has(2)).toBe(false);
     });
 
     it('сборный канал не раздаёт свой жанр чужим песням без тегов, своя песня артиста наследует', () => {

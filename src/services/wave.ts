@@ -422,6 +422,14 @@ export function trackArtist(track: WaveTrack): number {
     return track.user_id ?? track.user?.id ?? 0;
 }
 
+/** Запоминает id не больше limit штук, вытесняя самые старые; true, если id встретился впервые */
+export function rememberRecent(seen: Set<number>, id: number, limit: number): boolean {
+    if (seen.has(id)) return false;
+    seen.add(id);
+    if (seen.size > limit) seen.delete(seen.values().next().value as number);
+    return true;
+}
+
 // Треки Go+ (SNIP) играют 30 секунд на бесплатном тарифе, BLOCK не играет вовсе, длинные миксы волну не держат
 export function isWaveEligible(track: WaveTrack): boolean {
     if (!track || typeof track.id !== 'number' || (track.kind !== undefined && track.kind !== 'track')) return false;
@@ -2484,9 +2492,9 @@ export function installWave(config: WaveConfig, createPlayback: typeof installPl
         else void preparePreview();
     }
 
+    // Одна запись на трек за жизнь страницы; после 5000 треков забываются самые старые, а журнал не встаёт
     function journal(id: number): void {
-        if (!id || recorded.has(id) || recorded.size > 5000) return;
-        recorded.add(id);
+        if (!id || !rememberRecent(recorded, id, 5000)) return;
         profile?.heard.add(id);
         pendingJournal.push(id);
         if (journalTimer === undefined) journalTimer = setTimeout(flushJournal, 5000);
@@ -6225,7 +6233,7 @@ export function installWave(config: WaveConfig, createPlayback: typeof installPl
 
 // Помощники идут на страницу объявлениями рядом со скриптом: так они видны installWave и друг другу
 const pageHelpers = [
-    normalizeTag, tagKeys, tagShares, genreKeys, genreCanon, genreParts, genreMain, parseGenres, formatGenres, genreKeysFor, classifyLink, canonicalUrl, trackMatchesGenre, trackArtist,
+    normalizeTag, tagKeys, tagShares, genreKeys, genreCanon, genreParts, genreMain, parseGenres, formatGenres, genreKeysFor, classifyLink, canonicalUrl, trackMatchesGenre, trackArtist, rememberRecent,
     isWaveEligible, acceptCandidate, pickSpaced, tasteMaps, tasteScore, tasteOrder, tasteReason, applyTasteReasons, shuffleInPlace, topGenres, fillText, reasonText, shapeSamples,
     artworkUrl, formatTime, playEnd, siteSource, moodTags, trackPath, localDay, countText, tasteGroups, capPerArtist, forgottenPicks, artistNames, isNewArtist, spreadBy, pickFinds,
     ...identity.identityHelpers, ...sources.sourceHelpers, ...libraryMix.libraryHelpers, installPlaybackPage, installPlaybackRecovery,
