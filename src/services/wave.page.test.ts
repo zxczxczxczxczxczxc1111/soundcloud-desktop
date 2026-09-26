@@ -1154,6 +1154,27 @@ it('снимок дня старого формата пересобираетс
     expect(document.querySelectorAll('#sc-wave .scw-card[data-card]')).toHaveLength(4);
 });
 
+it('«Давно не слушал» не берёт лайки последних 30 дней, даже если в клиенте они не играли и во вкусе весят больше всех', async () => {
+    const liked = Array.from({ length: 30 }, (_, i): WaveTrack => ({
+        id: 2001 + i, kind: 'track', duration: 200000, title: 'Like ' + i, user_id: 500 + (i % 10), user: { id: 500 + (i % 10), username: 'Tech' + (i % 10) }, genre: 'Techno', tag_list: '',
+    }));
+    fakeSite(relatedTracks, (name, _path, query) => {
+        if (name === 'soundLikesIds') return { collection: liked.map((track) => track.id) };
+        if (name === 'trackBatch') return batchOf(liked)(query);
+        return undefined;
+    });
+    const fresh = [2001, 2002, 2003];
+    const shelf = { load: vi.fn(async () => ({ snapshot: null, recent: [], fresh })), save: vi.fn(async () => true) };
+    const waveTaste = { load: vi.fn(async () => ({ artists: [[500, 1]], tags: [], tracks: fresh.map((id) => [id, 2]) })) };
+    Object.assign(window, { soundcloudAPI: { waveShelf: shelf, waveTaste } });
+    window.eval(waveScript());
+    await vi.advanceTimersByTimeAsync(100);
+    const [, saved] = shelf.save.mock.calls[0] as unknown as [number, { cards: Array<{ kind: string; ids: number[] }> }];
+    const forgotten = saved.cards.find((card) => card.kind === 'forgotten')?.ids ?? [];
+    expect(forgotten).toHaveLength(27);
+    expect(forgotten.some((id) => fresh.includes(id))).toBe(false);
+});
+
 it('полка без модели вкуса (main не ответил) не хранится до полуночи и через 10 минут собирается заново', async () => {
     const liked = Array.from({ length: 30 }, (_, i): WaveTrack => ({
         id: 2001 + i, kind: 'track', duration: 200000, title: 'Like ' + i, user_id: 500 + (i % 5), user: { id: 500 + (i % 5), username: 'Tech' + (i % 5) }, genre: 'Techno', tag_list: 'industrial',

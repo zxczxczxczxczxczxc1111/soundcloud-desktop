@@ -2978,8 +2978,9 @@ export function installWave(config: WaveConfig, createPlayback: typeof installPl
     }
     // Подборки на сутки: все лайки из каталога, вкус из main, похожие на любимое.
     // recentMain это прослушанное за 30 дней по журналу клиента, история сайта помнит только последние 200;
-    // heardMain это прослушанное от 30 секунд за 90 дней и треки плейлистов с жанром и тегами для жанров полки
-    async function buildShelf(day: string, recentMain: number[], heardMain: HeardTrack[]): Promise<Shelf> {
+    // heardMain это прослушанное от 30 секунд за 90 дней и треки плейлистов с жанром и тегами для жанров полки;
+    // freshLikes это лайки за 30 дней по датам библиотеки
+    async function buildShelf(day: string, recentMain: number[], heardMain: HeardTrack[], freshLikes: number[]): Promise<Shelf> {
         const p = await ensureProfile();
         await expandLibrary(p);
         await Promise.all([ensureExclusions(), ensureTaste()]);
@@ -3006,8 +3007,10 @@ export function installWave(config: WaveConfig, createPlayback: typeof installPl
         for (const track of finds) shelfTracks.set(track.id, track);
         if (finds.length >= 10) cards.push({ kind: 'daily', title: '', sub: '', ids: finds.map((track) => track.id), seeds: daySeeds.map((track) => track.id), keys: [], art: coversOf(finds) });
 
-        // «Давно не слушал» по истории конкретной версии; другая загрузка засчитывается только подтверждённой связью
-        const forgotten = forgottenPicks(liked, confirmedCopies([...p.recent, ...recentMain], copyGroups), weights, 60);
+        // «Давно не слушал» по истории конкретной версии; другая загрузка засчитывается только подтверждённой связью.
+        // Лайк за 30 дней не забыт: его слушали, когда лайкали, хоть и не в клиенте, а свежий лайк весит во вкусе
+        // больше всех и иначе встал бы в начало подборки
+        const forgotten = forgottenPicks(liked, confirmedCopies([...p.recent, ...recentMain, ...freshLikes], copyGroups), weights, 60);
         if (forgotten.length >= 8) cards.push({ kind: 'forgotten', title: '', sub: '', ids: forgotten.map((track) => track.id), seeds: [], keys: [], art: coversOf(forgotten) });
 
         // До 8 жанров, все видны (решение владельца 26.09.2026). Лайк весит 1 плюс вкус, прослушанное без лайка только
@@ -3072,7 +3075,7 @@ export function installWave(config: WaveConfig, createPlayback: typeof installPl
         shelfPromise = (async () => {
             const id = await ensureUser();
             if (!id) throw new Error('Пользователь не определён');
-            const loaded = (await bridge.load(id)) as { snapshot?: unknown; recent?: unknown; heard?: unknown; playlists?: unknown } | null;
+            const loaded = (await bridge.load(id)) as { snapshot?: unknown; recent?: unknown; heard?: unknown; playlists?: unknown; fresh?: unknown } | null;
             const saved = asShelf(loaded?.snapshot);
             if (saved && saved.day === day && saved.v === SHELF_FORMAT && !shelfRetryAt) {
                 replace(saved);
@@ -3081,7 +3084,8 @@ export function installWave(config: WaveConfig, createPlayback: typeof installPl
             const recent = Array.isArray(loaded?.recent) ? loaded.recent.filter(isId) : [];
             // Прослушанное и треки плейлистов одним списком без повторов: и то и другое идёт в жанры своим весом во вкусе
             const extra = new Map([...asHeard(loaded?.heard), ...asHeard(loaded?.playlists)].map((entry) => [entry.id, entry]));
-            const built = await buildShelf(day, recent, [...extra.values()]);
+            const fresh = Array.isArray(loaded?.fresh) ? loaded.fresh.filter(isId).slice(0, 5000) : [];
+            const built = await buildShelf(day, recent, [...extra.values()], fresh);
             if (disposed) return;
             replace(built);
             // Без вкуса зёрна находок случайны, «Давно не слушал» идёт только по порядку лайков, жанры без прослушанного:

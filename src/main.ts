@@ -1200,7 +1200,21 @@ async function init() {
         } catch (error) {
             console.warn('Треки плейлистов для подборок не прочитаны:', error);
         }
-        return { snapshot: shelf.load(userId), recent, heard: [...heard.values()].slice(-3000), playlists };
+        // Лайки за 30 дней по датам библиотеки: в «Давно не слушал» они не идут. Лайк без даты свежим не считается
+        let fresh: number[] = [];
+        try {
+            if (typeof userId === 'number' && Number.isSafeInteger(userId) && userId > 0) {
+                const since = Date.now() - 30 * 86400000;
+                fresh = (await library.request('libraryMembers', userId, 'likes'))
+                    .filter((member) => member.added >= since)
+                    .map((member) => Number(member.key.slice('sc:track:'.length)))
+                    .filter((id) => Number.isSafeInteger(id) && id > 0)
+                    .slice(0, 5000);
+            }
+        } catch (error) {
+            console.warn('Свежие лайки для подборок не прочитаны:', error);
+        }
+        return { snapshot: shelf.load(userId), recent, heard: [...heard.values()].slice(-3000), playlists, fresh };
     });
     ipcMain.handle('soundcloud:wave-shelf:save', (event, userId: unknown, snapshot: unknown) =>
         isTrustedSoundCloudSender(event) ? shelf.save(userId, snapshot) : false,
