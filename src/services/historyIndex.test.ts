@@ -143,6 +143,30 @@ it('resolve берёт только запрошенные треки с про�
     expect(index.overview(USER, null, T0 + 3 * HOUR)?.genres.map((genre) => genre.name)).toEqual(['drum & bass']);
 });
 
+it('топ артистов по исполнителю, а не по сборному каналу; перезалив одной песни в топе треков одной строкой', () => {
+    const journal = new Journal();
+    journal.list = [
+        // Сборный канал 50 выкладывает песни Alpha и Bravo; у Alpha есть свой аккаунт 60
+        signal({ at: T0, id: 21, artist: 50, v: 2, title: 'Alpha - Night', artistName: 'Hub', dur: 200000 }),
+        signal({ at: T0 + HOUR, id: 21, artist: 50 }),
+        signal({ at: T0 + 2 * HOUR, id: 22, artist: 50, v: 2, title: 'Bravo - Day', artistName: 'Hub', dur: 180000 }),
+        signal({ at: T0 + 3 * HOUR, id: 23, artist: 60, v: 2, title: 'Night', artistName: 'Alpha', path: '/alpha/night', dur: 200000 }),
+    ];
+    const index = open(journal);
+    index.sync(USER);
+    const view = index.overview(USER, T0 - HOUR, T0 + 23 * HOUR);
+    expect(view).not.toBeNull();
+    if (!view) return;
+    expect(view.artists.map((artist) => [artist.key, artist.name, artist.plays, artist.path])).toEqual([
+        [60, 'Alpha', 3, '/alpha/night'],
+        ['a:bravo', 'Bravo', 1, ''],
+    ]);
+    expect(view.artistCount).toBe(2);
+    expect(view.fresh).toBe(2);
+    // Night на канале и у самого Alpha: одна песня с тремя прослушиваниями
+    expect(view.tracks.map((track) => [track.name, track.plays])).toEqual([['Alpha - Night', 3], ['Bravo - Day', 1]]);
+});
+
 it('overview считает засчитанное с 30 секунд, новых артистов и топы', () => {
     const journal = new Journal();
     journal.list = [

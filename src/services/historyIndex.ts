@@ -3,7 +3,8 @@ import { mkdirSync, rmSync } from 'fs';
 import { join } from 'path';
 import type { PlaySignal } from '../types';
 import { artworkOf, spanCoverage, text, trackPathOf } from './waveSignals';
-import { genreMain } from './wave';
+import { genreMain, type WaveTrack } from './wave';
+import { copyKey, nameKey, performerKey, trackCredits } from './trackIdentity';
 
 // Индекс истории прослушиваний поверх журнала сигналов. Первоисточник остаётся JSONL: индекс досинхронизируется
 // из него при открытии страницы истории и пересобирается целиком, если файла нет, схема сменилась или файл испорчен
@@ -160,6 +161,29 @@ const ROW =
 type Values = Record<string, unknown>;
 const num = (value: unknown): number => (typeof value === 'number' ? value : typeof value === 'bigint' ? Number(value) : 0);
 const str = (value: unknown): string => (typeof value === 'string' ? value : '');
+const rowTrack = (row: Values): WaveTrack => ({ id: num(row.id), title: str(row.title), user_id: num(row.artist), user: { id: num(row.artist), username: str(row.artistName) }, duration: num(row.dur) });
+// Исполнитель трека истории: своя загрузка это аккаунт, чужая песня на канале это исполнитель из названия,
+// а если у исполнителя среди прослушанного есть свой аккаунт, то этот аккаунт. rows это треки всей истории
+function performers(rows: Values[]): (row: Values) => string {
+    const keys = new Map<number, string>();
+    const accounts = new Map<string, number>();
+    for (const row of rows) {
+        const key = performerKey(num(row.artist), str(row.artistName), trackCredits(rowTrack(row)));
+        keys.set(num(row.id), key);
+        const own = nameKey(str(row.artistName));
+        if (key.startsWith('u:') && own && !accounts.has(own)) accounts.set(own, num(row.artist));
+    }
+    return (row) => {
+        const key = keys.get(num(row.id)) ?? performerKey(num(row.artist), str(row.artistName), trackCredits(rowTrack(row)));
+        const account = key.startsWith('a:') ? accounts.get(key.slice(2)) : undefined;
+        return account ? 'u:' + account : key;
+    };
+}
+// Имя исполнителя чужой песни: первый исполнитель из названия, не сам загрузчик
+function performerName(row: Values): string {
+    const own = nameKey(str(row.artistName));
+    return trackCredits(rowTrack(row)).find((credit) => credit.role === 'artist' && credit.key && credit.key !== own)?.name ?? str(row.artistName);
+}
 function toRow(value: Values): HistoryRow {
     return {
         at: num(value.at),
@@ -378,21 +402,61 @@ export class HistoryIndex {
             const firstAt = first.at === null || first.at === undefined ? null : num(first.at);
             const start = from ?? (firstAt === null ? localDayStart(to - DAY) : localDayStart(firstAt));
             const range = [start, to] as const;
-            const totals = db.prepare('select coalesce(sum(heard), 0) as heard, coalesce(sum(heard >= ?), 0) as counted, count(distinct case when heard >= ? and artist > 0 then artist end) as artists from plays where at >= ? and at < ?').get(COUNTED_MS, COUNTED_MS, ...range) as Values;
-            const fresh = db.prepare('select count(*) as n from (select min(at) as first from plays where heard >= ? and artist > 0 group by artist) where first >= ? and first < ?').get(COUNTED_MS, ...range) as Values;
+            const totals = db.prepare('select coalesce(sum(heard), 0) as heard, coalesce(sum(heard >= ?), 0) as counted from plays where at >= ? and at < ?').get(COUNTED_MS, ...range) as Values;
 
-            const bestTrack = db.prepare(
-                "select coalesce(t.artist_name, '') as artistName, coalesce(t.artwork, '') as artwork, coalesce(t.path, '') as path from plays p left join tracks t on t.id = p.id " +
-                    'where p.artist = ? and p.at >= ? and p.at < ? and p.heard >= ? group by p.id order by count(*) desc, max(p.at) desc limit 1',
-            );
-            const artists = (db.prepare('select artist, count(*) as plays, sum(heard) as ms from plays where at >= ? and at < ? and heard >= ? and artist > 0 group by artist order by plays desc, ms desc limit 25').all(...range, COUNTED_MS) as Values[]).map((row) => {
-                const best = (bestTrack.get(num(row.artist), ...range, COUNTED_MS) as Values | undefined) ?? {};
-                return { key: num(row.artist), name: str(best.artistName), artistName: str(best.artistName), artwork: str(best.artwork), path: str(best.path), plays: num(row.plays), ms: num(row.ms) };
+            // Артист это исполнитель, а не загрузчик: сборный канал выкладывает чужие песни, и его «артистом» быть не должно.
+            // Песня исполнителя, у которого среди прослушанного есть свой аккаунт, идёт этому аккаунту
+            const byTrack = (sql: string, ...args: number[]): Values[] => db.prepare(
+                "select p.id, p.artist, count(*) as plays, sum(p.heard) as ms, min(p.at) as first, max(p.at) as last, max(p.dur) as dur, coalesce(t.title, '') as title, " +
+                    "coalesce(t.artist_name, '') as artistName, coalesce(t.artwork, '') as artwork, coalesce(t.path, '') as path from plays p left join tracks t on t.id = p.id " +
+                    'where p.heard >= ? and p.artist > 0' + sql + ' group by p.id',
+            ).all(COUNTED_MS, ...args) as Values[];
+            const everything = byTrack('');
+            const performerOf = performers(everything);
+            // «Новый артист»: первое засчитанное прослушивание исполнителя за всю историю попало в период
+            const firstOf = new Map<string, number>();
+            for (const row of everything) {
+                const key = performerOf(row);
+                firstOf.set(key, Math.min(firstOf.get(key) ?? Infinity, num(row.first)));
+            }
+            const inRange = byTrack(' and p.at >= ? and p.at < ?', ...range);
+            // best: самый слушаемый трек группы; у аккаунта имя и ссылка берутся только с его собственной загрузки,
+            // а не со сборного канала, чья песня влилась в него
+            type Group = { plays: number; ms: number; best: Values | null };
+            const groups = new Map<string, Group>();
+            const better = (row: Values, than: Values | null): boolean => !than || num(row.plays) > num(than.plays) || (num(row.plays) === num(than.plays) && num(row.last) > num(than.last));
+            for (const row of inRange) {
+                const key = performerOf(row);
+                const group = groups.get(key) ?? { plays: 0, ms: 0, best: null };
+                group.plays += num(row.plays);
+                group.ms += num(row.ms);
+                const own = !key.startsWith('u:') || key === 'u:' + num(row.artist);
+                if (own && better(row, group.best)) group.best = row;
+                groups.set(key, group);
+            }
+            const artists = [...groups].sort((a, b) => b[1].plays - a[1].plays || b[1].ms - a[1].ms).slice(0, 25).map(([key, group]) => {
+                const best = group.best ?? inRange.find((row) => performerOf(row) === key) ?? {};
+                const account = key.startsWith('u:') && group.best !== null;
+                const name = account ? str(best.artistName) : performerName(best);
+                // У исполнителя без своего аккаунта ссылки нет: путь трека вёл бы на сборный канал
+                return { key: key.startsWith('u:') ? Number(key.slice(2)) : key, name, artistName: name, artwork: str(best.artwork), path: account ? str(best.path) : '', plays: group.plays, ms: group.ms };
             });
-            const tracks = (db.prepare(
-                "select p.id, count(*) as plays, sum(p.heard) as ms, coalesce(t.title, '') as title, coalesce(t.artist_name, '') as artistName, coalesce(t.artwork, '') as artwork, coalesce(t.path, '') as path " +
-                    'from plays p left join tracks t on t.id = p.id where p.at >= ? and p.at < ? and p.heard >= ? group by p.id order by plays desc, ms desc limit 8',
-            ).all(...range, COUNTED_MS) as Values[]).map((row) => ({ key: num(row.id), name: str(row.title), artistName: str(row.artistName), artwork: str(row.artwork), path: str(row.path), plays: num(row.plays), ms: num(row.ms) }));
+            const fresh = [...groups.keys()].filter((key) => (firstOf.get(key) ?? 0) >= start).length;
+            // Перезаливы одной песни (та же версия, длительность рядом) одной строкой, ведёт самая слушаемая загрузка
+            const songs = new Map<string, { plays: number; ms: number; best: Values }>();
+            for (const row of inRange) {
+                const key = copyKey({ id: num(row.id), title: str(row.title), user_id: num(row.artist), user: { id: num(row.artist), username: str(row.artistName) }, duration: num(row.dur) });
+                const song = songs.get(key);
+                if (!song) songs.set(key, { plays: num(row.plays), ms: num(row.ms), best: row });
+                else {
+                    song.plays += num(row.plays);
+                    song.ms += num(row.ms);
+                    if (num(row.plays) > num(song.best.plays)) song.best = row;
+                }
+            }
+            const tracks = [...songs.values()].sort((a, b) => b.plays - a.plays || b.ms - a.ms).slice(0, 8).map((song) => ({
+                key: num(song.best.id), name: str(song.best.title), artistName: str(song.best.artistName), artwork: str(song.best.artwork), path: str(song.best.path), plays: song.plays, ms: song.ms,
+            }));
             // Написания одного жанра склеиваются той же таблицей, что у полки волны; подпись это самое слушаемое написание
             const merged = new Map<string, { plays: number; ms: number; labels: Map<string, number> }>();
             for (const row of db.prepare(
@@ -429,8 +493,8 @@ export class HistoryIndex {
                 to,
                 heard: num(totals.heard),
                 counted: num(totals.counted),
-                artistCount: num(totals.artists),
-                fresh: num(fresh.n),
+                artistCount: groups.size,
+                fresh,
                 artists,
                 tracks,
                 genres,

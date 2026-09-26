@@ -255,6 +255,8 @@ it('разносит артистов в окне из трёх и не трог
 
 it('частые жанры лайков и подписи причин на двух языках', () => {
     expect(topGenres([track(1, { genre: 'Phonk' }), track(2, { genre: 'phonk' }), track(3, { genre: 'Rap' }), track(4, { genre: '' })], 5)).toEqual(['phonk', 'rap']);
+    // Написания хип-хопа одной строкой, подпись самая частая
+    expect(topGenres(['Hip-hop & Rap', 'Hip-hop & Rap', 'Hip Hop/Rap', 'rap', 'Techno'].map((genre, i) => track(10 + i, { genre })), 5)).toEqual(['hip-hop & rap', 'techno']);
     expect(reasonText({ kind: 'genreSimilar', genre: 'phonk', seed: 'X' }, WAVE_TEXTS.ru)).toBe('phonk, похоже на X');
     expect(reasonText({ kind: 'fresh', seed: 'X' }, WAVE_TEXTS.en)).toBe('New to you, similar to X');
     for (const texts of Object.values(WAVE_TEXTS)) for (const value of Object.values(texts)) expect(value).not.toMatch(/[–—]/);

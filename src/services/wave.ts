@@ -639,17 +639,20 @@ export function shuffleInPlace<T>(list: T[]): T[] {
 }
 
 // Самые частые жанры лайков для выпадающего списка, в том написании, что встречается чаще
+// Написания одного жанра склеены той же таблицей, что у полки и истории («Hip-hop & Rap», «Hip Hop», «rap» одна строка),
+// подпись это самое частое написание
 export function topGenres(tracks: WaveTrack[], limit: number): string[] {
-    const counts = new Map<string, { count: number; label: string }>();
+    const counts = new Map<string, { count: number; labels: Map<string, number> }>();
     for (const track of tracks) {
-        const label = (track.genre ?? '').trim().toLowerCase();
-        const key = normalizeTag(label);
-        if (!key || key.length < 2) continue;
-        const entry = counts.get(key);
-        if (entry) entry.count++;
-        else counts.set(key, { count: 1, label });
+        const main = genreMain(track.genre);
+        if (main.key.length < 2) continue;
+        const label = main.label.toLowerCase();
+        const entry = counts.get(main.key) ?? { count: 0, labels: new Map<string, number>() };
+        entry.count++;
+        entry.labels.set(label, (entry.labels.get(label) ?? 0) + 1);
+        counts.set(main.key, entry);
     }
-    return [...counts.values()].sort((a, b) => b.count - a.count).slice(0, limit).map((entry) => entry.label);
+    return [...counts.values()].sort((a, b) => b.count - a.count).slice(0, limit).map((entry) => [...entry.labels].sort((a, b) => b[1] - a[1])[0][0]);
 }
 
 export function fillText(template: string, values: Record<string, string>): string {
