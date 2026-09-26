@@ -8,6 +8,8 @@ const platform = window.headerAPI.platform;
 let isMaximized = false;
 let canGoBack = false;
 let canGoForward = false;
+// Открытая история закрывается кнопкой «Назад», даже если сайту назад некуда
+let historyOpen = false;
 let isRefreshing = false;
 let navButtons = null;
 let minimizeGlyphEl = null;
@@ -66,7 +68,7 @@ function updateNavigationState(state = {}) {
         }
     }
 
-    if (navButtons.back) navButtons.back.classList.toggle('disabled', !canGoBack);
+    if (navButtons.back) navButtons.back.classList.toggle('disabled', !canGoBack && !historyOpen);
     if (navButtons.forward) navButtons.forward.classList.toggle('disabled', !canGoForward);
 }
 
@@ -134,7 +136,7 @@ document.querySelector('.navigation-controls')?.addEventListener('click', (e) =>
 
     switch (id) {
         case 'back-btn':
-            if (canGoBack) ipcRenderer.send('navigate-back');
+            if (canGoBack || historyOpen) ipcRenderer.send('navigate-back');
             break;
         case 'forward-btn':
             if (canGoForward) ipcRenderer.send('navigate-forward');
@@ -158,6 +160,8 @@ document.getElementById('history-btn')?.addEventListener('click', () => {
 document.getElementById('queue-btn')?.addEventListener('click', () => ipcRenderer.send('toggle-queue'));
 ipcRenderer.on('history-state', (_, open) => {
     document.getElementById('history-btn')?.setAttribute('aria-pressed', String(open === true));
+    historyOpen = open === true;
+    updateNavigationState();
 });
 
 // Window control event listeners for Windows

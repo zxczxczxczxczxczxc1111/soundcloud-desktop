@@ -2103,3 +2103,65 @@ it('Э7: список пула со ссылками и меню по ПКМ д�
     await vi.advanceTimersByTimeAsync(2000);
     expect(queuedIds(site).slice(0, 5)).toEqual([351, 352, 301, 302, 303]);
 });
+
+it('Э8: «Назад» после ссылки из «Моей музыки» возвращает прокрутку списка и страницы; заход на главную без «Назад» начинается сверху', async () => {
+    fakeSite(relatedTracks, libraryExtra());
+    Object.assign(window, { soundcloudAPI: { waveLibrary: libraryBridge({ mode: 'order', pick: { 77: ['likes'] } }) } });
+    const scrolled: number[] = [];
+    let pageAt = 900;
+    const scrollTo = vi.spyOn(window, 'scrollTo').mockImplementation(((_x: number, y: number) => { scrolled.push(y); pageAt = y; }) as typeof window.scrollTo);
+    const pageY = Object.getOwnPropertyDescriptor(window, 'scrollY');
+    Object.defineProperty(window, 'scrollY', { configurable: true, get: () => pageAt });
+    const onLink = (event: MouseEvent): void => {
+        if (event.target instanceof HTMLAnchorElement && !event.target.closest('#sc-wave')) event.preventDefault();
+    };
+    document.addEventListener('click', onLink);
+    try {
+        window.eval(waveScript());
+        await vi.advanceTimersByTimeAsync(2000);
+        document.querySelector<HTMLButtonElement>('#sc-wave [data-act="lib-list"]')!.click();
+        await vi.advanceTimersByTimeAsync(2000);
+        const leave = async (pop: boolean): Promise<HTMLElement> => {
+            const list = document.querySelector<HTMLElement>('#sc-wave .scw-lib-rows')!;
+            list.scrollTop = 150;
+            list.dispatchEvent(new Event('scroll'));
+            pageAt = 900;
+            list.querySelector<HTMLAnchorElement>('a.scw-link')!.click();
+            if (pop) window.dispatchEvent(new PopStateEvent('popstate'));
+            // Сайт уводит главную и возвращает её наверху: отсоединённый список прокрутку тоже не помнит
+            pageAt = 0;
+            const section = document.getElementById('sc-wave')!;
+            section.remove();
+            list.scrollTop = 0;
+            await vi.advanceTimersByTimeAsync(400);
+            return document.querySelector<HTMLElement>('#sc-wave .scw-lib-rows')!;
+        };
+        expect((await leave(true)).scrollTop).toBe(150);
+        expect(scrolled).toContain(900);
+        await vi.advanceTimersByTimeAsync(6000);
+        scrolled.length = 0;
+        expect((await leave(false)).scrollTop).toBe(150);
+        expect(scrolled).toEqual([]);
+    } finally {
+        document.removeEventListener('click', onLink);
+        if (pageY) Object.defineProperty(window, 'scrollY', pageY);
+        else Reflect.deleteProperty(window, 'scrollY');
+        scrollTo.mockRestore();
+    }
+});
+
+it('Э8: сыгранное волной раньше не выпадает из «Моей музыки» при новом запуске', async () => {
+    const site = fakeSite(relatedTracks, libraryExtra());
+    Object.assign(window, { soundcloudAPI: { waveLibrary: libraryBridge({ mode: 'order', pick: { 77: ['likes', 'playlist:8'] } }) } });
+    window.eval(waveScript());
+    await vi.advanceTimersByTimeAsync(2000);
+    document.querySelector<HTMLButtonElement>('#sc-wave [data-act="lib-play"]')!.click();
+    await vi.advanceTimersByTimeAsync(2000);
+    expect(queuedIds(site).slice(0, 3)).toEqual([301, 302, 303]);
+    // Волна уже отдала сайту 301-310; запуск с трека из списка всё равно проходит пул целиком
+    document.querySelector<HTMLButtonElement>('#sc-wave [data-act="lib-list"]')!.click();
+    await vi.advanceTimersByTimeAsync(2000);
+    document.querySelector<HTMLElement>('#sc-wave .scw-lib .scw-row[data-track="351"]')!.click();
+    await vi.advanceTimersByTimeAsync(2000);
+    expect(queuedIds(site).slice(0, 5)).toEqual([351, 352, 301, 302, 303]);
+});

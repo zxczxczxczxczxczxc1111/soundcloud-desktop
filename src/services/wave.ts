@@ -1953,9 +1953,9 @@ export function installWave(config: WaveConfig, createPlayback: typeof installPl
             ownAdded = true;
             const current = seed;
             if (current.kind === 'library') {
-                // Пул отфильтрован своим фильтром при сборке: миксы и недавно слышанное остаются, копии уже склеены
+                // Пул отфильтрован своим фильтром при сборке: миксы и недавно слышанное остаются, копии уже склеены.
+                // Сыгранное волной раньше не отсекается: своя музыка играет целиком, стартовый трек в own и так не входит
                 for (const track of current.own) {
-                    if (taken.has(track.id)) continue;
                     taken.add(track.id);
                     for (const key of copyKeys(track)) signatures.add(key);
                     ownQueue.push({ track, reason: { kind: 'library', name: libraryFrom.get(track.id) ?? '' } });
@@ -2754,6 +2754,10 @@ export function installWave(config: WaveConfig, createPlayback: typeof installPl
     let openCard: number | null = null;
     // Прокрутка списка раскрытой подборки: отсоединённый при уходе со страницы список её забывает, по «Назад» она берётся отсюда
     let keptRowsScroll = 0;
+    // То же для списка «Моей музыки». Страницу сайт по «Назад» ставит наверх: её место запоминает переход по нашей ссылке
+    let keptLibraryScroll = 0;
+    let keptPageScroll: number | null = null;
+    let poppedAt = 0;
     const mixLists = new Map<number, WaveTrack[] | 'loading' | 'failed'>();
     const isId = (value: unknown): value is number => typeof value === 'number' && Number.isSafeInteger(value) && value > 0;
     // Радар на полке: номера карточек отрицательные и не -1, -1 в обработчике кнопок значит «подборки нет»
@@ -5072,7 +5076,7 @@ export function installWave(config: WaveConfig, createPlayback: typeof installPl
         return rows;
     }
     // rowsAt: прокрутка списка подборки, когда секция вернулась на страницу и своя прокрутка списка потеряна
-    function render(rowsAt?: number): void {
+    function render(rowsAt?: number, libraryAt?: number): void {
         if (!section) return;
         hideTip();
         const focusedNode = document.activeElement instanceof HTMLElement && section.contains(document.activeElement) ? document.activeElement : null;
@@ -5086,7 +5090,7 @@ export function installWave(config: WaveConfig, createPlayback: typeof installPl
         const focusedPart = focusedRow && focusedNode ? [...focusedRow.querySelectorAll('button, a')].indexOf(focusedNode) : -1;
         // Пересборка секции не должна сбрасывать прокрутку списка подборки
         const rowsScroll = rowsAt ?? section.querySelector('.scw-mix-rows')?.scrollTop ?? 0;
-        const libraryScroll = section.querySelector('.scw-lib-rows')?.scrollTop ?? 0;
+        const libraryScroll = libraryAt ?? section.querySelector('.scw-lib-rows')?.scrollTop ?? 0;
         section.textContent = '';
         section.setAttribute('aria-label', T.wave);
         section.append(renderHead());
@@ -5313,6 +5317,7 @@ export function installWave(config: WaveConfig, createPlayback: typeof installPl
         const link = target.closest<HTMLAnchorElement>('a.scw-link');
         if (link) {
             event.preventDefault();
+            keptPageScroll = window.scrollY;
             navigate(link.getAttribute('href') ?? '');
             return;
         }
@@ -5395,6 +5400,7 @@ export function installWave(config: WaveConfig, createPlayback: typeof installPl
                 return;
             case 'lib-list':
                 libraryListOpen = !libraryListOpen;
+                keptLibraryScroll = 0;
                 if (libraryListOpen && pickedSources().length) void ensureLibraryPlan(false);
                 render();
                 return;
@@ -5854,6 +5860,26 @@ export function installWave(config: WaveConfig, createPlayback: typeof installPl
         for (const doc of [...frameCleanups.keys()]) if (!doc.defaultView) frameCleanups.delete(doc);
     }
 
+    // Сайт ставит главную наверх уже после того, как блок встал, а ленту под ним дорисовывает частями:
+    // место возвращается несколько раз за 3 секунды и отпускается, как только человек сам взялся за прокрутку
+    function restorePageScroll(y: number): void {
+        const until = Date.now() + 3000;
+        let stopped = false;
+        const stop = (): void => { stopped = true; };
+        const events = ['wheel', 'keydown', 'mousedown', 'touchstart'] as const;
+        for (const name of events) window.addEventListener(name, stop, { capture: true, passive: true });
+        const step = (): void => {
+            if (stopped || disposed || Date.now() > until) {
+                for (const name of events) window.removeEventListener(name, stop, true);
+                return;
+            }
+            if (Math.abs(window.scrollY - y) > 2) window.scrollTo(0, y);
+            setTimeout(step, 100);
+        };
+        step();
+    }
+    const onPop = (): void => { poppedAt = Date.now(); };
+
     function mount(): void {
         const home = location.pathname === '/discover' || location.pathname === '/';
         if (!home) return;
@@ -5870,16 +5896,21 @@ export function installWave(config: WaveConfig, createPlayback: typeof installPl
             section.addEventListener('mouseleave', () => { hideTip(); if (hover !== null) { hover = null; paint(); } });
             section.addEventListener('mousemove', onMove);
             section.addEventListener('mousedown', onDown);
-            // События прокрутки не всплывают: список подборки ловится на погружении
+            // События прокрутки не всплывают: списки подборки и «Моей музыки» ловятся на погружении
             section.addEventListener('scroll', (event) => {
-                if (event.target instanceof HTMLElement && event.target.classList.contains('scw-mix-rows')) keptRowsScroll = event.target.scrollTop;
+                if (!(event.target instanceof HTMLElement)) return;
+                if (event.target.classList.contains('scw-mix-rows')) keptRowsScroll = event.target.scrollTop;
+                else if (event.target.classList.contains('scw-lib-rows')) keptLibraryScroll = event.target.scrollTop;
             }, true);
         }
         if (!(section.isConnected && section.nextElementSibling === anchor)) {
-            // Возврат на главную («Назад» после перехода по ссылке): список подборки встаёт на прежнюю прокрутку
+            // Возврат на главную («Назад» после перехода по ссылке): списки встают на прежнюю прокрутку
             const back = !section.isConnected && section.childElementCount > 0;
             anchor.parentElement.insertBefore(section, anchor);
-            render(back ? keptRowsScroll : undefined);
+            render(back ? keptRowsScroll : undefined, back ? keptLibraryScroll : undefined);
+            // Страница тоже, но только по «Назад»: заход на главную ссылкой сайта начинается сверху
+            if (back && keptPageScroll !== null && Date.now() - poppedAt < 5000) restorePageScroll(keptPageScroll);
+            keptPageScroll = null;
         }
         // Подбор до запуска только для видимого блока: скрытая в F1 волна не ходит в API
         if (state === 'idle' && !active && !preview.length && player && isVisible()) void preparePreview();
@@ -5971,6 +6002,7 @@ export function installWave(config: WaveConfig, createPlayback: typeof installPl
         document.removeEventListener('keydown', onUserInput, true);
         window.removeEventListener('blur', closeMenu);
         window.removeEventListener('resize', onResize);
+        window.removeEventListener('popstate', onPop);
         document.removeEventListener('visibilitychange', repaint);
         cancelAnimationFrame(paintFrame);
         closeMenu();
@@ -6034,6 +6066,7 @@ export function installWave(config: WaveConfig, createPlayback: typeof installPl
     document.addEventListener('keydown', onUserInput, true);
     window.addEventListener('blur', closeMenu);
     window.addEventListener('resize', onResize);
+    window.addEventListener('popstate', onPop);
     document.addEventListener('visibilitychange', repaint);
     observer.observe(document.documentElement, { childList: true, subtree: true });
     state = 'loading';

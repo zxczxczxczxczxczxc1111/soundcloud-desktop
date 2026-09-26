@@ -367,6 +367,14 @@ function toggleHistory(): void {
     }
     historyManager.toggle();
 }
+// История лежит поверх сайта как ещё одна страница: «Назад» сначала закрывает её, а сайт остаётся где был
+function navigateBack(): void {
+    if (historyManager?.isOpen()) {
+        historyManager.hide();
+        return;
+    }
+    if (contentView && contentView.webContents.navigationHistory.canGoBack()) contentView.webContents.navigationHistory.goBack();
+}
 function closeQueueDialog(): void {
     if (contentView && !contentView.webContents.isDestroyed()) {
         void contentView.webContents.executeJavaScript('document.getElementById("sc-desktop-queue")?.close()').catch((error: unknown) => console.warn('Очередь не закрыта', error));
@@ -628,9 +636,7 @@ function setupWindowControls() {
     ipcMain.on('navigate-back', (event) => {
             if (!isTrustedLocalSender(event)) return;
 
-        if (contentView && contentView.webContents.navigationHistory.canGoBack()) {
-            contentView.webContents.navigationHistory.goBack();
-        }
+        navigateBack();
     });
 
     ipcMain.on('navigate-forward', (event) => {
@@ -1894,17 +1900,9 @@ function initializeShortcuts() {
         if (contentView) contentView.webContents.setZoomLevel(0);
     });
 
-    shortcutService.register('goBack', 'CommandOrControl+B', 'Go Back', () => {
-        if (contentView && contentView.webContents.navigationHistory.canGoBack()) {
-            contentView.webContents.navigationHistory.goBack();
-        }
-    });
+    shortcutService.register('goBack', 'CommandOrControl+B', 'Go Back', navigateBack);
 
-    shortcutService.register('goBackAlt', 'CommandOrControl+P', 'Go Back (Alternative)', () => {
-        if (contentView && contentView.webContents.navigationHistory.canGoBack()) {
-            contentView.webContents.navigationHistory.goBack();
-        }
-    });
+    shortcutService.register('goBackAlt', 'CommandOrControl+P', 'Go Back (Alternative)', navigateBack);
 
     shortcutService.register('goForward', 'CommandOrControl+F', 'Go Forward', () => {
         if (contentView && contentView.webContents.navigationHistory.canGoForward()) {

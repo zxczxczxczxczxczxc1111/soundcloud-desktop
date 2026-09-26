@@ -448,8 +448,9 @@
             [s.counted, plural(s.counted, T.counted)],
             [s.artistCount, plural(s.artistCount, T.artists)],
         ];
-        // За всё время каждый артист появился впервые: «новых» столько же, сколько всех, число ничего не говорит
-        if (state.period !== 'all') figs.push([s.fresh, plural(s.fresh, T.fresh)]);
+        // Период начался не позже первой записи истории (всё время или месяц, когда история моложе месяца):
+        // каждый артист тут появился впервые, «новых» столько же, сколько всех, и число ничего не говорит
+        if (s.firstAt !== null && s.from > s.firstAt) figs.push([s.fresh, plural(s.fresh, T.fresh)]);
         const moreButton = s.artists.length > ARTISTS_SHORT ? '<button class="link" data-act="artists">' + esc(state.allArtists ? T.less : T.more) + '</button>' : '';
         return (
             '<div class="hero"><div><div class="big num">' + (h ? h + '<small>' + esc(T.h) + '</small>' : '') + m + '<small>' + esc(T.min) + '</small></div><div class="big-cap">' + esc(T.music(state.period)) + '</div></div>' +
