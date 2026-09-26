@@ -909,6 +909,28 @@ it('ошибка подборок видна, повтор восстанавл�
     expect(document.querySelector('.scw-card .scw-t1')?.textContent).toBe('Techno');
 });
 
+it('полка после сбоя повторяет всё реже, при скрытой странице не собирается, при показе пробует сразу', async () => {
+    fakeSite(relatedTracks);
+    const load = vi.fn(async () => { throw new Error('Offline'); });
+    Object.assign(window, { soundcloudAPI: { waveShelf: { load, save: vi.fn(async () => true) } } });
+    try {
+        window.eval(waveScript()); await vi.advanceTimersByTimeAsync(100);
+        expect(load).toHaveBeenCalledTimes(1);
+        // Раньше повтор шёл каждые 30 секунд, за 10 минут 20 попыток. Теперь через 30 с, 2 мин, 5 мин, 15 мин
+        await vi.advanceTimersByTimeAsync(10 * 60 * 1000);
+        expect(load).toHaveBeenCalledTimes(4);
+        Object.defineProperty(document, 'visibilityState', { configurable: true, get: () => 'hidden' });
+        await vi.advanceTimersByTimeAsync(60 * 60 * 1000);
+        expect(load).toHaveBeenCalledTimes(4);
+        Object.defineProperty(document, 'visibilityState', { configurable: true, get: () => 'visible' });
+        document.dispatchEvent(new Event('visibilitychange'));
+        await vi.advanceTimersByTimeAsync(100);
+        expect(load).toHaveBeenCalledTimes(5);
+    } finally {
+        Reflect.deleteProperty(document, 'visibilityState');
+    }
+});
+
 it('полка показывает все жанры одной сеткой, неполный ряд не прячется', async () => {
     fakeSite(relatedTracks);
     const art = ['https://i1.sndcdn.com/artworks-0-t300x300.jpg'];

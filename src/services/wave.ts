@@ -430,6 +430,12 @@ export function rememberRecent(seen: Set<number>, id: number, limit: number): bo
     return true;
 }
 
+/** Пауза перед повтором после failures сбоев подряд: 30 с, 2, 5, 15, дальше 30 мин; без сбоев 0 */
+export function retryDelay(failures: number): number {
+    const steps = [30000, 120000, 300000, 900000, 1800000];
+    return failures > 0 ? steps[Math.min(failures, steps.length) - 1] : 0;
+}
+
 // Треки Go+ (SNIP) играют 30 секунд на бесплатном тарифе, BLOCK не играет вовсе, длинные миксы волну не держат
 export function isWaveEligible(track: WaveTrack): boolean {
     if (!track || typeof track.id !== 'number' || (track.kind !== undefined && track.kind !== 'track')) return false;
@@ -1456,6 +1462,7 @@ export function installWave(config: WaveConfig, createPlayback: typeof installPl
     const recovery = createRecovery({ player: () => player, language: T.lang, checkpoint: () => queueControls.save(), refresh: () => {
         profileRetryAt = 0;
         shelfFailedAt = 0;
+        shelfFailures = 0;
         if (isVisible()) ensureShelf();
         if (profile) void expandLibrary(profile).catch((error: unknown) => console.warn('Библиотека не обновлена', error));
         if (profile) scheduleLibrarySync(20000);
@@ -2691,7 +2698,7 @@ export function installWave(config: WaveConfig, createPlayback: typeof installPl
         const p = player;
         if (!p || disposed) return;
         queueControls.tick();
-        if (shelfFailedAt && Date.now() - shelfFailedAt >= 30000 && isVisible()) ensureShelf();
+        if (shelfFailedAt && isVisible()) ensureShelf();
         recovery.tick();
         const sound = p.getCurrentSound();
         const id = sound?.id ?? 0;
@@ -2889,6 +2896,7 @@ export function installWave(config: WaveConfig, createPlayback: typeof installPl
     let shelf: Shelf | null = null;
     let shelfPromise: Promise<void> | null = null;
     let shelfFailedAt = 0;
+    let shelfFailures = 0;
     // Полка собрана без модели вкуса (main не ответил): показана, но не сохранена и через 10 минут собирается заново
     let shelfRetryAt = 0;
     // Треки подборок по id: снимок хранит только номера, названия и обложки добирает trackBatch
@@ -2923,6 +2931,7 @@ export function installWave(config: WaveConfig, createPlayback: typeof installPl
     let radarLoaded = false;
     let radarPromise: Promise<void> | null = null;
     let radarFailedAt = 0;
+    let radarFailures = 0;
     let radarRequest = 0;
     // Выпуск, выбранный в архиве; null это последний
     let radarPinned: { period: string; revision: number } | null = null;
@@ -3076,17 +3085,21 @@ export function installWave(config: WaveConfig, createPlayback: typeof installPl
         }
         return { day, v: SHELF_FORMAT, cards };
     }
-    // Снимок дня или новая сборка; после сбоя сохраняем видимую ошибку и ограничиваем частоту повтора.
-    function ensureShelf(): void {
+    // Снимок дня или новая сборка; после сбоя сохраняем видимую ошибку, повтор всё реже (retryDelay).
+    // Скрытая страница не собирает: блок проверяет только себя, и в трее сборка повторялась бы впустую.
+    // soon: страница снова видна, повтор не раньше 30 с от сбоя без долгой паузы
+    function ensureShelf(soon = false): void {
         const bridge = host.soundcloudAPI?.waveShelf;
         const day = localDay(Date.now());
-        if (!bridge || shelfPromise || (shelf && shelf.day === day && (!shelfRetryAt || Date.now() < shelfRetryAt)) || Date.now() - shelfFailedAt < 30000) return;
+        if (!bridge || shelfPromise || document.visibilityState === 'hidden') return;
+        if ((shelf && shelf.day === day && (!shelfRetryAt || Date.now() < shelfRetryAt)) || Date.now() - shelfFailedAt < (soon ? retryDelay(1) : retryDelay(shelfFailures))) return;
         // Полка прошлых суток сменилась: номер карточки у играющей волны больше ни на что не указывает
         // Карточки радара от полки не зависят и остаются как были
         const replace = (next: Shelf): void => {
             if (shelf && seed && !isRadarCard(seed.card)) seed.card = undefined;
             shelf = next;
             shelfFailedAt = 0;
+            shelfFailures = 0;
             if (!isRadarCard(openCard)) openCard = null;
             for (const index of [...mixLists.keys()]) if (!isRadarCard(index)) mixLists.delete(index);
         };
@@ -3114,6 +3127,7 @@ export function installWave(config: WaveConfig, createPlayback: typeof installPl
             if (built.cards.length && !tasteless && (await bridge.save(id, built)) !== true) console.warn('Волна: подборки не сохранены');
         })().catch((error: unknown) => {
             shelfFailedAt = Date.now();
+            shelfFailures++;
             console.warn('Волна: подборки не собраны', error);
         }).finally(() => {
             shelfPromise = null;
@@ -3589,8 +3603,9 @@ export function installWave(config: WaveConfig, createPlayback: typeof installPl
             applyRadarView(view);
             radarLoaded = true;
             radarFailedAt = 0;
+            radarFailures = 0;
         })().catch((error: unknown) => {
-            if (request === radarRequest) radarFailedAt = Date.now();
+            if (request === radarRequest) { radarFailedAt = Date.now(); radarFailures++; }
             console.warn('Радар: выпуск не загружен', error);
         }).finally(() => {
             if (request === radarRequest) radarPromise = null;
@@ -3598,7 +3613,7 @@ export function installWave(config: WaveConfig, createPlayback: typeof installPl
         });
     }
     function ensureRadar(): void {
-        if (!host.soundcloudAPI?.radar || radarPromise || radarLoaded || Date.now() - radarFailedAt < 30000) return;
+        if (!host.soundcloudAPI?.radar || radarPromise || radarLoaded || Date.now() - radarFailedAt < retryDelay(radarFailures)) return;
         loadRadar();
     }
     // main сообщает о каждом проходе планировщика: выпуск перечитывается только после новой публикации
@@ -5619,7 +5634,7 @@ export function installWave(config: WaveConfig, createPlayback: typeof installPl
                 render();
                 return;
             case 'shelf-retry':
-                shelfFailedAt = 0; profileRetryAt = 0; ensureShelf();
+                shelfFailedAt = 0; shelfFailures = 0; profileRetryAt = 0; ensureShelf();
                 return;
             case 'mix-close':
                 openCard = null;
@@ -6160,6 +6175,11 @@ export function installWave(config: WaveConfig, createPlayback: typeof installPl
         if (!tickTimer) { clearTimeout(attachTimer); attach(); }
         else if (state === 'error' && !active) { resetGeneration(); void preparePreview(); }
     };
+    // Страница снова видна: полка, отложенная на время скрытого окна или после сбоя, пробует сразу
+    const onShown = (): void => {
+        if (disposed || document.visibilityState === 'hidden' || !player || !api || state === 'loading' || !isVisible()) return;
+        ensureShelf(true);
+    };
 
     const onScroll = (): void => {
         hideTip();
@@ -6187,6 +6207,7 @@ export function installWave(config: WaveConfig, createPlayback: typeof installPl
         window.removeEventListener('resize', onResize);
         window.removeEventListener('popstate', onPop);
         document.removeEventListener('visibilitychange', repaint);
+        document.removeEventListener('visibilitychange', onShown);
         cancelAnimationFrame(paintFrame);
         closeMenu();
         if (toastTimer !== undefined) clearTimeout(toastTimer);
@@ -6251,6 +6272,7 @@ export function installWave(config: WaveConfig, createPlayback: typeof installPl
     window.addEventListener('resize', onResize);
     window.addEventListener('popstate', onPop);
     document.addEventListener('visibilitychange', repaint);
+    document.addEventListener('visibilitychange', onShown);
     observer.observe(document.documentElement, { childList: true, subtree: true });
     state = 'loading';
     watchFrames();
@@ -6260,7 +6282,7 @@ export function installWave(config: WaveConfig, createPlayback: typeof installPl
 
 // Помощники идут на страницу объявлениями рядом со скриптом: так они видны installWave и друг другу
 const pageHelpers = [
-    normalizeTag, tagKeys, tagShares, genreKeys, genreCanon, genreParts, genreMain, parseGenres, formatGenres, genreKeysFor, classifyLink, canonicalUrl, trackMatchesGenre, trackArtist, rememberRecent,
+    normalizeTag, tagKeys, tagShares, genreKeys, genreCanon, genreParts, genreMain, parseGenres, formatGenres, genreKeysFor, classifyLink, canonicalUrl, trackMatchesGenre, trackArtist, rememberRecent, retryDelay,
     isWaveEligible, acceptCandidate, pickSpaced, tasteMaps, tasteScore, tasteOrder, tasteReason, applyTasteReasons, shuffleInPlace, topGenres, fillText, reasonText, shapeSamples,
     artworkUrl, formatTime, playEnd, siteSource, moodTags, trackPath, localDay, countText, tasteGroups, capPerArtist, forgottenPicks, artistNames, isNewArtist, spreadBy, pickFinds,
     ...identity.identityHelpers, ...sources.sourceHelpers, ...libraryMix.libraryHelpers, installPlaybackPage, installPlaybackRecovery,

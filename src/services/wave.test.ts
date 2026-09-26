@@ -4,7 +4,7 @@ import {
     moodTags, normalizeTag, trackPath, parseGenres, pickSpaced, reasonText, shapeSamples, topGenres, trackMatchesGenre,
     applyTasteReasons, tagKeys, tasteMaps, tasteOrder, tasteReason, tasteScore, type TasteMaps, type WaveCandidate, type WaveFilter, type WaveTrack,
     countText, forgottenPicks, localDay, pickFinds, tasteGroups, capPerArtist, artistNames, isNewArtist, spreadBy, genreCanon, genreParts, genreMain,
-    rememberRecent,
+    rememberRecent, retryDelay,
 } from './wave';
 import { copyKeys, familyKey, versionKey } from './trackIdentity';
 
@@ -393,6 +393,10 @@ describe('подборки', () => {
         expect(seen.has(1)).toBe(false);
         expect(rememberRecent(seen, 1, 5000)).toBe(true);
         expect(seen.has(2)).toBe(false);
+    });
+
+    it('повтор полки и радара после сбоев подряд всё реже, до получаса', () => {
+        expect([0, 1, 2, 3, 4, 5, 50].map(retryDelay)).toEqual([0, 30000, 120000, 300000, 900000, 1800000, 1800000]);
     });
 
     it('сборный канал не раздаёт свой жанр чужим песням без тегов, своя песня артиста наследует', () => {
