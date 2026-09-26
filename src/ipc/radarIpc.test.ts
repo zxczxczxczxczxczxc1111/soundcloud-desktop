@@ -83,7 +83,7 @@ describe('планировщик радара в main', () => {
     });
     it('без сети проход не трогает ни страницу, ни хранилище', async () => {
         const { request, library: lib } = library();
-        const page = vi.fn(async (_script: string) => 11);
+        const page = vi.fn<(script: string) => Promise<unknown>>(async () => 11);
         const scheduler = createRadarScheduler({ store, library: lib, online: () => false, page });
         await scheduler.tick();
         expect(scheduler.getState().phase).toBe('offline');
