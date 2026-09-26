@@ -8,7 +8,7 @@ import { withTimeout } from '../utils/withTimeout';
 const HEADER = 32;
 const DAY = 86400000;
 const ARTIST_PATH = /^\/[a-z0-9_-]{1,100}$/;
-const INVOKE = ['history:init', 'history:overview', 'history:day', 'history:search', 'history:play', 'history:taste', 'history:taste-remove'] as const;
+const INVOKE = ['history:init', 'history:overview', 'history:wave', 'history:day', 'history:search', 'history:play', 'history:taste', 'history:taste-remove'] as const;
 const SEND = ['history:ready', 'history:close', 'history:artist'] as const;
 
 export interface HistoryHost {
@@ -81,6 +81,12 @@ export class HistoryManager {
             this.guard(event);
             if ((from !== null && !isBound(from)) || !isBound(to)) return null;
             return this.index.request('overview', this.userId, from, to);
+        });
+        // Как попадает волна за тот же период
+        ipcMain.handle('history:wave', (event, from: unknown, to: unknown) => {
+            this.guard(event);
+            if ((from !== null && !isBound(from)) || !isBound(to)) return null;
+            return this.index.request('waveQuality', this.userId, from, to);
         });
         ipcMain.handle('history:day', async (event, from: unknown, to: unknown) => {
             this.guard(event);

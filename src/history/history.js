@@ -79,6 +79,42 @@
             earlyDay: (day, share, early, total) => day + ': ' + share + '%, ' + early + ' из ' + total,
             earlyIdle: (day) => day + ': волна не играла',
             earlyLabel: 'Доля ранних пропусков в волне по дням за 30 дней',
+            waveTitle: 'Как попадает волна',
+            waveCount: (n, p) => n + ' ' + plural(n, ['трек', 'трека', 'треков']) + ' волны ' + TEXTS.ru.periodText(p),
+            waveLoading: 'Считаю',
+            waveFailed: 'Замер не загрузился',
+            waveNone: 'Волна в этот период не играла',
+            waveEarly: 'пропущено до 0:30',
+            waveDone: 'дослушано',
+            waveShareTip: (part, whole) => part + ' из ' + whole,
+            waveOwn: (share) => 'своя музыка ' + share + '%',
+            wavePrev: (share, p) => (p === 365 ? 'прошлый год ' : 'прошлые ' + p + ' ' + plural(p, ['день', 'дня', 'дней']) + ' ') + share + '%',
+            likes: ['лайк', 'лайка', 'лайков'],
+            waveMore: (n) => '«Больше такого» ' + n,
+            refusals: ['отказ', 'отказа', 'отказов'],
+            waveAgainstTip: '«Не нравится», «Не сейчас» или скрытый аккаунт',
+            waveRepeats: (n) => n + ' ' + plural(n, ['повтор', 'повтора', 'повторов']) + ' недавнего',
+            waveRepeatsTip: 'Трек волны уже звучал за 3 дня до этого',
+            waveNewTip: 'Впервые прослушаны дольше 30 секунд, и именно в волне',
+            waveWeeks: 'Пропуски до 0:30 по неделям',
+            waveWeeksLabel: 'Доля ранних пропусков в волне по неделям',
+            waveWeek: (d, share, early, total) => 'С ' + d + ': ' + share + '%, ' + early + ' из ' + total,
+            waveWeekIdle: (d) => 'С ' + d + ': волна не играла',
+            waveCols: { tracks: 'Треков', early: 'До 0:30', done: 'Дослушано', likes: 'Лайки' },
+            waveSource: 'Подборка',
+            waveReason: 'Причина',
+            waveSlot: 'Место в выдаче',
+            slots: { first: 'Первые три', later: 'С четвёртого' },
+            sources: {
+                similar: 'Похожее', fresh: 'Новое', track: 'Волна по треку', artist: 'Волна по артисту', playlist: 'Волна по плейлисту', daily: 'Находки дня',
+                forgotten: 'Давно не слушал', group: 'Твой вкус', tracks: 'Волна по подборке', radar: 'Радар релизов', library: 'В «Моей музыке»',
+            },
+            reasons: {
+                similar: 'Похоже на трек', fresh: 'Новое, похоже на трек', newArtist: 'Новый артист', genreFresh: 'Свежее в жанре', genrePopular: 'Популярное в жанре',
+                genreSimilar: 'Жанр и похожее', artistTrack: 'Треки артиста', mood: 'В духе трека', tasteArtist: 'Любимый артист', tasteTag: 'Любимый тег',
+                daily: 'Находка дня', forgotten: 'Давно не звучал', group: 'Твой вкус', version: 'Другая версия', radar: 'Радар релизов', restored: 'Сохранённая очередь',
+                '': 'Не записана',
+            },
         },
         en: {
             title: 'History',
@@ -150,6 +186,42 @@
             earlyDay: (day, share, early, total) => day + ': ' + share + '%, ' + early + ' of ' + total,
             earlyIdle: (day) => day + ': the wave didn’t play',
             earlyLabel: 'Share of early skips in the wave by day, last 30 days',
+            waveTitle: 'How well the wave fits',
+            waveCount: (n, p) => n + ' wave ' + plural(n, ['track', 'tracks']) + ' ' + TEXTS.en.periodText(p),
+            waveLoading: 'Counting',
+            waveFailed: 'Could not load the stats',
+            waveNone: 'The wave didn’t play in this period',
+            waveEarly: 'skipped before 0:30',
+            waveDone: 'played to the end',
+            waveShareTip: (part, whole) => part + ' of ' + whole,
+            waveOwn: (share) => 'your music ' + share + '%',
+            wavePrev: (share, p) => (p === 365 ? 'previous year ' : 'previous ' + p + ' days ') + share + '%',
+            likes: ['like', 'likes'],
+            waveMore: (n) => 'More like this ' + n,
+            refusals: ['refusal', 'refusals'],
+            waveAgainstTip: 'Don’t like, Not now or a hidden account',
+            waveRepeats: (n) => n + ' recent ' + plural(n, ['repeat', 'repeats']),
+            waveRepeatsTip: 'The wave track had already played in the 3 days before',
+            waveNewTip: 'First played for over 30 seconds, and in the wave',
+            waveWeeks: 'Skips before 0:30 by week',
+            waveWeeksLabel: 'Share of early skips in the wave by week',
+            waveWeek: (d, share, early, total) => 'From ' + d + ': ' + share + '%, ' + early + ' of ' + total,
+            waveWeekIdle: (d) => 'From ' + d + ': the wave didn’t play',
+            waveCols: { tracks: 'Tracks', early: 'Before 0:30', done: 'To the end', likes: 'Likes' },
+            waveSource: 'Mix',
+            waveReason: 'Reason',
+            waveSlot: 'Place in the batch',
+            slots: { first: 'First three', later: 'Fourth on' },
+            sources: {
+                similar: 'Similar', fresh: 'New', track: 'Wave from track', artist: 'Wave from artist', playlist: 'Wave from playlist', daily: 'Daily finds',
+                forgotten: 'Not played in a while', group: 'Your taste', tracks: 'Wave from picks', radar: 'Release Radar', library: 'Inside My music',
+            },
+            reasons: {
+                similar: 'Similar to a track', fresh: 'New, similar to a track', newArtist: 'New artist', genreFresh: 'Fresh in genre', genrePopular: 'Popular in genre',
+                genreSimilar: 'Genre and similar', artistTrack: 'Artist’s tracks', mood: 'In the spirit of a track', tasteArtist: 'Favourite artist', tasteTag: 'Favourite tag',
+                daily: 'Daily find', forgotten: 'Not played in a while', group: 'Your taste', version: 'Another version', radar: 'Release Radar', restored: 'Saved queue',
+                '': 'Not recorded',
+            },
         },
     };
 
@@ -169,7 +241,12 @@
         nowId: 0,
         // Вкус глазами волны: не зависит от периода, считается по всей истории с забыванием
         taste: null,
+        // Замер волны за период: грузится, только пока блок раскрыт
+        waveOpen: false,
+        wave: null,
+        waveFailed: false,
     };
+    const WEEK = 7 * 86400000;
     let T = TEXTS.ru;
     let fmtLong, fmtShort, fmtWd;
 
@@ -230,6 +307,7 @@
         prev: '<svg width="14" height="14" viewBox="0 0 14 14" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M9 2.5 4.5 7 9 11.5"/></svg>',
         next: '<svg width="14" height="14" viewBox="0 0 14 14" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M5 2.5 9.5 7 5 11.5"/></svg>',
         undo: '<svg width="12" height="12" viewBox="0 0 12 12" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"><path d="M4 2 1.5 4.5 4 7"/><path d="M1.5 4.5H7a3.25 3.25 0 0 1 0 6.5H5"/></svg>',
+        fold: '<svg width="14" height="14" viewBox="0 0 14 14" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M5 2.5 9.5 7 5 11.5"/></svg>',
     };
 
     // Куски страницы
@@ -420,6 +498,102 @@
         );
     }
 
+    // Как попадает волна: доли считаются от треков волны, которые человек оценил сам (дослушал или переключил)
+    const pct = (part, whole) => (whole ? Math.round((part / whole) * 100) : 0);
+    function waveFigures(q) {
+        const w = q.wave;
+        const compare = (key) => {
+            const parts = [];
+            if (q.own.plays) parts.push(T.waveOwn(pct(q.own[key], q.own.plays)));
+            if (q.previous && q.previous.plays) parts.push(T.wavePrev(pct(q.previous[key], q.previous.plays), state.period));
+            return parts.join(', ');
+        };
+        const figs = [
+            { value: pct(w.early, w.plays) + '%', label: T.waveEarly, note: compare('early'), tip: T.waveShareTip(w.early, w.plays) },
+            { value: pct(w.done, w.plays) + '%', label: T.waveDone, note: compare('done'), tip: T.waveShareTip(w.done, w.plays) },
+            { value: w.likes, label: plural(w.likes, T.likes), note: w.more ? T.waveMore(w.more) : '' },
+            { value: w.against, label: plural(w.against, T.refusals), tip: T.waveAgainstTip },
+            { value: q.newArtists, label: plural(q.newArtists, T.fresh), tip: T.waveNewTip, note: q.repeats ? T.waveRepeats(q.repeats) : '', noteTip: T.waveRepeatsTip },
+        ];
+        return (
+            '<div class="figs wq-figs">' +
+            figs.map((f) =>
+                '<div class="fig"' + (f.tip ? ' tabindex="0" data-tip="' + esc(f.tip) + '"' : '') + '><b class="num">' + esc(f.value) + '</b><span>' + esc(f.label) + '</span>' +
+                (f.note ? '<em' + (f.noteTip ? ' data-tip="' + esc(f.noteTip) + '"' : '') + '>' + esc(f.note) + '</em>' : '') + '</div>',
+            ).join('') +
+            '</div>'
+        );
+    }
+    // Недели идут от конца периода; пустая неделя остаётся пустым местом, чтобы шаг оси не врал
+    function waveWeeks(q) {
+        const count = Math.min(12, Math.ceil((q.to - q.from) / WEEK));
+        if (count < 3) return '';
+        const byFrom = new Map(q.weeks.map((w) => [w.from, w]));
+        const weeks = [];
+        for (let i = count - 1; i >= 0; i--) {
+            const from = q.to - (i + 1) * WEEK;
+            weeks.push(byFrom.get(from) || { from, plays: 0, early: 0 });
+        }
+        if (weeks.filter((w) => w.plays).length < 2) return '';
+        const cols = 'grid-template-columns:repeat(' + weeks.length + ',minmax(0,1fr))';
+        const lines = [0, 25, 50, 75, 100].map((v) => '<div style="bottom:' + v + '%"><span class="num">' + v + '%</span></div>').join('');
+        const last = weeks.length - 1;
+        const every = weeks.length > 6 ? 2 : 1;
+        const label = (w) => fmtShort.format(Math.max(w.from, q.from));
+        const bars = weeks.map((w) => {
+            const share = pct(w.early, w.plays);
+            const tipText = w.plays ? T.waveWeek(label(w), share, w.early, w.plays) : T.waveWeekIdle(label(w));
+            const height = w.plays ? Math.max(2, share) : 0;
+            return '<div class="cc-slot" tabindex="0" data-tip="' + esc(tipText) + '" aria-label="' + esc(tipText) + '"><i style="height:' + height + '%"></i></div>';
+        }).join('');
+        const labels = weeks.map((w, i) => '<span>' + ((last - i) % every === 0 ? esc(label(w)) : '') + '</span>').join('');
+        return (
+            '<div class="wq-part"><h3>' + esc(T.waveWeeks) + '</h3>' +
+            '<div class="cc" role="group" aria-label="' + esc(T.waveWeeksLabel) + '"><div class="cc-plot"><div class="cc-grid">' + lines + '</div><div class="cc-bars" style="' + cols + '">' + bars + '</div></div>' +
+            '<div class="cc-x" style="' + cols + '">' + labels + '</div></div></div>'
+        );
+    }
+    // Разрез таблицей: полоса это доля ранних пропусков; строки меньше чем из 5 треков приглушены
+    function waveTable(head, slices, name) {
+        const rows = slices.filter((s) => s.plays);
+        if (!rows.length) return '';
+        const c = T.waveCols;
+        return (
+            '<table class="wt"><thead><tr><th scope="col">' + esc(head) + '</th><th scope="col">' + esc(c.tracks) + '</th><th scope="col">' + esc(c.early) + '</th>' +
+            '<th scope="col">' + esc(c.done) + '</th><th scope="col">' + esc(c.likes) + '</th></tr></thead><tbody>' +
+            rows.map((s) => {
+                const early = pct(s.early, s.plays);
+                return (
+                    '<tr' + (s.plays < 5 ? ' class="low"' : '') + '><th scope="row">' + esc(name(s.key)) + '</th><td class="num">' + s.plays + '</td>' +
+                    '<td><span class="wt-share"><span class="bar"><i style="width:' + early + '%"></i></span><span class="num">' + early + '%</span></span></td>' +
+                    '<td class="num">' + pct(s.done, s.plays) + '%</td><td class="num">' + s.likes + '</td></tr>'
+                );
+            }).join('') +
+            '</tbody></table>'
+        );
+    }
+    function waveBlock() {
+        const q = state.wave;
+        const open = state.waveOpen;
+        const count = open && q && q.wave.plays ? '<span class="sub num">' + esc(T.waveCount(q.wave.plays, state.period)) + '</span>' : '';
+        const head =
+            '<div class="sec-h"><h2><button class="fold" data-act="wave" aria-expanded="' + open + '" aria-controls="wave-quality">' + esc(T.waveTitle) + ICON.fold + '</button></h2>' + count + '</div>';
+        if (!open) return '<div class="sec wq">' + head + '</div>';
+        let body;
+        if (state.waveFailed) body = '<p class="sub">' + esc(T.waveFailed) + '</p><button class="link" data-act="wave-retry">' + esc(T.retry) + '</button>';
+        else if (!q) body = '<p class="sub">' + esc(T.waveLoading) + '</p>';
+        else if (!q.wave.plays) body = '<p class="sub">' + esc(T.waveNone) + '</p>';
+        else {
+            const slots = [{ key: 'first', ...q.slots.first }, { key: 'later', ...q.slots.later }];
+            body =
+                waveFigures(q) + waveWeeks(q) +
+                '<div class="grid2 wq-part"><div>' + waveTable(T.waveSource, q.sources, (key) => T.sources[key] || key) +
+                waveTable(T.waveSlot, slots, (key) => T.slots[key]) + '</div>' +
+                '<div>' + waveTable(T.waveReason, q.reasons, (key) => T.reasons[key] || key) + '</div></div>';
+        }
+        return '<div class="sec wq">' + head + '<div id="wave-quality">' + body + '</div></div>';
+    }
+
     function journal() {
         const data = state.day;
         const rows = data ? data.rows : [];
@@ -461,6 +635,7 @@
             '<div><div class="sec-h"><h2>' + esc(T.genres) + '</h2></div>' + topList('genre', s.genres, 5) +
             '<div class="sec-h" style="margin-top:28px"><h2>' + esc(T.when) + '</h2></div>' + heatmap(s.heat) + '</div></div>' +
             tasteBlock() +
+            waveBlock() +
             journal()
         );
     }
@@ -501,11 +676,23 @@
     }
 
     // Загрузка
+    const periodFrom = () => (state.period === 'all' ? null : addDays(today(), -(state.period - 1)));
     async function loadOverview() {
-        const end = addDays(today(), 1);
-        const from = state.period === 'all' ? null : addDays(today(), -(state.period - 1));
-        state.overview = await api.invoke('history:overview', from, end);
+        state.overview = await api.invoke('history:overview', periodFrom(), addDays(today(), 1));
         if (!state.overview) throw new Error('Пустой ответ обзора');
+    }
+    // Замер волны не загрузился: остальная страница живёт без него
+    async function loadWave() {
+        try {
+            const data = await api.invoke('history:wave', periodFrom(), addDays(today(), 1));
+            if (!data) throw new Error('Пустой ответ замера волны');
+            state.wave = data;
+            state.waveFailed = false;
+        } catch (error) {
+            console.error('Замер волны не загружен:', error);
+            state.wave = null;
+            state.waveFailed = true;
+        }
     }
     async function loadDay(start) {
         const data = await api.invoke('history:day', start, addDays(start, 1));
@@ -530,7 +717,9 @@
     }
     async function reload(first) {
         try {
-            await Promise.all([loadOverview(), first ? loadTaste() : Promise.resolve()]);
+            // Свёрнутый замер не грузится; прежний период при раскрытии не мелькает
+            if (!state.waveOpen) state.wave = null;
+            await Promise.all([loadOverview(), first ? loadTaste() : Promise.resolve(), state.waveOpen ? loadWave() : Promise.resolve()]);
             // Выбранный день вне нового периода: журнал идёт на сегодня, как при первом открытии
             const inside = !!state.selected && state.selected >= state.overview.from;
             await loadDay(inside ? state.selected : today());
@@ -604,6 +793,14 @@
         }
         if (data.act === 'artists') {
             state.allArtists = !state.allArtists;
+            return render(true);
+        }
+        if (data.act === 'wave' || data.act === 'wave-retry') {
+            state.waveOpen = data.act === 'wave-retry' || !state.waveOpen;
+            if (!state.waveOpen || (state.wave && !state.waveFailed)) return render(true);
+            state.waveFailed = false;
+            render(true);
+            await loadWave();
             return render(true);
         }
         if (data.period) {

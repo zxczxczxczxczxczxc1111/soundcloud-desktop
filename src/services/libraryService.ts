@@ -11,6 +11,7 @@ type Operation<F extends (...args: never[]) => unknown> = { args: Parameters<F>;
 export interface LibraryOperations {
     sync: Operation<HistoryIndex['sync']>;
     overview: Operation<HistoryIndex['overview']>;
+    waveQuality: Operation<HistoryIndex['waveQuality']>;
     day: Operation<HistoryIndex['day']>;
     neighbors: Operation<HistoryIndex['neighbors']>;
     search: Operation<HistoryIndex['search']>;

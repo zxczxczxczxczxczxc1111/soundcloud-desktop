@@ -94,6 +94,46 @@ export interface TastePlay {
     artwork: string;
     path: string;
 }
+/** Меры волны: оценимые прослушивания и что с ними стало */
+export interface WaveMeasure {
+    /** Дослушанные и переключённые человеком; смена сайтом, закрытие клиента и простой не в счёт */
+    plays: number;
+    /** Переключено человеком раньше 30 секунд */
+    early: number;
+    done: number;
+    /** Лайк во время прослушивания */
+    likes: number;
+    /** «Больше такого» во время трека, с сигналов v4 */
+    more: number;
+    /** «Не нравится», скрытый артист или «Не сейчас» во время трека */
+    against: number;
+}
+export type WaveSlice = WaveMeasure & { key: string };
+/** Как попадает волна за период */
+export interface WaveQuality {
+    from: number;
+    to: number;
+    /** С какого момента есть данные для замера (сигналы с v3); null, если их нет */
+    since: number | null;
+    wave: WaveMeasure;
+    /** Такой же отрезок перед from; null за всё время */
+    previous: WaveMeasure | null;
+    /** Своя музыка для сравнения: лайки на сайте и свои треки «Моей музыки» */
+    own: WaveMeasure;
+    /** По подборке: source без приставки wave: */
+    sources: WaveSlice[];
+    /** По причине, которую видел человек */
+    reasons: WaveSlice[];
+    /** Места 1-3 в выдаче против остальных, с сигналов v4 */
+    slots: { first: WaveMeasure; later: WaveMeasure };
+    artists: number;
+    /** Артисты, впервые засчитанные именно в волне за период */
+    newArtists: number;
+    /** Открытия волны, уже засчитанные за 3 дня до того */
+    repeats: number;
+    /** По неделям от конца периода, не больше 12 */
+    weeks: Array<WaveMeasure & { from: number }>;
+}
 export interface ResolvedTrack {
     id: number;
     artist: number;
@@ -110,6 +150,18 @@ const isTime = (value: unknown): value is number => typeof value === 'number' &&
 /** Колонки схемы 5: у записей до v4 разбора выдачи нет, они остаются пустыми */
 const V5_COLUMNS = ['why text', 'origin text', 'seed integer', 'gen integer', 'slot integer', 'score real', 'known integer', 'mode text', 'wave_genre text', 'lib_mode text', 'disliked integer', 'hidden integer', 'later_now integer', 'more_now integer'];
 const flag = (value: boolean | undefined): number | null => (value === undefined ? null : value ? 1 : 0);
+// Замер волны. Оценимое прослушивание: известно, кто сменил трек (сигналы с v3), не простой, не закрытие клиента, не смена самим сайтом
+const JUDGED = "p.ended_by is not null and p.away = 0 and p.end != 'stop' and not (p.end = 'skip' and p.ended_by = 'auto')";
+// Рекомендация волны: свои треки «Моей музыки» и трек, с которого волну запустил сам человек, не в счёт
+const WAVE = "p.source like 'wave:%' and coalesce(p.why, '') not in ('library', 'seedTrack')";
+const OWN = "(p.source = 'site:user-track_likes' or (p.source = 'wave:library' and p.why = 'library'))";
+// Открытие: не подборка из своего и не выбранное кликом. Его повтор за 3 дня это недосмотр волны
+const DISCOVERY = WAVE + " and p.source not in ('wave:library', 'wave:forgotten', 'wave:radar') and coalesce(p.picked, 0) = 0";
+const MEASURE =
+    "count(*) as plays, coalesce(sum(p.end = 'skip' and p.ended_by = 'user' and p.heard < " + COUNTED_MS + '), 0) as early, ' +
+    "coalesce(sum(p.end = 'done'), 0) as done, coalesce(sum(p.liked_now = 1), 0) as likes, coalesce(sum(p.more_now = 1), 0) as more, " +
+    'coalesce(sum(p.disliked = 1 or p.hidden = 1 or p.later_now = 1), 0) as against';
+const WEEK_MS = 7 * DAY;
 export const genreKey = (value: unknown): string => text(value, 80).toLowerCase().replace(/\s+/g, ' ');
 
 /** Местное время записи для чтения через getUTC*: пояс из записи, у старых записей пояс машины на тот момент */
@@ -190,6 +242,9 @@ function performerName(row: Values): string {
     const own = nameKey(str(row.artistName));
     return trackCredits(rowTrack(row)).find((credit) => credit.role === 'artist' && credit.key && credit.key !== own)?.name ?? str(row.artistName);
 }
+const toMeasure = (row: Values | undefined): WaveMeasure => ({
+    plays: num(row?.plays), early: num(row?.early), done: num(row?.done), likes: num(row?.likes), more: num(row?.more), against: num(row?.against),
+});
 function toRow(value: Values): HistoryRow {
     return {
         at: num(value.at),
@@ -517,6 +572,49 @@ export class HistoryIndex {
                 heat: heat.map(minutes),
                 total: num(first.total),
                 firstAt,
+            };
+        });
+    }
+
+    /** Как попадает волна за [from, to); from = null значит всё время, с первой записи, где известно, кто сменил трек */
+    public waveQuality(userId: unknown, from: number | null, to: number): WaveQuality | null {
+        if (!isId(userId)) return null;
+        return this.guarded(userId, ({ db }) => {
+            const first = db.prepare('select min(at) as at from plays where ended_by is not null').get() as Values | undefined;
+            const since = first?.at === null || first?.at === undefined ? null : num(first.at);
+            const start = from ?? since ?? to;
+            const judged = (where: string): string => 'from plays p where ' + JUDGED + ' and ' + where;
+            const measure = (where: string, ...args: number[]): WaveMeasure => toMeasure(db.prepare('select ' + MEASURE + ' ' + judged(where)).get(...args) as Values | undefined);
+            const count = (sql: string, ...args: number[]): number => num((db.prepare(sql).get(...args) as Values | undefined)?.n);
+            const range = 'p.at >= ? and p.at < ?';
+            const sliced = (key: string): WaveSlice[] =>
+                (db.prepare('select ' + key + ' as key, ' + MEASURE + ' ' + judged(WAVE + ' and ' + range) + ' group by key order by plays desc, key').all(start, to) as Values[])
+                    .map((row) => ({ key: str(row.key), ...toMeasure(row) }));
+            const weekFrom = Math.max(start, to - 12 * WEEK_MS);
+            return {
+                from: start,
+                to,
+                since,
+                wave: measure(WAVE + ' and ' + range, start, to),
+                previous: from === null ? null : measure(WAVE + ' and ' + range, Math.max(0, start - (to - start)), start),
+                own: measure(OWN + ' and ' + range, start, to),
+                sources: sliced("substr(p.source, 6)"),
+                reasons: sliced("coalesce(p.why, '')"),
+                slots: {
+                    first: measure(WAVE + ' and p.slot between 1 and 3 and ' + range, start, to),
+                    later: measure(WAVE + ' and p.slot >= 4 and ' + range, start, to),
+                },
+                artists: count('select count(distinct p.artist) as n ' + judged(WAVE + ' and p.artist > 0 and ' + range), start, to),
+                newArtists: count(
+                    'select count(distinct p.artist) as n ' + judged(WAVE + ' and p.artist > 0 and p.heard >= ? and ' + range + ' and p.at = (select min(q.at) from plays q where q.artist = p.artist and q.heard >= ?)'),
+                    COUNTED_MS, start, to, COUNTED_MS,
+                ),
+                repeats: count(
+                    'select count(*) as n ' + judged(DISCOVERY + ' and ' + range + ' and exists (select 1 from plays q where q.id = p.id and q.at < p.at and q.at >= p.at - ? and q.heard >= ?)'),
+                    start, to, 3 * DAY, COUNTED_MS,
+                ),
+                weeks: (db.prepare('select cast((? - p.at) / ? as integer) as week, ' + MEASURE + ' ' + judged(WAVE + ' and ' + range) + ' group by week order by week').all(to, WEEK_MS, weekFrom, to) as Values[])
+                    .map((row) => ({ from: to - (num(row.week) + 1) * WEEK_MS, ...toMeasure(row) })),
             };
         });
     }

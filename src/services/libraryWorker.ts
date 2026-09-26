@@ -23,6 +23,7 @@ function run(request: LibraryRequest): unknown {
     switch (request.method) {
         case 'sync': return index.sync(...request.args);
         case 'overview': return index.overview(...request.args);
+        case 'waveQuality': return index.waveQuality(...request.args);
         case 'day': return index.day(...request.args);
         case 'neighbors': return index.neighbors(...request.args);
         case 'search': return index.search(...request.args);

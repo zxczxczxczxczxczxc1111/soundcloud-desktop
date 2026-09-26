@@ -708,6 +708,127 @@ h2 {
     white-space: nowrap;
 }
 
+/* Как попадает волна: заголовок раскрывает блок */
+.fold {
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    margin: -4px -8px;
+    padding: 4px 8px;
+    border-radius: 4px;
+    font-weight: inherit;
+    transition: background-color 120ms ease;
+}
+.fold:hover {
+    background: var(--film);
+}
+.fold svg {
+    color: var(--muted);
+    transition: transform 150ms ease;
+}
+.fold[aria-expanded='true'] svg {
+    transform: rotate(90deg);
+}
+.wq .sec-h {
+    margin-bottom: 16px;
+}
+.wq-figs {
+    margin-bottom: 32px;
+}
+.wq-figs .fig {
+    max-width: 220px;
+    border-radius: 4px;
+}
+.fig em {
+    display: block;
+    margin-top: 2px;
+    font-style: normal;
+    font-size: 12px;
+    line-height: 16px;
+    color: var(--faint);
+}
+.wq-part {
+    margin-bottom: 32px;
+}
+/* Таблицы в одну колонку идут подряд: между ними хватает отступа самой таблицы */
+.wq-part.grid2 {
+    row-gap: 0;
+}
+.wq-part h3,
+.wt th[scope='col']:first-child {
+    font-size: 14px;
+    line-height: 20px;
+    font-weight: 600;
+    color: var(--text);
+}
+.wq-part h3 {
+    margin-bottom: 12px;
+}
+.wt {
+    width: 100%;
+    border-collapse: collapse;
+    table-layout: fixed;
+    margin-bottom: 24px;
+}
+.wt th,
+.wt td {
+    height: 36px;
+    padding: 0 0 0 12px;
+    font-size: 13px;
+    line-height: 18px;
+    text-align: right;
+    white-space: nowrap;
+}
+.wt th:first-child {
+    padding-left: 0;
+    text-align: left;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+.wt thead th {
+    height: 28px;
+    font-size: 12px;
+    font-weight: 500;
+    color: var(--faint);
+}
+.wt tbody th {
+    font-weight: 500;
+}
+.wt tbody tr {
+    border-top: 1px solid var(--line);
+}
+.wt td {
+    color: var(--muted);
+}
+.wt th:nth-child(1) {
+    width: 40%;
+}
+.wt th:nth-child(3) {
+    width: 26%;
+}
+.wt-share {
+    display: flex;
+    align-items: center;
+    justify-content: flex-end;
+    gap: 8px;
+}
+.wt-share .bar {
+    flex: 1;
+    max-width: 72px;
+}
+.wt-share .num {
+    width: 36px;
+    color: var(--text);
+}
+.wt tr.low th,
+.wt tr.low td,
+.wt tr.low .wt-share .num {
+    color: var(--faint);
+}
+.wt tr.low .bar i {
+    background: var(--mark-idle);
+}
+
 .tip {
     position: fixed;
     z-index: 60;

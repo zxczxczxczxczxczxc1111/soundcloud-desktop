@@ -384,6 +384,50 @@ it('жанры топа склеивают написания: hip-hop & rap, hi
     ]);
 });
 
+it('замер волны: считаются только оценимые рекомендации, своё отдельно, открытия и повторы', () => {
+    const wave = (patch: Partial<PlaySignal>): PlaySignal => signal({ v: 4, endedBy: 'auto', ...patch });
+    const journal = new Journal();
+    journal.list = [
+        // До v3 неизвестно, кто сменил трек: в замер не идёт, но артист уже засчитан
+        signal({ at: T0 - 3 * DAY, id: 30, artist: 101 }),
+        wave({ at: T0 - 12 * HOUR, id: 31, artist: 106, end: 'skip', heard: 3000, endedBy: 'user', slot: 1 }),
+        wave({ at: T0, id: 21, artist: 101, slot: 1, likedNow: true }),
+        wave({ at: T0 + HOUR, id: 22, artist: 102, why: 'tasteTag', slot: 2, end: 'skip', heard: 5000, endedBy: 'user', laterNow: true }),
+        wave({ at: T0 + 2 * HOUR, id: 21, artist: 101, slot: 3 }),
+        wave({ at: T0 + 3 * HOUR, id: 23, artist: 103, source: 'wave:fresh', why: 'fresh', slot: 5, end: 'skip', heard: 60000, endedBy: 'user', moreNow: true }),
+        // Сменил сам сайт, простой, закрытие клиента, стартовый трек: не оценка
+        wave({ at: T0 + 4 * HOUR, id: 24, artist: 104, slot: 6, end: 'skip', heard: 2000 }),
+        wave({ at: T0 + 5 * HOUR, id: 25, artist: 105, slot: 7, away: true }),
+        wave({ at: T0 + 6 * HOUR, id: 29, artist: 105, slot: 8, end: 'stop', heard: 40000 }),
+        wave({ at: T0 + 7 * HOUR, id: 28, artist: 108, why: 'seedTrack' }),
+        // Своё: трек «Моей музыки» внутри волны и лайки на сайте
+        wave({ at: T0 + 8 * HOUR, id: 26, artist: 109, source: 'wave:library', why: 'library' }),
+        wave({ at: T0 + 9 * HOUR, id: 27, artist: 110, source: 'site:user-track_likes', why: '' }),
+    ];
+    const index = open(journal);
+    index.sync(USER);
+    const measure = (plays: number, early: number, done: number, likes = 0, more = 0, against = 0): object => ({ plays, early, done, likes, more, against });
+    const day = index.waveQuality(USER, T0, T0 + DAY);
+    expect(day).toMatchObject({
+        from: T0,
+        to: T0 + DAY,
+        since: T0 - 12 * HOUR,
+        wave: measure(4, 1, 2, 1, 1, 1),
+        previous: measure(1, 1, 0),
+        own: measure(2, 0, 2),
+        sources: [{ key: 'similar', ...measure(3, 1, 2, 1, 0, 1) }, { key: 'fresh', ...measure(1, 0, 0, 0, 1) }],
+        reasons: [{ key: 'similar', plays: 2 }, { key: 'fresh', plays: 1 }, { key: 'tasteTag', plays: 1 }],
+        slots: { first: measure(3, 1, 2, 1, 0, 1), later: measure(1, 0, 0, 0, 1) },
+        artists: 3,
+        newArtists: 1,
+        repeats: 1,
+        weeks: [{ from: T0 + DAY - 7 * DAY, plays: 4 }],
+    });
+    // За всё время отсчёт с первой записи, где известно, кто сменил трек
+    expect(index.waveQuality(USER, null, T0 + DAY)).toMatchObject({ from: T0 - 12 * HOUR, previous: null, wave: { plays: 5, early: 2 } });
+    expect(index.waveQuality(0, T0, T0 + DAY)).toBeNull();
+});
+
 it('помощники: шаг волны, запрос поиска, жанр, местное время', () => {
     expect(waveBinHours(0, 24 * HOUR)).toBe(1);
     expect(waveBinHours(0, 30 * DAY)).toBe(6);
