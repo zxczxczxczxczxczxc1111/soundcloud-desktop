@@ -2352,3 +2352,34 @@ it('Э8: сыгранное волной раньше не выпадает из
     await vi.advanceTimersByTimeAsync(2000);
     expect(queuedIds(site).slice(0, 5)).toEqual([351, 352, 301, 302, 303]);
 });
+
+// Случай владельца 26.09.2026: играли лайки, выбор сменили на альбом, а кнопка снимала с паузы прежний пул
+it('«Моя музыка»: после смены выбора кнопка и строка списка включают выбранное, а не продолжают прежний пул', async () => {
+    const site = fakeSite(relatedTracks, libraryExtra());
+    Object.assign(window, { soundcloudAPI: { waveLibrary: libraryBridge({ mode: 'order', pick: { 77: ['likes'] } }) } });
+    window.eval(waveScript());
+    await vi.advanceTimersByTimeAsync(2000);
+    const play = (): HTMLButtonElement => document.querySelector<HTMLButtonElement>('#sc-wave [data-act="lib-play"]')!;
+    play().click();
+    await vi.advanceTimersByTimeAsync(2000);
+    expect(queuedIds(site).slice(0, 3)).toEqual([301, 302, 303]);
+    // Вместо лайков плейлист Mine, в нём тоже есть 302: строка 302 включает Mine, а не прыгает в очередь лайков
+    libChip('likes').click();
+    libChip('playlist:8').click();
+    document.querySelector<HTMLButtonElement>('#sc-wave [data-act="lib-list"]')!.click();
+    await vi.advanceTimersByTimeAsync(2000);
+    expect([...document.querySelectorAll<HTMLElement>('#sc-wave .scw-lib .scw-row')].map((row) => Number(row.dataset.track))).toEqual([302, 351, 352]);
+    document.querySelector<HTMLElement>('#sc-wave .scw-lib .scw-row[data-track="302"]')!.click();
+    await vi.advanceTimersByTimeAsync(2000);
+    expect(queuedIds(site).slice(0, 3)).toEqual([302, 351, 352]);
+    expect(document.querySelector('#sc-wave .scw-hint')?.textContent).toBe('My music: Mine');
+    // Играет Mine, выбран Saved: кнопка предлагает включить выбранное и включает его
+    libChip('playlist:8').click();
+    libChip('playlist:9').click();
+    await vi.advanceTimersByTimeAsync(2000);
+    expect(play().getAttribute('aria-label')).toBe('Play my music');
+    play().click();
+    await vi.advanceTimersByTimeAsync(2000);
+    expect(queuedIds(site).slice(0, 2)).toEqual([361, 362]);
+    expect(document.querySelector('#sc-wave .scw-hint')?.textContent).toBe('My music: Saved');
+});

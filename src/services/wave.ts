@@ -3251,7 +3251,7 @@ export function installWave(config: WaveConfig, createPlayback: typeof installPl
         myMusic = { mode: next, pick: myMusic.pick };
         saveMyMusic();
         const current = seed;
-        if (active && current?.kind === 'library') void reorderLibrary(current, next).catch((error: unknown) => console.warn('Моя музыка: порядок не сменился', error));
+        if (current && playingLibrary()) void reorderLibrary(current, next).catch((error: unknown) => console.warn('Моя музыка: порядок не сменился', error));
         else if (libraryListOpen) void ensureLibraryPlan(false);
         render();
     }
@@ -3489,14 +3489,19 @@ export function installWave(config: WaveConfig, createPlayback: typeof installPl
         for (const id of ahead) taken.delete(id);
         await restartAhead();
     }
+    // Играющая «Моя музыка» собрана из того, что выбрано сейчас. Только тогда кнопка, строки списка и режим управляют ею;
+    // после смены выбора они включают выбранное, а не продолжают прежний пул
+    function playingLibrary(): boolean {
+        return !!seed && seed.kind === 'library' && active && !!seed.library && seed.library.pick.join(',') === pickedSources().join(',');
+    }
     // План, который показывает список: у играющей «Моей музыки» её собственный, иначе для текущего выбора и режима
     function shownPlan(): typeof libraryPlan {
-        const library = seed?.kind === 'library' && active ? seed.library : undefined;
+        const library = playingLibrary() ? seed?.library : undefined;
         const keys = [planKey(pickedSources(), myMusic.mode), ...(library ? [planKey(library.pick, library.mode)] : [])];
         return libraryPlan && keys.includes(libraryPlan.key) ? libraryPlan : null;
     }
     function libraryRowClick(id: number): void {
-        const item = active && player && seed?.kind === 'library' ? player.getQueue().slice().find((entry) => ours.has(entry) && entry.sound?.id === id) : undefined;
+        const item = player && playingLibrary() ? player.getQueue().slice().find((entry) => ours.has(entry) && entry.sound?.id === id) : undefined;
         if (item && player) {
             jumped = true;
             player.setCurrentItem(item, {});
@@ -5186,7 +5191,7 @@ export function installWave(config: WaveConfig, createPlayback: typeof installPl
         else if (librarySources === 'failed') chips.append(el('span', 'scw-hint', T.libraryFailed), textButton('lib-retry', T.retry));
         else chips.append(el('span', 'scw-hint', T.libraryLoading));
         const head = el('div', 'scw-mix-head');
-        const mine = !!seed && seed.kind === 'library' && active;
+        const mine = playingLibrary();
         const playing = mine && !!player?.isPlaying();
         const play = button('scw-mix-play', 'lib-play', playing ? T.pause : T.libraryPlay, playing ? 'pause' : 'play');
         play.title = playing ? T.pause : T.libraryPlay;
@@ -5565,8 +5570,8 @@ export function installWave(config: WaveConfig, createPlayback: typeof installPl
                 if (isLibraryMode(control.dataset.lmode)) setLibraryMode(control.dataset.lmode);
                 return;
             case 'lib-play':
-                // Играющая «Моя музыка»: пауза и продолжение, как большая кнопка
-                if (seed?.kind === 'library' && active && player) {
+                // Играющая «Моя музыка» из текущего выбора: пауза и продолжение, как большая кнопка
+                if (playingLibrary() && player) {
                     if (player.isPlaying()) player.pauseCurrent({ userInitiated: true });
                     else player.playCurrent({ userInitiated: true });
                     setTimeout(render, 150);
