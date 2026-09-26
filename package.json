@@ -20,7 +20,8 @@
         "build-linux-appimage": "node scripts/clean-tsc.cjs && tsc && node scripts/build-info.cjs && npm run copy-header && electron-builder --publish never -l appimage",
         "typecheck": "tsc --noEmit",
         "postinstall": "node node_modules/electron/install.js",
-        "test:electron": "tsc && node scripts/build-info.cjs && npm run copy-header && node scripts/run-electron.cjs",
+        "test:electron": "tsc && node scripts/build-info.cjs && npm run copy-header && node scripts/check-page-names.cjs && node scripts/run-electron.cjs",
+        "check:page": "tsc && node scripts/check-page-names.cjs",
         "check:repo": "node scripts/check-repo.cjs"
     },
     "main": "./tsc/main.js",
