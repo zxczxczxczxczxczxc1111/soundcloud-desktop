@@ -31,7 +31,7 @@ import { HistoryManager } from './history/historyManager';
 import { AwayTracker } from './services/awayTracker';
 import { OPEN_PROTOCOL, parseOpenLink } from './services/openLink';
 import { getSiteDictionary } from './services/siteDictionary';
-import { isGpuCompatibilityMode, shouldRunGpuInProcess, type GpuRuntimeState } from './services/gpuProcessMode';
+import { guardGpuStartup, isGpuCompatibilityMode, shouldRunGpuInProcess, type GpuRuntimeState } from './services/gpuProcessMode';
 import { detectNvidiaAdapter } from './services/gpuDetection';
 import { tintIcon } from './services/devIcon';
 import { revealWindow } from './services/revealWindow';
@@ -260,7 +260,7 @@ const diagnostics = new DiagnosticJournal(path.join(profilePath, 'diagnostics'),
     node: process.versions.node, os: release(), arch: process.arch,
 });
 diagnostics.captureConsole();
-store.set('gpuCompatibilityRunning', gpuInProcess);
+guardGpuStartup(gpuInProcess, running => store.set('gpuCompatibilityRunning', running));
 diagnostics.record('gpu.status', { gpuInProcess, gpuAuto: gpuMode === 'auto', gpuNvidiaDetected: gpuDetection === 'nvidia', gpuFallback: gpuInterrupted });
 app.on('gpu-info-update', () => {
     if (!app.isReady()) return;
