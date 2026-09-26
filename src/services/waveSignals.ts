@@ -51,7 +51,7 @@ export function validateSignal(input: unknown, now = Date.now()): PlaySignal | n
     if (!isTime(value.dur) || !isTime(value.pos) || !isTime(value.heard)) return null;
     if (typeof value.end !== 'string' || !ENDS.has(value.end)) return null;
     const source = text(value.source, 40);
-    if (!/^(wave:(similar|fresh|track|artist|playlist|daily|forgotten|group|tracks)|site(:[a-z][a-z_-]{0,23})?)$/.test(source)) return null;
+    if (!/^(wave:(similar|fresh|track|artist|playlist|daily|forgotten|group|tracks|radar|library)|site(:[a-z][a-z_-]{0,23})?)$/.test(source)) return null;
     const flags = ['liked', 'likedNow', 'disliked', 'hiddenArtist'] as const;
     if (flags.some((flag) => typeof value[flag] !== 'boolean')) return null;
     // Поля v3 проверяются по одному: без них запись остаётся v2, а не выдумывает причину смены
