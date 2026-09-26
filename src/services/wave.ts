@@ -23,6 +23,7 @@ import * as waveTaste from './waveTaste';
 import * as versionsSection from './wave/versions';
 import * as librarySectionModule from './wave/library';
 import * as radarSectionModule from './wave/radar';
+import * as shelfSectionModule from './wave/shelf';
 
 // Разбор версий, сеть подбора и пул «Моей музыки» живут в своих модулях. Функции страницы зовут их по голому имени: в Node имя
 // берётся отсюда, на странице из объявлений identityHelpers и sourceHelpers в той же обёртке.
@@ -33,13 +34,14 @@ const { siteRequires } = siteModules;
 // Чистые функции волны разложены по файлам. Здесь они разбираются в константы по той же причине: installWave зовёт их по голому имени
 const { fillText, reasonText, localDay, countText, formatTime, shapeSamples } = waveTexts;
 const { normalizeTag, tagKeys, tagShares, genreKeys, genreCanon, genreParts, genreMain, parseGenres, formatGenres, genreKeysFor, trackMatchesGenre, topGenres } = waveGenres;
-const { classifyLink, canonicalUrl, trackPath, artworkUrl, playEnd, siteSource, retryDelay } = waveLinks;
+const { classifyLink, canonicalUrl, trackPath, artworkUrl, coversOf, playEnd, siteSource, retryDelay } = waveLinks;
 const { trackArtist, rememberRecent, isWaveEligible, acceptCandidate, pickSpaced, shuffleInPlace, capPerArtist, forgottenPicks, artistNames, isNewArtist, spreadBy } = wavePicks;
 const { tasteMaps, tasteScore, tasteOrder, tasteReason, applyTasteReasons, tasteGroups, moodTags, pickFinds } = waveTaste;
 // Разделы страницы волны в wave/: объявления уходят на страницу рядом с installWave и зовутся по голому имени
 const { installVersions } = versionsSection;
 const { installLibrary } = librarySectionModule;
 const { installRadar } = radarSectionModule;
+const { installShelf } = shelfSectionModule;
 // Прежние импорты из wave.ts остаются рабочими
 export type { WaveTrack, WaveMode, OpenTrackResult, WaveReason, WaveCandidate, WaveFilter, WaveLinkKind, WaveTexts, TasteMaps, TasteScore, TasteGroup } from './waveTypes';
 export { WAVE_TEXTS, fillText, reasonText, localDay, countText, formatTime, shapeSamples } from './waveTexts';
@@ -301,11 +303,29 @@ export function installWave(config: WaveConfig, createPlayback: typeof installPl
     // Очередь текстового поиска: зерно и цель запроса чередуются от прохода к проходу
     let searchTurn = 0;
 
+    // Раскрытая под полкой карточка: подборка или радар
+    let openCard: number | null = null;
+    // Прокрутка списка раскрытой подборки: отсоединённый при уходе со страницы список её забывает, по «Назад» она берётся отсюда
+    let keptRowsScroll = 0;
+    // То же для списка «Моей музыки». Страницу сайт по «Назад» ставит наверх: её место запоминает переход по нашей ссылке
+    let keptLibraryScroll = 0;
+    let keptPageScroll: number | null = null;
+    let poppedAt = 0;
     // Радар на полке: номера карточек отрицательные и не -1, -1 в обработчике кнопок значит «подборки нет»
     const RADAR_CARD = -10;
     const UPLOADS_CARD = -11;
     const isRadarCard = (index: number | null | undefined): boolean => index === RADAR_CARD || index === UPLOADS_CARD;
 
+    const isId = (value: unknown): value is number => typeof value === 'number' && Number.isSafeInteger(value) && value > 0;
+    // Играющая волна больше не привязана к карточке: радара (выпуск сменился) или подборки (полка пересобрана)
+    function releaseCard(radar: boolean): void {
+        if (seed && isRadarCard(seed.card) === radar) seed.card = undefined;
+    }
+    // Раскрыть карточку под полкой или свернуть; раскрытая начинает список сверху
+    function showCard(index: number | null): void {
+        openCard = index;
+        if (index !== null) keptRowsScroll = 0;
+    }
     // Разделы из wave/: сборка с ядром. Стоит до кода, который их зовёт; константы ядра ниже по тексту идут обёртками
     // «Версии этого трека»: раздел в wave/versions.ts
     const versions = installVersions({
@@ -392,22 +412,56 @@ export function installWave(config: WaveConfig, createPlayback: typeof installPl
         seed: () => seed,
         seedRequest: () => seedRequest,
         nextSeedRequest: () => ++seedRequest,
-        releaseCard: () => {
-            if (seed && isRadarCard(seed.card)) seed.card = undefined;
-        },
+        releaseCard,
         openCard: () => openCard,
-        showCard: (index) => {
-            openCard = index;
-            if (index !== null) keptRowsScroll = 0;
-        },
+        showCard,
         addMany: (tracks, next) => queueControls.addMany(tracks, next),
         isExcluded: (track) => isExcluded(track),
-        coversOf: (tracks) => coversOf(tracks),
         artistName: (track) => artistName(track),
-        tracksByIds,
+        tracksByIds: (ids) => shelfSection.tracksByIds(ids),
         beginSeed,
         ensureProfile,
         ensureExclusions,
+        ensureUser,
+        call,
+        render: () => render(),
+        showToast,
+        el,
+        button,
+        textButton,
+        trackRow,
+    });
+    // Подборки на полке и набор треков из меню: раздел в wave/shelf.ts
+    const shelfSection = installShelf({
+        texts: T,
+        host,
+        uploadsCard: UPLOADS_CARD,
+        isRadarCard,
+        state: () => state,
+        active: () => active,
+        disposed: () => disposed,
+        player: () => player,
+        seed: () => seed,
+        seedRequest: () => seedRequest,
+        nextSeedRequest: () => ++seedRequest,
+        releaseCard,
+        openCard: () => openCard,
+        showCard,
+        copyGroups: () => copyGroups,
+        taste: () => taste,
+        tasteFailed: () => tasteFailed,
+        radarCards: radarSection.cards,
+        radarMix: radarSection.renderMix,
+        isExcluded: (track) => isExcluded(track),
+        artistName: (track) => artistName(track),
+        paintArt: (node, url, key) => paintArt(node, url, key),
+        tracksOf: (body) => tracksOf(body),
+        trackOf,
+        beginSeed,
+        ensureProfile,
+        expandLibrary,
+        ensureExclusions,
+        ensureTaste,
         ensureUser,
         call,
         render: () => render(),
@@ -510,9 +564,8 @@ export function installWave(config: WaveConfig, createPlayback: typeof installPl
     host.__scSaveSession = () => queueControls.save();
     const recovery = createRecovery({ player: () => player, language: T.lang, checkpoint: () => queueControls.save(), refresh: () => {
         profileRetryAt = 0;
-        shelfFailedAt = 0;
-        shelfFailures = 0;
-        if (isVisible()) ensureShelf();
+        shelfSection.resetFailures();
+        if (isVisible()) shelfSection.ensure();
         if (profile) void expandLibrary(profile).catch((error: unknown) => console.warn('Библиотека не обновлена', error));
         if (profile) scheduleLibrarySync(20000);
         void queueControls.ready().catch((error: unknown) => console.warn('Сессия не восстановлена', error));
@@ -1437,7 +1490,7 @@ export function installWave(config: WaveConfig, createPlayback: typeof installPl
         }
         render();
         // Подборки собираются после первой подборки волны, чтобы не спорить с ней за ответы сайта
-        if (!disposed && isVisible()) ensureShelf();
+        if (!disposed && isVisible()) shelfSection.ensure();
     }
     // keepCurrent: играющий трек доигрывает, волна встаёт за ним (волна по треку, который уже играет)
     async function start(first?: WaveCandidate, keepCurrent = false): Promise<boolean> {
@@ -1780,7 +1833,7 @@ export function installWave(config: WaveConfig, createPlayback: typeof installPl
         const p = player;
         if (!p || disposed) return;
         queueControls.tick();
-        if (shelfFailedAt && isVisible()) ensureShelf();
+        if (shelfSection.failed() && isVisible()) shelfSection.ensure();
         recovery.tick();
         const sound = p.getCurrentSound();
         const id = sound?.id ?? 0;
@@ -1964,317 +2017,6 @@ export function installWave(config: WaveConfig, createPlayback: typeof installPl
         clearSeed();
     }
 
-    // ===== Подборки: находки дня, давно не слушал, отдельные вкусы; набор треков из меню =====
-    interface ShelfCard { kind: 'daily' | 'forgotten' | 'group'; title: string; sub: string; ids: number[]; seeds: number[]; keys: string[]; art: string[] }
-    interface Shelf { day: string; v: number; cards: ShelfCard[] }
-    // Формат сборки полки: 2 это жанры из всех лайков и прослушанного, до восьми, с поджанрами (26.09.2026);
-    // 3 это группа по жанру трека, а не по меткам, и не больше SHELF_ARTIST_CAP треков артиста в карточке (26.09.2026).
-    // Снимок другого формата собирается заново сразу, а не в полночь
-    const SHELF_FORMAT = 3;
-    const SHELF_ARTIST_CAP = 5;
-    // Прослушанное от 30 секунд из индекса истории: main отдаёт его вместе со снимком
-    interface HeardTrack { id: number; artist: number; title: string; artistName: string; genre: string; tags: string; path: string; artwork: string; dur: number; share?: number }
-    let shelf: Shelf | null = null;
-    let shelfPromise: Promise<void> | null = null;
-    let shelfFailedAt = 0;
-    let shelfFailures = 0;
-    // Полка собрана без модели вкуса (main не ответил): показана, но не сохранена и через 10 минут собирается заново
-    let shelfRetryAt = 0;
-    // Треки подборок по id: снимок хранит только номера, названия и обложки добирает trackBatch
-    const shelfTracks = new Map<number, WaveTrack>();
-    const picks: WaveTrack[] = [];
-    const PICKS_MAX = 5;
-    // Раскрытая под полкой подборка и её треки по номеру карточки
-    let openCard: number | null = null;
-    // Прокрутка списка раскрытой подборки: отсоединённый при уходе со страницы список её забывает, по «Назад» она берётся отсюда
-    let keptRowsScroll = 0;
-    // То же для списка «Моей музыки». Страницу сайт по «Назад» ставит наверх: её место запоминает переход по нашей ссылке
-    let keptLibraryScroll = 0;
-    let keptPageScroll: number | null = null;
-    let poppedAt = 0;
-    const mixLists = new Map<number, WaveTrack[] | 'loading' | 'failed'>();
-    const isId = (value: unknown): value is number => typeof value === 'number' && Number.isSafeInteger(value) && value > 0;
-
-    // Снимок из main уже проверен там; здесь только форма, чтобы не упасть на чужом
-    function asShelf(value: unknown): Shelf | null {
-        const source = value as { day?: unknown; cards?: unknown } | null;
-        if (!source || typeof source.day !== 'string' || !Array.isArray(source.cards)) return null;
-        const strings = (list: unknown): string[] => (Array.isArray(list) ? list.filter((item): item is string => typeof item === 'string') : []);
-        const ids = (list: unknown): number[] => (Array.isArray(list) ? list.filter(isId) : []);
-        const cards: ShelfCard[] = [];
-        for (const item of source.cards as unknown[]) {
-            const card = item as Record<string, unknown> | null;
-            if (!card || (card.kind !== 'daily' && card.kind !== 'forgotten' && card.kind !== 'group')) continue;
-            const entry: ShelfCard = {
-                kind: card.kind, title: typeof card.title === 'string' ? card.title : '', sub: typeof card.sub === 'string' ? card.sub : '',
-                ids: ids(card.ids), seeds: ids(card.seeds), keys: strings(card.keys), art: strings(card.art),
-            };
-            if (entry.ids.length) cards.push(entry);
-        }
-        return { day: source.day, v: typeof (source as { v?: unknown }).v === 'number' ? (source as { v: number }).v : 1, cards };
-    }
-    async function tracksByIds(ids: number[]): Promise<WaveTrack[]> {
-        const missing = [...new Set(ids)].filter((id) => !shelfTracks.has(id));
-        const parts: number[][] = [];
-        for (let i = 0; i < missing.length; i += 50) parts.push(missing.slice(i, i + 50));
-        let failed = 0;
-        await Promise.all(parts.map((part) =>
-            call('trackBatch', {}, { ids: part.join(',') }).then((body) => {
-                for (const track of tracksOf(body)) shelfTracks.set(track.id, track);
-            }).catch((error: unknown) => {
-                failed++;
-                console.warn('Волна: треки подборки не загружены', error);
-            })));
-        if (parts.length && failed === parts.length) throw new Error('Треки подборки не загружены');
-        return ids.map((id) => shelfTracks.get(id)).filter((track): track is WaveTrack => !!track);
-    }
-    const capital = (text: string): string => text.charAt(0).toUpperCase() + text.slice(1);
-    const coversOf = (tracks: WaveTrack[]): string[] => [...new Set(tracks.map((track) => artworkUrl(track, 't300x300')).filter(Boolean))].slice(0, 4);
-
-    // Трек из индекса истории для жанров полки: доступность и обложку перепроверяет trackBatch при раскрытии карточки
-    const heardTrack = (entry: HeardTrack): WaveTrack => ({
-        id: entry.id, kind: 'track', title: entry.title, genre: entry.genre, tag_list: entry.tags, duration: entry.dur, full_duration: entry.dur,
-        user_id: entry.artist || undefined, user: { id: entry.artist || undefined, username: entry.artistName },
-        permalink_url: entry.path ? 'https://soundcloud.com' + entry.path : '', artwork_url: entry.artwork || null,
-    });
-    function asHeard(list: unknown): HeardTrack[] {
-        if (!Array.isArray(list)) return [];
-        const text = (value: unknown): string => (typeof value === 'string' ? value : '');
-        return list.flatMap((value): HeardTrack[] => {
-            const item = value && typeof value === 'object' ? (value as Record<string, unknown>) : null;
-            if (!item || !isId(item.id)) return [];
-            return [{ id: item.id, artist: isId(item.artist) ? item.artist : 0, title: text(item.title), artistName: text(item.artistName), genre: text(item.genre), tags: text(item.tags), path: text(item.path), artwork: text(item.artwork), dur: typeof item.dur === 'number' ? item.dur : 0,
-                ...(typeof item.share === 'number' && item.share > 0 && item.share <= 1 ? { share: item.share } : {}) }];
-        });
-    }
-    // Подборки на сутки: все лайки из каталога, вкус из main, похожие на любимое.
-    // recentMain это прослушанное за 30 дней по журналу клиента, история сайта помнит только последние 200;
-    // heardMain это прослушанное от 30 секунд за 90 дней и треки плейлистов с жанром и тегами для жанров полки;
-    // freshLikes это лайки за 30 дней по датам библиотеки
-    async function buildShelf(day: string, recentMain: number[], heardMain: HeardTrack[], freshLikes: number[]): Promise<Shelf> {
-        const p = await ensureProfile();
-        await expandLibrary(p);
-        await Promise.all([ensureExclusions(), ensureTaste()]);
-        shelfTracks.clear();
-        // Каталог лайков полный после expandLibrary: сеть для подборок не нужна, выборки больше нет
-        for (const track of p.likedTracks) shelfTracks.set(track.id, track);
-        const liked = p.likedTracks.filter((track) => isWaveEligible(track) && !isExcluded(track));
-        const cards: ShelfCard[] = [];
-        const weights = taste?.tracks ?? null;
-
-        // Находки дня: неслышанные записи из похожих на восемь любимых; знакомый аккаунт не исключается
-        const seedPool = taste ? tasteOrder(liked.map((track) => ({ track })), taste).map((entry) => entry.track) : shuffleInPlace(liked.slice());
-        // Восемь зёрен от восьми разных артистов, если столько набирается
-        const distinct = capPerArtist(seedPool, 1);
-        const daySeeds = [...distinct, ...seedPool.filter((track) => !distinct.includes(track))].slice(0, 8);
-        const candidates: WaveTrack[] = [];
-        await Promise.all(daySeeds.map((from) =>
-            call('relatedSounds', { track_id: from.id }, { limit: 50 }).then((body) => {
-                candidates.push(...tracksOf(body));
-            }).catch((error: unknown) => console.warn('Волна: похожие для находок не загружены', error))));
-        // Слышанное и лайкнутое вместе с подтверждёнными копиями: перезалив той же записи не находка
-        const known = confirmedCopies([...p.heard, ...p.liked], copyGroups);
-        const finds = pickFinds(candidates, (track) => isExcluded(track) || known.has(track.id), taste, 30);
-        for (const track of finds) shelfTracks.set(track.id, track);
-        if (finds.length >= 10) cards.push({ kind: 'daily', title: '', sub: '', ids: finds.map((track) => track.id), seeds: daySeeds.map((track) => track.id), keys: [], art: coversOf(finds) });
-
-        // «Давно не слушал» по истории конкретной версии; другая загрузка засчитывается только подтверждённой связью.
-        // Лайк за 30 дней не забыт: его слушали, когда лайкали, хоть и не в клиенте, а свежий лайк весит во вкусе
-        // больше всех и иначе встал бы в начало подборки
-        const forgotten = forgottenPicks(liked, confirmedCopies([...p.recent, ...recentMain, ...freshLikes], copyGroups), weights, 60);
-        if (forgotten.length >= 8) cards.push({ kind: 'forgotten', title: '', sub: '', ids: forgotten.map((track) => track.id), seeds: [], keys: [], art: coversOf(forgotten) });
-
-        // До 8 жанров, все видны (решение владельца 26.09.2026). Лайк весит 1 плюс вкус, прослушанное без лайка только
-        // своим положительным весом во вкусе (трек плейлиста его получает из плейлиста): пропущенное туда не попадает
-        const likedSet = new Set(liked.map((track) => track.id));
-        const listened = heardMain.flatMap((entry) => {
-            // Трек плейлиста весит своей долей лайка напрямую: вкус хранит тысячу самых весомых треков, слабые плейлистные
-            // из него выпадают. Минус во вкусе (пропускал, не нравится) всё равно убирает трек
-            const fromTaste = weights?.get(entry.id) ?? 0;
-            const weight = fromTaste < 0 ? fromTaste : Math.max(fromTaste, entry.share ?? 0);
-            if (weight <= 0 || likedSet.has(entry.id) || p.liked.has(entry.id)) return [];
-            const track = heardTrack(entry);
-            return isWaveEligible(track) && !isExcluded(track) ? [{ track, weight }] : [];
-        });
-        const tasted = [...liked.map((track) => ({ track, weight: 1 + Math.max(0, weights?.get(track.id) ?? 0) })), ...listened];
-        const groups = tasteGroups(tasted, 8, 8);
-        const artistTotal = new Map<string, number>();
-        for (const { track } of tasted) {
-            const name = artistName(track).trim();
-            if (name) artistTotal.set(name, (artistTotal.get(name) ?? 0) + 1);
-        }
-        for (const group of groups) {
-            const [a, b] = group.labels.map(capital);
-            const artists = new Map<string, number>();
-            for (const track of group.tracks) {
-                const name = artistName(track).trim();
-                if (name) artists.set(name, (artists.get(name) ?? 0) + 1);
-            }
-            // В подписи те, кто характерен для жанра: треков здесь, помноженное на долю здесь от всех его треков, не меньше 1.
-            // Самый лайкнутый артист, у которого тут 4 трека из 72, не лезет в подпись каждой карточки.
-            // Артист с одним треком подпись не делает; никто не прошёл - подпись по числу треков, как раньше
-            const typical = (name: string, count: number): number => (count * count) / (artistTotal.get(name) ?? count);
-            const strong = [...artists].filter(([name, count]) => count >= 2 && typical(name, count) >= 1);
-            const sub = (strong.length ? strong : [...artists]).sort((x, y) => typical(y[0], y[1]) - typical(x[0], x[1]) || y[1] - x[1]).slice(0, 3).map(([name]) => name);
-            const shown = capPerArtist(group.tracks, SHELF_ARTIST_CAP).slice(0, 60);
-            cards.push({
-                kind: 'group',
-                title: b ? fillText(T.groupAnd, { a, b }) : a,
-                sub: sub.join(', '),
-                ids: shown.map((track) => track.id),
-                seeds: [],
-                keys: group.keys,
-                art: coversOf(shown),
-            });
-        }
-        return { day, v: SHELF_FORMAT, cards };
-    }
-    // Снимок дня или новая сборка; после сбоя сохраняем видимую ошибку, повтор всё реже (retryDelay).
-    // Скрытая страница не собирает: блок проверяет только себя, и в трее сборка повторялась бы впустую.
-    // soon: страница снова видна, повтор не раньше 30 с от сбоя без долгой паузы
-    function ensureShelf(soon = false): void {
-        const bridge = host.soundcloudAPI?.waveShelf;
-        const day = localDay(Date.now());
-        if (!bridge || shelfPromise || document.visibilityState === 'hidden') return;
-        if ((shelf && shelf.day === day && (!shelfRetryAt || Date.now() < shelfRetryAt)) || Date.now() - shelfFailedAt < (soon ? retryDelay(1) : retryDelay(shelfFailures))) return;
-        // Полка прошлых суток сменилась: номер карточки у играющей волны больше ни на что не указывает
-        // Карточки радара от полки не зависят и остаются как были
-        const replace = (next: Shelf): void => {
-            if (shelf && seed && !isRadarCard(seed.card)) seed.card = undefined;
-            shelf = next;
-            shelfFailedAt = 0;
-            shelfFailures = 0;
-            if (!isRadarCard(openCard)) openCard = null;
-            for (const index of [...mixLists.keys()]) if (!isRadarCard(index)) mixLists.delete(index);
-        };
-        shelfPromise = (async () => {
-            const id = await ensureUser();
-            if (!id) throw new Error('Пользователь не определён');
-            const loaded = (await bridge.load(id)) as { snapshot?: unknown; recent?: unknown; heard?: unknown; playlists?: unknown; fresh?: unknown } | null;
-            const saved = asShelf(loaded?.snapshot);
-            if (saved && saved.day === day && saved.v === SHELF_FORMAT && !shelfRetryAt) {
-                replace(saved);
-                return;
-            }
-            const recent = Array.isArray(loaded?.recent) ? loaded.recent.filter(isId) : [];
-            // Прослушанное и треки плейлистов одним списком без повторов: и то и другое идёт в жанры своим весом во вкусе
-            const extra = new Map([...asHeard(loaded?.heard), ...asHeard(loaded?.playlists)].map((entry) => [entry.id, entry]));
-            const fresh = Array.isArray(loaded?.fresh) ? loaded.fresh.filter(isId).slice(0, 5000) : [];
-            const built = await buildShelf(day, recent, [...extra.values()], fresh);
-            if (disposed) return;
-            replace(built);
-            // Без вкуса зёрна находок случайны, «Давно не слушал» идёт только по порядку лайков, жанры без прослушанного:
-            // такую полку до полуночи не хранит
-            const tasteless = taste === null && tasteFailed;
-            shelfRetryAt = tasteless ? Date.now() + 10 * 60000 : 0;
-            // Пустую полку не хранит: лайки могли не загрузиться, следующий запуск соберёт заново
-            if (built.cards.length && !tasteless && (await bridge.save(id, built)) !== true) console.warn('Волна: подборки не сохранены');
-        })().catch((error: unknown) => {
-            shelfFailedAt = Date.now();
-            shelfFailures++;
-            console.warn('Волна: подборки не собраны', error);
-        }).finally(() => {
-            shelfPromise = null;
-            render();
-        });
-        render();
-    }
-    // Треки карточки для раскрытого списка; неудача не кешируется, повторное раскрытие спросит снова
-    function toggleMix(index: number): void {
-        if (openCard === index) {
-            openCard = null;
-            render();
-            return;
-        }
-        openCard = index;
-        keptRowsScroll = 0;
-        const card = shelf?.cards[index];
-        const loaded = mixLists.get(index);
-        if (card && !Array.isArray(loaded) && loaded !== 'loading') {
-            const day = shelf?.day;
-            mixLists.set(index, 'loading');
-            void tracksByIds(card.ids).then((tracks) => {
-                if (shelf?.day === day) mixLists.set(index, tracks.filter(isWaveEligible));
-            }, (error: unknown) => {
-                console.warn('Волна: треки подборки не загружены', error);
-                if (shelf?.day === day) mixLists.set(index, 'failed');
-            }).finally(render);
-        }
-        render();
-    }
-    // Волна от карточки: подборка впереди (находки, давно не слушал) или вперемешку с похожими (вкус).
-    // fromId: трек из раскрытого списка играет первым, подборка по порядку идёт дальше за ним
-    async function startShelf(index: number, fromId = 0): Promise<void> {
-        const card = shelf?.cards[index];
-        if (!card) return;
-        const request = ++seedRequest;
-        try {
-            await Promise.all([ensureProfile(), ensureExclusions()]);
-            const tracks = await tracksByIds([...card.ids, ...card.seeds]);
-            if (request !== seedRequest || disposed) return;
-            const byId = new Map(tracks.map((track) => [track.id, track]));
-            let own = card.ids.map((id) => byId.get(id)).filter((track): track is WaveTrack => !!track && isWaveEligible(track));
-            const roots = card.seeds.map((id) => byId.get(id)).filter((track): track is WaveTrack => !!track);
-            if (!own.length) {
-                showToast(T.toastEmpty);
-                return;
-            }
-            const at = fromId ? own.findIndex((track) => track.id === fromId) : -1;
-            const first = at >= 0 ? own[at] : null;
-            if (at >= 0) own = [...own.slice(at + 1), ...own.slice(0, at)];
-            const title = cardTitle(card);
-            // «Давно не слушал» без выбранного трека каждый раз в новом порядке, вкус тасуется всегда
-            const ordered = card.kind === 'group' || (card.kind === 'forgotten' && !first) ? shuffleInPlace(own.slice()) : own;
-            const next: Seed = card.kind === 'daily'
-                ? { kind: 'daily', title, own: ordered, tracks: shuffleInPlace([...roots, ...own]), order: 'fixed', mode: 'fresh', card: index }
-                : { kind: card.kind, title, own: ordered, tracks: shuffleInPlace(own.slice()), order: card.kind === 'forgotten' ? 'fixed' : 'blend', mode: 'similar', card: index };
-            await beginSeed(request, { seed: next, first });
-        } catch (error) {
-            if (request !== seedRequest) return;
-            console.warn('Волна: подборка не запустилась', error);
-            showToast(T.toastFailed);
-        }
-    }
-    const pickedIndex = (target: MenuTarget): number =>
-        target.track ? picks.findIndex((track) => track.id === target.track?.id) : picks.findIndex((track) => canonicalUrl(track.permalink_url) === canonicalUrl(target.url));
-    async function pickTrack(target: MenuTarget, add: boolean): Promise<void> {
-        if (!add) {
-            const index = pickedIndex(target);
-            if (index >= 0) picks.splice(index, 1);
-            showToast(T.toastUnpicked);
-            render();
-            return;
-        }
-        if (picks.length >= PICKS_MAX) {
-            showToast(fillText(T.toastPickFull, { count: countText(picks.length, T.tracksCount, T.lang) }));
-            return;
-        }
-        try {
-            const track = await trackOf(target);
-            if (!track || !isWaveEligible(track)) {
-                showToast(T.toastFailed);
-                return;
-            }
-            if (!picks.some((item) => item.id === track.id) && picks.length < PICKS_MAX) picks.push(track);
-            showToast(fillText(T.toastPicked, { count: countText(picks.length, T.tracksCount, T.lang) }));
-            render();
-        } catch (error) {
-            console.warn('Волна: трек не добавлен в подборку', error);
-            showToast(T.toastFailed);
-        }
-    }
-    // Волна по набору: похожие на все треки сразу, сами треки набора не играют. Набор после запуска очищается
-    function startPicks(): void {
-        if (!picks.length) return;
-        const tracks = picks.splice(0);
-        const titles = tracks.map((track) => (track.title ?? '').trim()).filter(Boolean);
-        const title = titles.length > 2 ? titles.slice(0, 2).join(', ') + ' +' + (titles.length - 2) : titles.join(', ');
-        const request = ++seedRequest;
-        void beginSeed(request, { seed: { kind: 'tracks', title: title || '…', tracks, own: [] }, first: null }).catch((error: unknown) => {
-            console.warn('Волна: волна по подборке не запустилась', error);
-            showToast(T.toastFailed);
-        });
-    }
     // Переход внутри сайта без перезагрузки: клик по ссылке ловит роутер сайта.
     // Пути те же, что пропускает sitePagePath в main: пользователь, трек, плейлист и запрос после них
     function navigate(path: string): boolean {
@@ -2736,10 +2478,6 @@ export function installWave(config: WaveConfig, createPlayback: typeof installPl
         // Список с плюсом: трек в набор
         pick:'<svg viewBox="0 0 16 16" aria-hidden="true"><path d="M1 2.5h10V4H1zM1 6.25h10v1.5H1zM1 10h6v1.5H1zM11.25 9h1.5v2.25H15v1.5h-2.25V15h-1.5v-2.25H9v-1.5h2.25z"/></svg>',
     };
-    type CardKind = 'radar' | 'uploads' | 'daily' | 'forgotten' | 'group';
-    // Тон карточки по группе: релизы, личные подборки, жанры
-    type CardTone = 'release' | 'personal' | 'genre';
-    const toneOf = (kind: CardKind): CardTone => (kind === 'radar' || kind === 'uploads' ? 'release' : kind === 'group' ? 'genre' : 'personal');
     function ensureStyle(): void {
         if (document.getElementById('sc-wave-style')) return;
         const style = el('style', '', CSS);
@@ -2885,6 +2623,7 @@ export function installWave(config: WaveConfig, createPlayback: typeof installPl
         const historyButton = button('scw-icon', 'history', T.history, 'history');
         historyButton.title = T.history;
         // Набор из меню: число треков запускает волну по нему, крестик очищает
+        const picks = shelfSection.picks();
         if (picks.length) {
             const chip = el('div', 'scw-genre set');
             chip.title = picks.map((track) => (track.title ?? '').trim()).join('\n');
@@ -2992,151 +2731,6 @@ export function installWave(config: WaveConfig, createPlayback: typeof installPl
         }
         return [el('div', 'scw-up-h', active ? T.next : T.upFirst), tiles];
     }
-    const cardTitle = (card: ShelfCard): string => (card.kind === 'daily' ? T.shelfDaily : card.kind === 'forgotten' ? T.shelfForgotten : card.title);
-    // Полка подборок: коллаж обложек, название, число треков или главные артисты; играющая карточка с оранжевой кромкой.
-    // Нажатие на карточку раскрывает её треки под полкой, кнопка на обложке сразу включает волну подборки
-    // Карточка полки: общая для подборок и радара; кнопки «слушать» нет, пока слушать нечего.
-    // Лицо обложки как у собственных подборок SoundCloud: название крупно поверх коллажа,
-    // коллаж обесцвечен и залит тоном группы (радар оранжевым, личные подборки фиолетовым, жанры бирюзовым), дата выпуска на обложке
-    function cardNode(index: number, title: string, sub: string, cover: string[], playable: boolean, kind: CardKind, stamp = ''): HTMLElement {
-        const node = el('div', 'scw-card');
-        const artBox = el('div', 'scw-art');
-        const playing = !!seed && seed.card === index && active;
-        const shown = playing && !!player?.isPlaying();
-        node.dataset.card = String(index);
-        node.classList.toggle('on', playing);
-        node.classList.toggle('open', openCard === index);
-        const open = el('button', 'scw-card-open');
-        open.type = 'button';
-        open.dataset.act = 'shelf-open';
-        open.dataset.card = String(index);
-        open.setAttribute('aria-expanded', String(openCard === index));
-        if (cover.length >= 4) {
-            artBox.classList.add('scw-quad');
-            for (const url of cover.slice(0, 4)) {
-                const cell = el('span', '');
-                paintArt(cell, url, '');
-                artBox.append(cell);
-            }
-        } else if (cover[0]) paintArt(artBox, cover[0], '');
-        else if (isRadarCard(index)) {
-            // Выпуска ещё нет: вместо серой заготовки значок радара, как пустая обложка волны
-            artBox.classList.add('scw-radar-art');
-            artBox.setAttribute('aria-hidden', 'true');
-            artBox.innerHTML = '<svg viewBox="0 0 48 48" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><circle cx="24" cy="24" r="3.5" fill="currentColor" stroke="none"/><path d="M15.5 32.5a12 12 0 0 1 0-17M32.5 15.5a12 12 0 0 1 0 17" opacity=".75"/><path d="M9.9 38.1a20 20 0 0 1 0-28.2M38.1 9.9a20 20 0 0 1 0 28.2" opacity=".4"/></svg>';
-        }
-        artBox.classList.add('scw-tone-' + toneOf(kind));
-        if (cover.length) artBox.append(el('div', 'scw-tint'));
-        else if (!isRadarCard(index)) artBox.classList.add('scw-blank');
-        // Лицо повторяет название под обложкой, поэтому скрыто от чтения с экрана; дата выпуска читается.
-        // Наложения блоками div: клетки коллажа это span, и правило сетки их не задевает
-        const face = el('div', 'scw-face');
-        face.setAttribute('aria-hidden', 'true');
-        face.append(el('b', '', title));
-        artBox.append(face);
-        if (stamp) artBox.append(el('div', 'scw-stamp', stamp));
-        open.append(artBox, el('div', 'scw-t1', title), el('div', 'scw-t2', sub));
-        node.append(open);
-        if (playable) {
-            const over = el('div', 'scw-card-over');
-            const play = button('scw-card-play', 'shelf-play', shown ? T.pause : T.mixPlay, shown ? 'pause' : 'play');
-            play.dataset.card = String(index);
-            play.setAttribute('aria-pressed', String(playing));
-            over.append(play);
-            node.append(over);
-        }
-        return node;
-    }
-    function waitCard(tone: CardTone): HTMLElement {
-        const node = el('div', 'scw-card scw-wait');
-        node.append(el('div', 'scw-art scw-blank scw-tone-' + tone),el('div', 'scw-t1', ' '), el('div', 'scw-t2', ' '));
-        return node;
-    }
-    function renderShelf(): HTMLElement[] {
-        if (state === 'unavailable') return [];
-        const radar = radarSection.cards();
-        const shelfOn = !!host.soundcloudAPI?.waveShelf;
-        const current = shelfOn ? shelf : null;
-        const shelfWait = shelfOn && !current && !!shelfPromise;
-        const shelfError = shelfOn && !current && !shelfPromise && !!shelfFailedAt;
-        if (!radar.length && !current && !shelfWait && !shelfError) return [];
-        const headline = el('div', 'scw-shelf-h', T.shelf);
-        const error = el('div', 'scw-shelf-error');
-        error.setAttribute('role', 'status');
-        error.append(el('span', 'scw-hint', T.shelfFailed), textButton('shelf-retry', T.retry));
-        const empty = !!current && !current.cards.length;
-        // Без радара полка как прежде: ошибка или пустота вместо сетки
-        if (!radar.length && shelfError) return [headline, error];
-        if (!radar.length && empty) return [headline, el('div', 'scw-hint', T.shelfEmpty)];
-        const grid = el('div', 'scw-tiles scw-shelf' + (!radar.length && shelfWait ? ' wait held' : ''));
-        // Уголок раскрытого списка ставится под место карточки в сетке, а не под её номер
-        let openAt = -1;
-        const add = (node: HTMLElement, index: number | null): void => {
-            if (index !== null && index === openCard) openAt = grid.childElementCount;
-            grid.append(node);
-        };
-        for (const card of radar) add(card.wait ? waitCard('release') : cardNode(card.index, card.title, card.sub, card.art, card.playable, card.index === UPLOADS_CARD ? 'uploads' : 'radar', card.stamp), card.wait ? null : card.index);
-        // Все жанры видны, последний ряд может быть неполным (решение владельца 26.09.2026)
-        if (current)
-            current.cards.forEach((card, index) => {
-                add(cardNode(index, cardTitle(card), card.kind === 'group' && card.sub ? card.sub : countText(card.ids.length, T.tracksCount, T.lang), card.art, true, card.kind), index);
-            });
-        // Пока полка собирается: две личные подборки и два жанра, каждая заготовка в своём тоне
-        else if (shelfWait) for (let i = 0; i < 4; i++) add(waitCard(i < 2 ? 'personal' : 'genre'), null);
-        const parts: HTMLElement[] = [headline, grid];
-        if (shelfError) parts.push(error);
-        else if (empty) parts.push(el('div', 'scw-hint', T.shelfEmpty));
-        // Список встаёт в сетку строкой сразу под карточкой: с радаром карточек больше шести, строк две.
-        // Колонок 6 или 4 по ширине окна, поэтому строка и уголок заданы для обоих вариантов
-        const list = openCard === null || openAt < 0 ? null : isRadarCard(openCard) ? radarSection.renderMix(openCard) : renderMix(openCard);
-        if (list) {
-            for (const columns of [6, 4]) {
-                list.style.setProperty('--scw-at' + columns, String(openAt % columns));
-                list.style.setProperty('--scw-row' + columns, String(Math.floor(openAt / columns) + 2));
-            }
-            grid.append(list);
-        }
-        return parts;
-    }
-    // Треки раскрытой подборки: обложка, название, артист, длительность; играющий трек выделен
-    function renderMix(index: number): HTMLElement | null {
-        const card = shelf?.cards[index];
-        if (!card) return null;
-        const box = el('div', 'scw-mix');
-        box.setAttribute('role', 'region');
-        box.setAttribute('aria-label', cardTitle(card));
-        const head = el('div', 'scw-mix-head');
-        const playing = !!seed && seed.card === index && active && !!player?.isPlaying();
-        const play = button('scw-mix-play', 'mix-play', playing ? T.pause : T.mixPlay, playing ? 'pause' : 'play');
-        play.title = playing ? T.pause : T.mixPlay;
-        const titles = el('div', 'scw-mix-title');
-        const loaded = mixLists.get(index);
-        const tracks = Array.isArray(loaded) ? loaded.filter((track) => !isExcluded(track)) : [];
-        titles.append(el('b', '', cardTitle(card)), el('span', '', countText(Array.isArray(loaded) ? tracks.length : card.ids.length, T.tracksCount, T.lang)));
-        const close = button('scw-icon', 'mix-close', T.mixClose, 'x');
-        close.title = T.mixClose;
-        head.append(play, titles, close);
-        box.append(head);
-        if (!Array.isArray(loaded)) {
-            const line = el('div', 'scw-hint', loaded === 'failed' ? T.mixFailed : T.mixLoading);
-            line.setAttribute('role', 'status');
-            box.append(line);
-            return box;
-        }
-        if (!tracks.length) {
-            box.append(el('div', 'scw-hint', T.mixEmpty));
-            return box;
-        }
-        const rows = el('div', 'scw-mix-rows');
-        const now = active ? player?.getCurrentSound()?.id ?? 0 : 0;
-        for (const track of tracks) {
-            const { row, end } = trackRow(track, now);
-            end.append(el('span', 'scw-row-d', formatTime(track.full_duration || track.duration || 0)));
-            rows.append(row);
-        }
-        box.append(rows);
-        return box;
-    }
     // rowsAt: прокрутка списка подборки, когда секция вернулась на страницу и своя прокрутка списка потеряна
     function render(rowsAt?: number, libraryAt?: number): void {
         if (!section) return;
@@ -3206,7 +2800,7 @@ export function installWave(config: WaveConfig, createPlayback: typeof installPl
             cover.innerHTML = '<svg viewBox="0 0 200 200" fill="none"><circle cx="100" cy="100" r="76" stroke="currentColor" opacity=".07"/><circle cx="100" cy="100" r="57" stroke="currentColor" opacity=".12"/><path d="M48 96v8m13-22v36m13-43v50m13-61v72m13-84v96m13-75v54m13-44v34m13-43v52m13-36v20" stroke="currentColor" stroke-width="3" stroke-linecap="round" opacity=".7"/></svg>';
         }
         body.append(info, cover);
-        section.append(body, ...renderTiles(), ...librarySection.render(), ...renderShelf());
+        section.append(body, ...renderTiles(), ...librarySection.render(), ...shelfSection.render());
         const rowsBox = section.querySelector('.scw-mix-rows');
         if (rowsBox) rowsBox.scrollTop = rowsScroll;
         const libraryBox = section.querySelector('.scw-lib-rows');
@@ -3415,7 +3009,7 @@ export function installWave(config: WaveConfig, createPlayback: typeof installPl
                 if (!player.isPlaying()) player.playCurrent({ userInitiated: true });
                 setTimeout(render, 150);
             } else if (isRadarCard(openCard)) void radarSection.start(openCard, id);
-            else void startShelf(openCard, id);
+            else void shelfSection.start(openCard, id);
             return;
         }
         const control = target.closest<HTMLElement>('[data-act], [data-mode], [data-genre]');
@@ -3443,7 +3037,7 @@ export function installWave(config: WaveConfig, createPlayback: typeof installPl
             case 'shelf-open': {
                 const index = Number(control.dataset.card);
                 if (isRadarCard(index)) radarSection.toggle(index);
-                else toggleMix(index);
+                else shelfSection.toggle(index);
                 return;
             }
             case 'lib-source':
@@ -3464,7 +3058,7 @@ export function installWave(config: WaveConfig, createPlayback: typeof installPl
                 radarSection.click(control);
                 return;
             case 'shelf-retry':
-                shelfFailedAt = 0; shelfFailures = 0; profileRetryAt = 0; ensureShelf();
+                shelfSection.resetFailures(); profileRetryAt = 0; shelfSection.ensure();
                 return;
             case 'mix-close':
                 openCard = null;
@@ -3480,15 +3074,14 @@ export function installWave(config: WaveConfig, createPlayback: typeof installPl
                     else player.playCurrent({ userInitiated: true });
                     setTimeout(render, 150);
                 } else if (isRadarCard(index)) void radarSection.start(index);
-                else if (index >= 0) void startShelf(index);
+                else if (index >= 0) void shelfSection.start(index);
                 return;
             }
             case 'pick-start':
-                startPicks();
+                shelfSection.startPicks();
                 return;
             case 'pick-clear':
-                picks.length = 0;
-                render();
+                shelfSection.clearPicks();
                 return;
             case 'shake':
                 shake();
@@ -3608,7 +3201,7 @@ export function installWave(config: WaveConfig, createPlayback: typeof installPl
             const tile = node.closest<HTMLElement>('.scw-tile[data-track], .scw-row[data-track]');
             const id = tile ? Number(tile.dataset.track) : 0;
             const track = id
-                ? known.get(id)?.track ?? preview.find((item) => item.track.id === id)?.track ?? shelfTracks.get(id) ?? radarSection.track(id)
+                ? known.get(id)?.track ?? preview.find((item) => item.track.id === id)?.track ?? shelfSection.track(id) ?? radarSection.track(id)
                     ?? librarySection.poolTrack(id)
                 : node.closest('.scw-body') ? currentCandidate()?.track : undefined;
             return track ? fromTrack(track) : null;
@@ -3713,7 +3306,7 @@ export function installWave(config: WaveConfig, createPlayback: typeof installPl
         if (target.kind === 'track') {
             items.push(['queue-next', T.lang === 'ru' ? 'Слушать следующим' : 'Play next', 'pick']);
             items.push(['queue-last', T.lang === 'ru' ? 'В конец очереди' : 'Add to queue', 'pick']);
-            items.push(pickedIndex(target) >= 0 ? ['unpick', T.menuUnpick, 'undo'] : ['pick', T.menuPick, 'pick']);
+            items.push(shelfSection.pickedIndex(target) >= 0 ? ['unpick', T.menuUnpick, 'undo'] : ['pick', T.menuPick, 'pick']);
             items.push(trackMarked(moreTracks, target) ? ['unmore', T.menuUnmore, 'undo'] : ['more', T.more, 'more']);
             items.push(trackMarked(laterTracks, target) ? ['unlater', T.menuUnlater, 'undo'] : ['later', T.later, 'later']);
             items.push(trackExcluded(target) ? ['undislike', T.menuUndislike, 'undo'] : ['dislike', T.menuDislike, 'block']);
@@ -3734,7 +3327,7 @@ export function installWave(config: WaveConfig, createPlayback: typeof installPl
             case 'wave-artist': void startSeed('artist', target); return;
             case 'wave-playlist': void startSeed('playlist', target); return;
             case 'pick':
-            case 'unpick': void pickTrack(target, act === 'pick'); return;
+            case 'unpick': void shelfSection.pick(target, act === 'pick'); return;
             case 'dislike':
             case 'undislike': void setExcluded('track', target, act === 'dislike'); return;
             case 'hide-artist':
@@ -3943,7 +3536,7 @@ export function installWave(config: WaveConfig, createPlayback: typeof installPl
         // Подбор до запуска только для видимого блока: скрытая в F1 волна не ходит в API
         if (state === 'idle' && !active && !preview.length && player && isVisible()) void preparePreview();
         // Подборки собираются, когда блок виден и сайт готов, и пересобираются после местной полуночи
-        if (player && api && state !== 'loading' && isVisible()) ensureShelf();
+        if (player && api && state !== 'loading' && isVisible()) shelfSection.ensure();
         // Выпуск радара собирает main по расписанию, страница только читает готовый
         if (player && api && isVisible()) radarSection.ensure();
     }
@@ -4010,7 +3603,7 @@ export function installWave(config: WaveConfig, createPlayback: typeof installPl
     // Страница снова видна: полка, отложенная на время скрытого окна или после сбоя, пробует сразу
     const onShown = (): void => {
         if (disposed || document.visibilityState === 'hidden' || !player || !api || state === 'loading' || !isVisible()) return;
-        ensureShelf(true);
+        shelfSection.ensure(true);
     };
 
     const onScroll = (): void => {
@@ -4115,9 +3708,9 @@ export function installWave(config: WaveConfig, createPlayback: typeof installPl
 const pageHelpers = [
     normalizeTag, tagKeys, tagShares, genreKeys, genreCanon, genreParts, genreMain, parseGenres, formatGenres, genreKeysFor, classifyLink, canonicalUrl, trackMatchesGenre, trackArtist, rememberRecent, retryDelay,
     isWaveEligible, acceptCandidate, pickSpaced, tasteMaps, tasteScore, tasteOrder, tasteReason, applyTasteReasons, shuffleInPlace, topGenres, fillText, reasonText, shapeSamples,
-    artworkUrl, formatTime, playEnd, siteSource, moodTags, trackPath, localDay, countText, tasteGroups, capPerArtist, forgottenPicks, artistNames, isNewArtist, spreadBy, pickFinds,
+    artworkUrl, coversOf, formatTime, playEnd, siteSource, moodTags, trackPath, localDay, countText, tasteGroups, capPerArtist, forgottenPicks, artistNames, isNewArtist, spreadBy, pickFinds,
     ...identity.identityHelpers, ...sources.sourceHelpers, ...libraryMix.libraryHelpers, siteRequires, installPlaybackPage, installPlaybackRecovery,
-    installVersions, installLibrary, installRadar,
+    installVersions, installLibrary, installRadar, installShelf,
 ];
 
 export function waveScript(resume = false): string {

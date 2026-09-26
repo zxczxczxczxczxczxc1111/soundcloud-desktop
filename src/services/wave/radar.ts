@@ -14,7 +14,7 @@ import type { SitePlayer, WaveWindow } from '../wave';
 
 const { performerKey, trackCredits } = identity;
 const { normalizeTag } = waveGenres;
-const { retryDelay } = waveLinks;
+const { coversOf, retryDelay } = waveLinks;
 const { isWaveEligible } = wavePicks;
 const { countText, fillText, formatTime } = waveTexts;
 
@@ -36,8 +36,8 @@ export interface RadarCore {
     /** Номер последнего запуска подборки: запуск, начатый позже, отменяет прежний */
     seedRequest(): number;
     nextSeedRequest(): number;
-    /** Выпуск сменился: играющая волна больше не привязана к карточке радара */
-    releaseCard(): void;
+    /** Выпуск сменился: играющая волна больше не привязана к карточке радара (true) или подборки (false) */
+    releaseCard(radar: boolean): void;
     /** Раскрытая под полкой карточка, общая для подборок и радара */
     openCard(): number | null;
     /** Раскрыть карточку под полкой или свернуть; раскрытая начинает список сверху */
@@ -45,7 +45,6 @@ export interface RadarCore {
     /** Треки следующими в очередь одной пересборкой; ответ это сколько встало */
     addMany(tracks: WaveTrack[], next: boolean): number;
     isExcluded(track: WaveTrack): boolean;
-    coversOf(tracks: WaveTrack[]): string[];
     artistName(track: WaveTrack): string;
     tracksByIds(ids: number[]): Promise<WaveTrack[]>;
     beginSeed(request: number, loaded: { seed: Seed; first: WaveTrack | null }): Promise<void>;
@@ -80,7 +79,7 @@ export interface RadarSection {
 
 export function installRadar(core: RadarCore): RadarSection {
     const {
-        texts: T, host, radarCard: RADAR_CARD, uploadsCard: UPLOADS_CARD, isRadarCard, addMany, isExcluded, coversOf, artistName, tracksByIds, beginSeed, ensureProfile,
+        texts: T, host, radarCard: RADAR_CARD, uploadsCard: UPLOADS_CARD, isRadarCard, addMany, isExcluded, artistName, tracksByIds, beginSeed, ensureProfile,
         ensureExclusions, ensureUser, call, render, showToast, el, button, textButton, trackRow,
     } = core;
     const isId = (value: unknown): value is number => typeof value === 'number' && Number.isSafeInteger(value) && value > 0;
@@ -159,7 +158,7 @@ export function installRadar(core: RadarCore): RadarSection {
         } : null;
         const same = !!next && !!radarEdition && radarKey(next) === radarKey(radarEdition);
         // Играет прежний выпуск: карточка нового больше не «играющая»
-        if (!same && radarEdition) core.releaseCard();
+        if (!same && radarEdition) core.releaseCard(true);
         radarEdition = next;
         radarArchive = (Array.isArray(source.editions) ? source.editions : []).flatMap((item): RadarArchiveEntry[] => {
             const entry = item && typeof item === 'object' ? (item as Record<string, unknown>) : null;

@@ -52,6 +52,10 @@ export function artworkUrl(track: WaveTrack, size: 't300x300' | 't500x500'): str
     const url = track.artwork_url || track.user?.avatar_url || '';
     return /^https:\/\//.test(url) ? url.replace(/-large\.(jpg|png)/, '-' + size + '.$1') : '';
 }
+/** Обложки для коллажа карточки: до четырёх разных */
+export function coversOf(tracks: WaveTrack[]): string[] {
+    return [...new Set(tracks.map((track) => artworkUrl(track, 't300x300')).filter(Boolean))].slice(0, 4);
+}
 
 // Дослушал, если ушёл не раньше чем за 15 секунд до конца
 export function playEnd(duration: number, position: number): 'done' | 'skip' {
