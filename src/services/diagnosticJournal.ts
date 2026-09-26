@@ -2,12 +2,13 @@ import { appendFileSync, existsSync, mkdirSync, readFileSync, renameSync, statSy
 import { join, resolve } from 'path';
 import { BACKUP_REASONS } from './backupPolicy';
 
-const events = new Set(['session.start', 'session.end', 'performance', 'runtime.error', 'runtime.warn', 'renderer.gone', 'renderer.unresponsive', 'renderer.responsive', 'page.loaded', 'page.load-failed', 'page.soft-navigation', 'system.suspend', 'system.resume', 'gpu.status', 'process.gone', 'wave.empty', 'backup.saved', 'backup.failed', 'backup.restored', 'backup.restore-failed']);
+const events = new Set(['session.start', 'session.end', 'performance', 'runtime.error', 'runtime.warn', 'renderer.gone', 'renderer.unresponsive', 'renderer.responsive', 'page.loaded', 'page.load-failed', 'page.soft-navigation', 'system.suspend', 'system.resume', 'gpu.status', 'process.gone', 'wave.empty', 'site.modules-missing', 'backup.saved', 'backup.failed', 'backup.restored', 'backup.restore-failed']);
 const numbers = new Set([
     'cpuPercent', 'workingSetMiB', 'privateMiB', 'processes', 'loopP95Ms', 'loopMaxMs', 'updates', 'trackChanges', 'sinceUpdateMs', 'sinceProgressMs', 'exitCode', 'errorCode', 'line',
     'droppedEvents', 'uptimeSeconds', 'waveSeen', 'waveArtistTracks', 'waveMoodTags', 'backupMs', 'backupKiB',
 ]);
-const flags = new Set(['playing', 'hasTrack', 'windowVisible', 'windowMinimized', 'settingsOpen', 'previousUnclean', 'adblock', 'proxy', 'dirty', 'discord', 'githubBadge', 'gpuInProcess', 'gpuAuto', 'gpuNvidiaDetected', 'gpuFallback', 'auto']);
+const flags = new Set(['playing', 'hasTrack', 'windowVisible', 'windowMinimized', 'settingsOpen', 'previousUnclean', 'adblock', 'proxy', 'dirty', 'discord', 'githubBadge', 'gpuInProcess', 'gpuAuto', 'gpuNvidiaDetected', 'gpuFallback', 'auto',
+    'sitePlayer', 'siteApi', 'siteSound', 'siteTranslation']);
 // Причины отказа резервной копии: код без пути и содержимого файла
 const reasons = new Set<string>(['clean-exit', 'abnormal-exit', 'killed', 'crashed', 'oom', 'launch-failed', 'integrity-failure', 'memory-eviction', ...BACKUP_REASONS]);
 const errorTypes = new Set(['Error', 'TypeError', 'RangeError', 'ReferenceError', 'SyntaxError', 'URIError', 'AggregateError']);

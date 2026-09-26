@@ -32,7 +32,7 @@ const INVOKE_CHANNELS = new Set([
     'backup-auto',
 ]);
 
-const ON_CHANNELS = new Set(['presence-preview-update', 'discord-incognito-changed', 'update-translations', 'accounts-updated', 'update-state', 'wave-exclusions-changed', 'backup-state-changed']);
+const ON_CHANNELS = new Set(['presence-preview-update', 'discord-incognito-changed', 'update-translations', 'accounts-updated', 'update-state', 'wave-exclusions-changed', 'backup-state-changed', 'site-state-changed']);
 
 function isHttpsUrl(value: string): boolean {
     try {

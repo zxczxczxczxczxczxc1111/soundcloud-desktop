@@ -13,6 +13,8 @@ import type { RadarCollectResult, RadarState } from './radarSchedule';
 import type { RadarReason } from './radar';
 import * as libraryMix from './libraryMix';
 import type { LibraryEntry, LibraryMode, MyMusicSetting } from './libraryMix';
+import * as siteModules from './siteModules';
+import type { SiteState, WebpackRequire } from './siteModules';
 
 // Разбор версий, сеть подбора и пул «Моей музыки» живут в своих модулях. Функции страницы зовут их по голому имени: в Node имя
 // берётся отсюда, на странице из объявлений identityHelpers и sourceHelpers в той же обёртке.
@@ -20,6 +22,7 @@ import type { LibraryEntry, LibraryMode, MyMusicSetting } from './libraryMix';
 const { confirmedCopies, confirmedGroups, copyKey, copyKeys, familyKey, matchLevel, nameKey, parseTrackTitle, performerKey, searchQueries, trackCredits, versionKey } = identity;
 const { classifyFailure, createDispatcher, createSearchCache, likeItems, entityItems, syncSource } = sources;
 const { isLibraryMode, isLibrarySource, libraryOrder, libraryPool } = libraryMix;
+const { siteRequires } = siteModules;
 
 export interface WaveTrack {
     id: number;
@@ -1108,9 +1111,6 @@ export interface SitePlayer {
 interface SiteApi {
     callEndpoint(name: string, path: object, query: object): Promise<{ status?: number; body?: unknown }>;
 }
-interface WebpackRequire {
-    c?: Record<string, { exports?: unknown } | undefined>;
-}
 interface WaveJournalApi {
     load(userId: number): Promise<unknown>;
     add(userId: number, ids: number[]): void;
@@ -1133,7 +1133,8 @@ export interface WaveWindow extends Window {
     // Кэш средних цветов обложек из плавности сайта (pageMotion), ключ это путь трека
     __scmCoverColor?: (key: string) => string | undefined;
     __scmLearnCover?: (key: string, url: string) => void;
-    __scSiteTranslation?: { language?: string };
+    // Перевод сайта из preload: state.lingua ставится, когда модуль перевода сайта перехвачен
+    __scSiteTranslation?: { language?: string; state?: { lingua?: boolean } };
     soundcloudAPI?: {
         library?: {
             loadSession(user: number): Promise<PlaybackSnapshot | null>;
@@ -1167,6 +1168,8 @@ export interface WaveWindow extends Window {
             state(): Promise<unknown>;
         };
         reportWaveEmpty?(counts: { seen: number; artistTracks: number; moodTags: number }): void;
+        // Сайт поменялся: чего страница не нашла; после находки то же сообщение снимает отметку
+        reportSite?(state: SiteState): void;
         sendTrackMeta?(meta: TrackMeta): void;
         openHistory?(): void;
     };
@@ -1472,12 +1475,19 @@ export function installWave(config: WaveConfig, createPlayback: typeof installPl
     host.__scResume = () => recovery.resume();
 
     function findRequire(): WebpackRequire[] {
-        const found: WebpackRequire[] = [];
-        const probe = '__scWave' + Date.now() + Math.random().toString(36).slice(2);
-        const legacy = host.webpackJsonp as { push(chunk: unknown): unknown } | undefined;
-        if (Array.isArray(legacy)) legacy.push([[], { [probe]: (_module: unknown, _exports: unknown, require: WebpackRequire) => { found.push(require); } }, [[probe]]]);
-        return found.sort((a, b) => Object.keys(b.c ?? {}).length - Object.keys(a.c ?? {}).length);
+        return siteRequires(host, '__scWave');
     }
+    // Через минуту после запуска страница сообщает, чего не нашла у сайта: без этого смена модулей молча выключала
+    // историю, сессию и радар. Отметку снимает то же сообщение после находки
+    let siteReported = false;
+    function reportSite(): void {
+        const translation = host.__scSiteTranslation;
+        const found: SiteState = { player: !!player, api: !!api, sound: !!SoundModel, translation: translation?.language !== 'ru' || translation.state?.lingua === true };
+        const broken = !found.player || !found.api || !found.sound || !found.translation;
+        if (broken || siteReported) host.soundcloudAPI?.reportSite?.(found);
+        siteReported = broken;
+    }
+    const siteCheck = setTimeout(reportSite, 60000);
     function chainHas(fn: unknown, names: string[]): boolean {
         if (typeof fn !== 'function') return false;
         const seen = new Set<string>();
@@ -6144,6 +6154,7 @@ export function installWave(config: WaveConfig, createPlayback: typeof installPl
         attachTimer = undefined;
         if (disposed) return;
         if (findModules()) {
+            if (siteReported) reportSite();
             tickTimer = setInterval(() => {
                 try {
                     tick();
@@ -6167,7 +6178,8 @@ export function installWave(config: WaveConfig, createPlayback: typeof installPl
             state = 'unavailable';
             render();
         }
-        attachTimer = setTimeout(attach, attempts < 20 ? 1000 : 10000);
+        // Первые 20 раз раз в секунду, потом всё реже, до 10 минут: каждая попытка оставляет в сайте пробный модуль
+        attachTimer = setTimeout(attach, attempts < 20 ? 1000 : Math.min(600000, 10000 * 2 ** (attempts - 20)));
     }
     const onOnline = (): void => {
         if (disposed) return;
@@ -6215,6 +6227,7 @@ export function installWave(config: WaveConfig, createPlayback: typeof installPl
         delete host.__scWaveExclusionsChanged;
         if (frame) cancelAnimationFrame(frame);
         if (attachTimer !== undefined) clearTimeout(attachTimer);
+        clearTimeout(siteCheck);
         if (tickTimer !== undefined) clearInterval(tickTimer);
         if (paintTimer !== undefined) clearInterval(paintTimer);
         if (journalTimer !== undefined) clearTimeout(journalTimer);
@@ -6285,7 +6298,7 @@ const pageHelpers = [
     normalizeTag, tagKeys, tagShares, genreKeys, genreCanon, genreParts, genreMain, parseGenres, formatGenres, genreKeysFor, classifyLink, canonicalUrl, trackMatchesGenre, trackArtist, rememberRecent, retryDelay,
     isWaveEligible, acceptCandidate, pickSpaced, tasteMaps, tasteScore, tasteOrder, tasteReason, applyTasteReasons, shuffleInPlace, topGenres, fillText, reasonText, shapeSamples,
     artworkUrl, formatTime, playEnd, siteSource, moodTags, trackPath, localDay, countText, tasteGroups, capPerArtist, forgottenPicks, artistNames, isNewArtist, spreadBy, pickFinds,
-    ...identity.identityHelpers, ...sources.sourceHelpers, ...libraryMix.libraryHelpers, installPlaybackPage, installPlaybackRecovery,
+    ...identity.identityHelpers, ...sources.sourceHelpers, ...libraryMix.libraryHelpers, siteRequires, installPlaybackPage, installPlaybackRecovery,
 ];
 
 export function waveScript(resume = false): string {

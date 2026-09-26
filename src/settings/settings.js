@@ -400,6 +400,7 @@ async function initializeSettings() {
         language = e.target.value === 'en' ? 'en' : 'ru';
         applyLanguage();
         document.getElementById('diagnosticsStatus').textContent = '';
+        renderSiteState(lastSiteState);
         loadAccounts();
         loadWaveExclusions();
         loadBackupState();
@@ -656,6 +657,20 @@ async function initializeSettings() {
             toggle.checked = !toggle.checked;
         }
     });
+    // Сайт поменялся: страница не нашла плеер, API или модель трека, либо не встал перевод; null, когда всё на месте
+    let lastSiteState = null;
+    function renderSiteState(state) {
+        lastSiteState = state && typeof state === 'object' ? state : null;
+        const status = document.getElementById('siteStatus');
+        status.hidden = !lastSiteState;
+        if (!lastSiteState) { status.textContent = ''; return; }
+        const modules = lastSiteState.player && lastSiteState.api && lastSiteState.sound;
+        status.textContent = tr(modules
+            ? 'Сайт SoundCloud изменился, и перевод на русский не встал.'
+            : 'Сайт SoundCloud изменился, и клиент не нашёл его плеер. История, волна и радар временно не работают, музыка играет как обычно.');
+    }
+    ipcRenderer.on('site-state-changed', (_, state) => renderSiteState(state));
+    renderSiteState(initial.siteState);
     ipcRenderer.on('backup-state-changed', (_, state) => renderBackupState(state));
     loadBackupState();
     let backupDone = null;

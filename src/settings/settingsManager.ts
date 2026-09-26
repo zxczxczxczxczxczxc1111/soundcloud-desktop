@@ -6,6 +6,7 @@ import { WebContentsView, BrowserWindow, ipcMain, type IpcMainInvokeEvent, type 
 import type ElectronStore from 'electron-store';
 import { join } from 'path';
 import type { GpuRuntimeState } from '../services/gpuProcessMode';
+import type { SiteState } from '../services/siteModules';
 
 const defaults: Record<string, string | number | boolean> = {
     minimizeToTray: false,
@@ -46,6 +47,8 @@ const defaults: Record<string, string | number | boolean> = {
 export class SettingsManager {
     private view: WebContentsView | null = null;
     private disposed = false;
+    /** Чего страница не нашла у поменявшегося сайта; null, пока всё на месте */
+    private siteState: SiteState | null = null;
     private resize = (): void => this.updateBounds();
     private ready = (event: IpcMainInvokeEvent): void => {
         if (!this.owns(event)) return;
@@ -77,9 +80,15 @@ export class SettingsManager {
                 // Зону при первом запуске пишет перенос настроек; до него показывается зона системы
                 radarZone: this.store.get('radarZone', systemTimeZone()),
                 gpuRuntime: this.gpuRuntime,
+                siteState: this.siteState,
             };
         });
         ipcMain.on('settings-ready', this.ready);
+    }
+    public setSiteState(state: SiteState | null): void {
+        this.siteState = state;
+        const contents = this.view?.webContents;
+        if (contents && !contents.isDestroyed()) contents.send('site-state-changed', state);
     }
     private owns(event: Pick<IpcMainInvokeEvent, 'sender' | 'senderFrame'>): boolean {
         return (

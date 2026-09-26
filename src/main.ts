@@ -33,6 +33,7 @@ import { OPEN_PROTOCOL, parseOpenLink } from './services/openLink';
 import { getSiteDictionary } from './services/siteDictionary';
 import { guardGpuStartup, isGpuCompatibilityMode, shouldRunGpuInProcess, type GpuRuntimeState } from './services/gpuProcessMode';
 import { detectNvidiaAdapter } from './services/gpuDetection';
+import { cleanSiteState, siteBroken } from './services/siteModules';
 import { tintIcon } from './services/devIcon';
 import { revealWindow } from './services/revealWindow';
 import { watchHiddenPage } from './services/hiddenPageWatchdog';
@@ -1009,6 +1010,15 @@ async function init() {
         const count = (input: unknown): number => (typeof input === 'number' && Number.isSafeInteger(input) && input >= 0 ? Math.min(input, 10000) : 0);
         diagnostics.record('wave.empty', { waveSeen: count(value.seen), waveArtistTracks: count(value.artistTracks), waveMoodTags: count(value.moodTags) });
     });
+    // Сайт поменялся: чего страница не нашла. Событие в журнал и строка в F1; сообщение после находки снимает строку
+    ipcMain.removeAllListeners('soundcloud:site-state');
+    ipcMain.on('soundcloud:site-state', (event, value: unknown) => {
+        const state = isTrustedSoundCloudSender(event) ? cleanSiteState(value) : null;
+        if (!state) return;
+        const broken = siteBroken(state);
+        if (broken) diagnostics.record('site.modules-missing', { sitePlayer: state.player, siteApi: state.api, siteSound: state.sound, siteTranslation: state.translation });
+        settingsManager?.setSiteState(broken ? state : null);
+    });
     // Место плеера сайта: окно истории не накрывает громкость и очередь
     ipcMain.removeAllListeners('soundcloud:player-area');
     ipcMain.on('soundcloud:player-area', (event, height: unknown, viewport: unknown) => {
@@ -1641,6 +1651,8 @@ async function init() {
     contentView.webContents.on('did-finish-load', async () => {
 
         diagnostics.record('page.loaded');
+        // Новая страница проверит сайт заново через минуту: прежняя отметка в F1 могла устареть
+        settingsManager?.setSiteState(null);
 
         // Show notification only on first load
         if (isInitialLoad) {

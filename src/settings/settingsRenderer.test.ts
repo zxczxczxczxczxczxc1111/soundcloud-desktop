@@ -64,6 +64,18 @@ it('загружает настройки из IPC и подключает за�
     expect(send).toHaveBeenCalledWith('toggle-settings');
 });
 
+it('сайт поменялся: строка в разделе диагностики, после находки пропадает', async () => {
+    const { emit } = await openSettings({ siteState: { player: false, api: true, sound: true, translation: true } });
+    const status = document.getElementById('siteStatus') as HTMLElement;
+    expect(status.hidden).toBe(false);
+    expect(status.textContent).toContain('не нашёл его плеер');
+    emit('site-state-changed', { player: true, api: true, sound: true, translation: false });
+    expect(status.textContent).toContain('перевод на русский не встал');
+    emit('site-state-changed', null);
+    expect(status.hidden).toBe(true);
+    expect(status.textContent).toBe('');
+});
+
 it('блоки главной переключаются сразу, язык сайта просит перезагрузку', async () => {
     const { send } = await openSettings({ siteLanguage: 'en', homeMore: false, homeRecent: true });
     const more = document.getElementById('homeMore') as HTMLInputElement;

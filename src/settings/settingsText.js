@@ -28,6 +28,9 @@ window.SETTINGS_EN = {
     'Не удалось определить видеокарту.': 'Could not detect the graphics adapter.',
     'NVIDIA не обнаружена.': 'NVIDIA not detected.',
     'Отключено параметром запуска.': 'Disabled by a launch argument.',
+    'Сайт SoundCloud изменился, и перевод на русский не встал.': 'SoundCloud has changed and the Russian translation did not load.',
+    'Сайт SoundCloud изменился, и клиент не нашёл его плеер. История, волна и радар временно не работают, музыка играет как обычно.':
+        'SoundCloud has changed and the client could not find its player. History, My Wave and the radar are unavailable for now; music plays as usual.',
 
     'Язык': 'Language',
     'Блокировать рекламу': 'Block ads',

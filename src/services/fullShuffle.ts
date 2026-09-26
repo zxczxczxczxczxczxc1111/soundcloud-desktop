@@ -1,3 +1,9 @@
+import * as siteModules from './siteModules';
+import type { WebpackRequire } from './siteModules';
+
+// Функции уходят на страницу текстом: поиск модулей берётся по голому имени, на странице его объявление лежит рядом
+const { siteRequires } = siteModules;
+
 interface QueueItem {
     explicit?: boolean;
 }
@@ -16,10 +22,6 @@ interface PlayManager {
     on(event: string, callback: (value?: unknown) => void): unknown;
     off(event: string, callback: (value?: unknown) => void): unknown;
 }
-interface WebpackRequire {
-    c?: Record<string, { exports?: unknown } | undefined>;
-}
-type ChunkList = { push(chunk: unknown): unknown };
 interface ShuffleWindow extends Window {
     __disposeFullShuffle?: () => void;
     __scSiteTranslation?: { language?: string };
@@ -72,18 +74,7 @@ export function installFullShuffle(enabled: boolean, texts: Record<'ru' | 'en', 
     const wait = (ms: number): Promise<void> => new Promise((resolve) => setTimeout(resolve, ms));
 
     function findRequire(): WebpackRequire[] {
-        const found: WebpackRequire[] = [];
-        const probe = '__fullShuffle' + Date.now() + Math.random().toString(36).slice(2);
-        const legacy = host.webpackJsonp as ChunkList | undefined;
-        if (Array.isArray(legacy))
-            legacy.push([[], { [probe]: (_module: unknown, _exports: unknown, require: WebpackRequire) => { found.push(require); } }, [[probe]]]);
-        if (found.length) return found;
-        for (const key of Object.keys(host)) {
-            const chunks = host[key] as ChunkList | undefined;
-            if (key.startsWith('webpackChunk') && Array.isArray(chunks))
-                chunks.push([[probe], {}, (require: WebpackRequire) => { found.push(require); }]);
-        }
-        return found;
+        return siteRequires(host, '__fullShuffle');
     }
 
     function findManager(): PlayManager | null {
@@ -240,5 +231,5 @@ export function installFullShuffle(enabled: boolean, texts: Record<'ru' | 'en', 
 }
 
 export function fullShuffleScript(enabled: boolean): string {
-    return '(' + installFullShuffle.toString() + ')(' + JSON.stringify(enabled) + ',' + JSON.stringify(SHUFFLE_TEXTS) + ');';
+    return '(function(){\n' + siteRequires.toString() + '\n(' + installFullShuffle.toString() + ')(' + JSON.stringify(enabled) + ',' + JSON.stringify(SHUFFLE_TEXTS) + ');\n})();';
 }

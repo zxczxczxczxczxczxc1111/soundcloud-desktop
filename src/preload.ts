@@ -69,7 +69,9 @@ export function installSiteTranslation(dictionary: SiteDictionary): void {
     // Сайт уже запустился или перевод уже стоит: подменять поздно, остаётся английский
     if (page.webpackJsonp !== undefined || page.__scSiteTranslation !== undefined) return;
     const missing = new Set<string>();
-    Object.defineProperty(page, '__scSiteTranslation', { value: Object.freeze({ language: 'ru', missing }) });
+    // lingua: модуль перевода сайта перехвачен. Волна через минуту смотрит сюда: сайт мог сменить способ загрузки модулей
+    const state = { lingua: false };
+    Object.defineProperty(page, '__scSiteTranslation', { value: Object.freeze({ language: 'ru', missing, state }) });
 
     const own = (table: object, key: string) => Object.prototype.hasOwnProperty.call(table, key);
     const contextOf = (options: unknown) => {
@@ -188,8 +190,10 @@ export function installSiteTranslation(dictionary: SiteDictionary): void {
                 const wrapped: Factory = function (this: unknown, module, ...rest) {
                     const result = (factory as Factory).call(this, module, ...rest);
                     try {
-                        if (isLingua) patchLingua(module.exports);
-                        else patchLocale(module.exports);
+                        if (isLingua) {
+                            patchLingua(module.exports);
+                            state.lingua = true;
+                        } else patchLocale(module.exports);
                     } catch (error) {
                         console.warn('[перевод] модуль ' + id + ' не пропатчен', error);
                     }
@@ -296,6 +300,10 @@ contextBridge.exposeInMainWorld('soundcloudAPI', {
     // Волна от трека осталась пустой: числа по источникам в журнал диагностики, проверяет main
     reportWaveEmpty: (counts: unknown) => {
         ipcRenderer.send('soundcloud:wave-empty', counts);
+    },
+    // Сайт поменялся: чего страница не нашла (плеер, API, модель трека, перевод); флаги проверяет main
+    reportSite: (state: unknown) => {
+        ipcRenderer.send('soundcloud:site-state', state);
     },
     // Место плеера сайта снизу страницы: окно истории кончается выше него, числа проверяет main
     reportPlayerArea: (height: unknown, viewport: unknown) => {

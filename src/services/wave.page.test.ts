@@ -80,7 +80,7 @@ function fakeSite(related: (seed: number) => WaveTrack[], extra: Extra = () => u
         },
     });
     Object.assign(window, { webpackJsonp: jsonp });
-    return { player, api, states, setItems: (list: FakeItem[], at: number) => { items = list; index = at; } };
+    return { player, api, states, modules, setItems: (list: FakeItem[], at: number) => { items = list; index = at; } };
 }
 
 beforeEach(() => {
@@ -107,6 +107,62 @@ afterEach(() => {
 const relatedTracks = (seed: number): WaveTrack[] =>
     Array.from({ length: 8 }, (_, i) => ({ id: seed * 1000 + i, kind: 'track', user_id: seed * 10 + i, duration: 200000, title: 'Rel ' + seed + '-' + i, policy: i === 7 ? 'SNIP' : 'ALLOW' }));
 
+it('находит модули сайта и в новом формате webpackChunk', async () => {
+    const site = fakeSite(relatedTracks);
+    const host = window as unknown as Record<string, unknown>;
+    delete host.webpackJsonp;
+    const chunks: unknown[] = [];
+    Object.defineProperty(chunks, 'push', { value: (chunk: [unknown, object, (require: object) => void]) => { chunk[2]({ c: site.modules }); return 0; } });
+    host.webpackChunk_soundcloud = chunks;
+    try {
+        window.eval(waveScript()); await vi.advanceTimersByTimeAsync(100);
+        document.querySelector<HTMLButtonElement>('#sc-wave .scw-play')?.click(); await vi.advanceTimersByTimeAsync(100);
+        expect(site.player.replaceQueue).toHaveBeenCalled();
+    } finally {
+        delete host.webpackChunk_soundcloud;
+    }
+});
+it('сайт без модулей: через минуту страница сообщает, чего нет, поиск редеет, находка снимает отметку', async () => {
+    const site = fakeSite(relatedTracks);
+    let pushes = 0;
+    let ready = false;
+    const jsonp: unknown[] = [];
+    Object.defineProperty(jsonp, 'push', {
+        value: (chunk: [unknown, Record<string, (m: object, e: object, r: object) => void>, string[][]]) => {
+            pushes++;
+            if (ready) for (const [id] of chunk[2]) chunk[1][id]({}, {}, { c: site.modules });
+            return 0;
+        },
+    });
+    Object.assign(window, { webpackJsonp: jsonp });
+    const reportSite = vi.fn();
+    Object.assign(window, { soundcloudAPI: { reportSite } });
+    window.eval(waveScript());
+    await vi.advanceTimersByTimeAsync(59_000);
+    expect(reportSite).not.toHaveBeenCalled();
+    await vi.advanceTimersByTimeAsync(1_000);
+    expect(reportSite).toHaveBeenCalledTimes(1);
+    expect(reportSite).toHaveBeenLastCalledWith({ player: false, api: false, sound: false, translation: true });
+    // Раньше после 20 попыток поиск шёл раз в 10 с навсегда: за час ещё 360 пробных модулей в сайте
+    const before = pushes;
+    await vi.advanceTimersByTimeAsync(60 * 60_000);
+    expect(pushes - before).toBeLessThan(15);
+    ready = true;
+    await vi.advanceTimersByTimeAsync(10 * 60_000);
+    expect(reportSite).toHaveBeenLastCalledWith({ player: true, api: true, sound: true, translation: true });
+});
+it('перевод сайта на русский не встал: страница сообщает и об этом', async () => {
+    fakeSite(relatedTracks);
+    const reportSite = vi.fn();
+    Object.assign(window, { soundcloudAPI: { reportSite }, __scSiteTranslation: { language: 'ru', missing: new Set(), state: { lingua: false } } });
+    try {
+        window.eval(waveScript());
+        await vi.advanceTimersByTimeAsync(60_000);
+        expect(reportSite).toHaveBeenCalledWith({ player: true, api: true, sound: true, translation: false });
+    } finally {
+        delete (window as unknown as Record<string, unknown>).__scSiteTranslation;
+    }
+});
 it('подбирает треки до запуска, запускает волну и гасит автоплей сайта', async () => {
     const site = fakeSite(relatedTracks);
     window.eval(waveScript());
