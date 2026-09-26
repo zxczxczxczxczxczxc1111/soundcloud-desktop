@@ -537,7 +537,8 @@ export function installLibrary(core: LibraryCore): LibrarySection {
         sources.setAttribute('aria-expanded', String(librarySourcesOpen));
         const list = textButton('lib-list', T.libraryList);
         list.setAttribute('aria-expanded', String(libraryListOpen));
-        head.append(play, titles, seg, sources, list);
+        // Режим последним: в узком окне и на длинных русских подписях он уходит строкой ниже целиком, а не сжимает название
+        head.append(play, titles, sources, list, seg);
         box.append(head);
         if (librarySourcesOpen) box.append(sourcesPanel(pick, mine));
         if (libraryListOpen) box.append(libraryRows(plan));

@@ -551,8 +551,8 @@ export function installRadar(core: RadarCore): RadarSection {
         status.setAttribute('role', 'status');
         titles.append(el('b', '', title), status);
         head.append(titles);
-        if (!uploads) {
-            const tools = el('div', 'scw-mix-tools');
+        const tools = uploads ? null : el('div', 'scw-mix-tools');
+        if (tools) {
             if (radarArchive.length > 1) {
                 const select = el('select', 'scw-select');
                 select.dataset.role = 'radar-archive';
@@ -583,7 +583,8 @@ export function installRadar(core: RadarCore): RadarSection {
         }
         const close = button('scw-icon', 'mix-close', T.mixClose, 'x');
         close.title = T.mixClose;
-        head.append(close);
+        // Крестик в одной группе с кнопками выпуска: в узком окне они уходят строкой ниже вместе
+        (tools ?? head).append(close);
         box.append(head);
         if (uploads) box.append(el('div', 'scw-hint', T.radarUploadsHint));
         if (!uploads && radarShowFound) {

@@ -2406,12 +2406,14 @@ export function installWave(config: WaveConfig, createPlayback: typeof installPl
         // Внутри сетки полки список занимает всю строку под своей карточкой; при 4 колонках свои строка и уголок
         '.scw-shelf>.scw-mix{grid-column:1/-1;grid-row:var(--scw-row6);margin-top:0}',
         '@media(max-width:1200px){#sc-wave .scw-shelf>.scw-mix{grid-row:var(--scw-row4)}#sc-wave .scw-mix::before{left:calc((100% - 60px) / 4 * (var(--scw-at4) + .5) + 20px * var(--scw-at4) - 8px)}}',
-        '.scw-mix-head{display:flex;align-items:center;gap:12px;margin-bottom:8px}',
+        // Название не уже 240 px: в узком окне и на длинных русских подписях кнопки уходят строкой ниже, а не сжимают его
+        '.scw-mix-head{display:flex;flex-wrap:wrap;align-items:center;gap:12px;margin-bottom:8px}',
+        '.scw-mix-head>.scw-mix-tools{margin-left:auto}',
         '#sc-wave .scw-mix-play{width:40px;height:40px;border-radius:50%;background:var(--scw-btn);display:grid;place-items:center;flex:none;transition:filter .12s,transform .12s}',
         '#sc-wave .scw-mix-play:hover{filter:brightness(.9);transform:scale(1.06)}',
         '#sc-wave .scw-mix-play:active{transform:scale(.95)}',
         '.scw-mix-play svg{width:18px;height:18px;fill:var(--scw-btn-ink)}',
-        '.scw-mix-title{flex:1;min-width:0}',
+        '.scw-mix-title{flex:1 1 240px;min-width:0}',
         '.scw-mix-title b{display:block;font-size:16px;line-height:22px;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}',
         '.scw-mix-title span{color:var(--scw-muted)}',
         '.scw-mix .scw-hint{padding:8px 0 12px}',
@@ -2420,7 +2422,7 @@ export function installWave(config: WaveConfig, createPlayback: typeof installPl
         '.scw-lib{padding:16px 16px 8px;border-radius:6px;background:var(--scw-film)}',
         '#sc-wave .scw-lib .scw-seg button[aria-checked="true"]{background:rgba(255,255,255,.14);color:#fff}',
         '#sc-wave .scw-lib .scw-btn[aria-expanded="true"]{box-shadow:inset 0 0 0 32px var(--scw-film-strong)}',
-        '.scw-lib .scw-mix-head{flex-wrap:wrap}',
+        '.scw-lib .scw-seg{flex:none}',
         // Выбор источников: без галочек, выбранное светлой плёнкой и полужирным; название светлее числа
         '.scw-lib-pick{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:2px 16px;margin:4px -8px 8px;padding-top:8px;border-top:1px solid var(--scw-film-strong)}',
         '#sc-wave .scw-lib-opt{display:flex;align-items:center;min-width:0;height:36px;padding:0 8px;border-radius:4px;text-align:left;color:rgba(255,255,255,.85);transition:background-color .12s,color .12s}',
