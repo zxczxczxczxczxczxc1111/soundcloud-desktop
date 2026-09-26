@@ -39,6 +39,7 @@ import { createRadarScheduler, registerRadarIpc } from './ipc/radarIpc';
 import { registerLibraryIpc } from './ipc/libraryIpc';
 import { registerBackupIpc } from './ipc/backupIpc';
 import { registerSettingsIpc } from './ipc/settingsIpc';
+import { registerAccountsIpc, type PendingChanges } from './ipc/accountsIpc';
 import {
     app,
     BrowserWindow,
@@ -155,27 +156,14 @@ const store = new Store<Record<string, unknown>>({
 });
 applyPreferenceMigrations(store);
 
-interface Account { id: string; name: string }
-function getAccounts(): Account[] {
-    const value = store.get('accounts');
-    if (!Array.isArray(value)) return [{ id: 'default', name: 'Основной аккаунт' }];
-    const accounts = value.filter((item): item is Account =>
-        item !== null && typeof item === 'object' &&
-        typeof item.id === 'string' && /^(default|acc_[0-9]+)$/.test(item.id) &&
-        typeof item.name === 'string');
-    if (!accounts.some((item) => item.id === 'default')) accounts.unshift({ id: 'default', name: 'Основной аккаунт' });
-    return accounts;
-}
-
 // Global variables
 let mainWindow: BrowserWindow;
 let notificationManager: NotificationManager;
 let settingsManager: SettingsManager;
 let proxyService: ProxyService;
 let adblockService: AdblockService;
-let networkSettingsDirty = false;
-// Язык сайта встаёт только при загрузке страницы
-let pageReloadNeeded = false;
+// Ждёт «Применить»: сеть и перезагрузка страницы (язык сайта встаёт только при загрузке)
+const pending: PendingChanges = { network: false, reload: false };
 let waveJournal: WaveJournal | null = null;
 let waveExclusions: WaveExclusions | null = null;
 let waveSignals: WaveSignals | null = null;
@@ -973,7 +961,7 @@ async function init() {
         profilePath,
         about: { version: app.getVersion(), build: String(buildInfo.build ?? '') },
         applySettingChange,
-        reloadNeeded: () => pageReloadNeeded || networkSettingsDirty,
+        reloadNeeded: () => pending.reload || pending.network,
     });
     clearTimeout(autoBackupTimer);
     autoBackupTimer = setTimeout(() => void backup.runAutoBackup().catch((error: unknown) => console.warn('Автокопия не выполнена', error)), AUTO_BACKUP_DELAY);
@@ -1108,15 +1096,15 @@ async function init() {
     function applySettingChange(data: SettingChange): void {
         const key = data.key;
         if (key === 'proxyPassword') {
-            try { proxyService.setPassword(data.value); networkSettingsDirty = true; } catch (error) { queueToastNotification(String(error)); }
+            try { proxyService.setPassword(data.value); pending.network = true; } catch (error) { queueToastNotification(String(error)); }
             return;
         }
         store.set(key, data.value);
-        if (key.startsWith('proxy') || key === 'adBlocker') networkSettingsDirty = true;
+        if (key.startsWith('proxy') || key === 'adBlocker') pending.network = true;
         // Новое расписание может сделать выпуск уже наступившим; повтор недели отсекает хранилище
         if (key === 'radarDay' || key === 'radarTime' || key === 'radarZone') radarScheduler?.wake(5000);
         if (key === 'siteLanguage') {
-            pageReloadNeeded = true;
+            pending.reload = true;
             applyAppLanguage();
             // F1 переключается сразу, статус обновлений тоже приходит на новом языке
             if (updateService) settingsManager.getView()?.webContents.send('update-state', updateService.getState());
@@ -1175,94 +1163,19 @@ async function init() {
         if (key.startsWith('discord') || key.startsWith('display') || key === 'statusDisplayType' || key === 'trackParserEnabled' || key === 'siteLanguage') sendPresencePreview();
     }
 
-    // handle account switching
-    ipcMain.handle('get-accounts', (event) => {
-            if (!isTrustedLocalSender(event)) throw new Error('Недопустимый отправитель IPC');
-
-        return {
-            accounts: getAccounts(),
-            currentAccountId: store.get('currentAccountId', 'default'),
-        };
-    });
-
-    ipcMain.on('switch-account', (_, accountId) => {
-            if (!isTrustedLocalSender(_)) return;
-
-        const accounts = getAccounts();
-        if (typeof accountId !== 'string' || !accounts.some((account) => account.id === accountId)) return;
-        store.set('currentAccountId', accountId);
-        app.relaunch();
-        app.quit();
-    });
-
-    ipcMain.on('add-account', (event) => {
-            if (!isTrustedLocalSender(event)) return;
-
-        const newId = `acc_${Date.now()}`;
-        const accounts = getAccounts();
-        accounts.push({ id: newId, name: 'Новый аккаунт' });
-        store.set('accounts', accounts);
-        store.set('currentAccountId', newId);
-        app.relaunch();
-        app.quit();
-    });
-
-    ipcMain.on('logout-account', async (event) => {
-            if (!isTrustedLocalSender(event)) return;
-
-        const currentId = store.get('currentAccountId', 'default');
-
-        if (contentView) {
-            // log out of session
-            await contentView.webContents.session.clearStorageData();
-        }
-
-        // if not default account, remove from list
-        if (currentId !== 'default') {
-            const accounts = getAccounts();
-            const filteredAccounts = accounts.filter((a: { id: string }) => a.id !== currentId);
-
-            store.set('accounts', filteredAccounts);
-            store.set('currentAccountId', 'default'); // Switch back to main
-
-            app.relaunch();
-            app.quit();
-        } else {
-            // if default account, reload page logged out
-            if (contentView) contentView.webContents.reload();
-        }
-    });
-
-    // handle applying all changes
-    ipcMain.on('apply-changes', async (event) => {
-            if (!isTrustedLocalSender(event)) return;
-
-        try {
-            if (networkSettingsDirty) {
-                await proxyService.apply();
-                await adblockService.setEnabled(store.get('adBlocker') === true);
-                networkSettingsDirty = false;
-                pageReloadNeeded = true;
-            }
-            if (pageReloadNeeded) {
-                pageReloadNeeded = false;
-                contentView.webContents.reload();
-            }
-            if (store.get('discordRichPresence')) await presenceService.updatePresence(playback.info);
-            else presenceService.clearActivity();
-        } catch (error) { queueToastNotification(String(error)); }
-    });
-
-    ipcMain.on('soundcloud:profile-update', (event, username: unknown) => {
-        if (!isTrustedSoundCloudSender(event) || typeof username !== 'string' || !/^[a-zA-Z0-9_.-]{1,100}$/.test(username)) return;
-        const accounts = getAccounts();
-        const currentId = store.get('currentAccountId', 'default');
-        const account = accounts.find((item) => item.id === currentId);
-        if (account && account.name !== username) {
-            account.name = username;
-            store.set('accounts', accounts);
-            settingsManager.getView()?.webContents.send('accounts-updated');
-        }
+    registerAccountsIpc(ipcMain, {
+        trustedLocal: isTrustedLocalSender,
+        trustedSite: isTrustedSoundCloudSender,
+        store,
+        app,
+        page: () => contentView?.webContents ?? null,
+        proxy: () => proxyService,
+        adblock: () => adblockService,
+        presence: () => presenceService,
+        playback,
+        pending,
+        toast: queueToastNotification,
+        settingsView: () => settingsManager?.getView()?.webContents,
     });
     try { await proxyService.apply(); } catch (error) {
         queueToastNotification(String(error));
