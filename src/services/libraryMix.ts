@@ -30,21 +30,24 @@ export function isMyMusicSetting(value: unknown): value is MyMusicSetting {
 
 /**
  * Пул из выбранных источников по порядку выбора: трек из лайков и нескольких плейлистов берётся один раз,
- * перезалив той же версии тоже (versionKeys это ключи вероятных копий, versionKey ключ проверки), другие версии остаются.
- * keep отсекает запреты и недоступное
+ * перезалив той же версии другим аккаунтом тоже (versionKeys это ключи вероятных копий, versionKey ключ проверки),
+ * другие версии остаются. У одного аккаунта одинаковое название с близкой длительностью это разные треки
+ * (две «Interlude» с разных альбомов), они оба остаются. keep отсекает запреты и недоступное
  */
 export function libraryPool<T extends { id: number }>(
-    sources: LibrarySource<T>[], keep: (track: T) => boolean, versionKeys: (track: T) => string[], versionKey: (track: T) => string,
+    sources: LibrarySource<T>[], keep: (track: T) => boolean, versionKeys: (track: T) => string[], versionKey: (track: T) => string, uploaderOf: (track: T) => number,
 ): LibraryEntry<T>[] {
     const ids = new Set<number>();
-    const versions = new Set<string>();
+    const versions = new Map<string, Set<number>>();
     const pool: LibraryEntry<T>[] = [];
     for (const source of sources)
         for (const track of source.tracks) {
             if (ids.has(track.id)) continue;
             ids.add(track.id);
-            if (!keep(track) || versions.has(versionKey(track))) continue;
-            for (const key of versionKeys(track)) versions.add(key);
+            if (!keep(track)) continue;
+            const uploader = uploaderOf(track);
+            if ([...(versions.get(versionKey(track)) ?? [])].some((other) => other !== uploader)) continue;
+            for (const key of versionKeys(track)) versions.set(key, (versions.get(key) ?? new Set<number>()).add(uploader));
             pool.push({ track, from: source.name });
         }
     return pool;

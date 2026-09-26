@@ -3339,7 +3339,7 @@ export function installWave(config: WaveConfig, createPlayback: typeof installPl
             }
             sources.push({ key, name: list.title || playlistName(id) || '…', tracks: list.tracks });
         }
-        const pool = libraryPool(sources, libraryKeeps, copyKeys, copyKey);
+        const pool = libraryPool(sources, libraryKeeps, copyKeys, copyKey, trackArtist);
         for (const entry of pool) libraryFrom.set(entry.track.id, entry.from);
         return pool;
     }

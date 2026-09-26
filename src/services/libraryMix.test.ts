@@ -27,9 +27,16 @@ it('настройка: режим и источники по аккаунтам
 it('пул: источники по порядку выбора, трек и перезалив той же версии один раз, запреты отсекаются', () => {
     const likes = [item(1), item(2), item(3, 3, 'song')];
     const playlist = [item(2), item(4, 4, 'song'), item(5), item(6)];
-    const pool = libraryPool([{ key: 'likes', name: '', tracks: likes }, { key: 'playlist:8', name: 'Mine', tracks: playlist }], (track) => track.id !== 5, keys, key);
+    const pool = libraryPool([{ key: 'likes', name: '', tracks: likes }, { key: 'playlist:8', name: 'Mine', tracks: playlist }], (track) => track.id !== 5, keys, key, (track) => track.artist);
     expect(pool.map((entry) => entry.track.id)).toEqual([1, 2, 3, 6]);
     expect(pool.map((entry) => entry.from)).toEqual(['', '', '', 'Mine']);
+});
+
+it('пул: одинаковое название у одного аккаунта это разные треки, копией считается только загрузка другого аккаунта', () => {
+    // Две «Interlude» аккаунта 7 с разных альбомов остаются, перезалив той же версии аккаунтом 8 нет
+    const likes = [item(1, 7, 'interlude'), item(2, 7, 'interlude'), item(3, 8, 'interlude'), item(4, 8, 'other')];
+    const pool = libraryPool([{ key: 'likes', name: '', tracks: likes }], () => true, keys, key, (track) => track.artist);
+    expect(pool.map((entry) => entry.track.id)).toEqual([1, 2, 4]);
 });
 
 it('артисты разносятся, пока есть кем разбавить', () => {
