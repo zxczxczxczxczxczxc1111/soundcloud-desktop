@@ -38,6 +38,7 @@ import { TimeoutError, withTimeout } from './utils/withTimeout';
 import { tintIcon } from './services/devIcon';
 import { revealWindow } from './services/revealWindow';
 import { watchHiddenPage } from './services/hiddenPageWatchdog';
+import { registerWindowIpc } from './ipc/windowIpc';
 import {
     app,
     BrowserWindow,
@@ -572,40 +573,14 @@ function adjustContentViews() {
 function setupWindowControls() {
     if (!mainWindow) return;
 
-    ipcMain.on('minimize-window', (event) => {
-            if (!isTrustedLocalSender(event)) return;
-
-        if (!mainWindow) return;
-        const minimizeToTray = store.get('minimizeToTray', true);
-        if (minimizeToTray) {
-            mainWindow.hide();
-        } else {
-            mainWindow.minimize();
-        }
-    });
-
-    ipcMain.on('maximize-window', (event) => {
-            if (!isTrustedLocalSender(event)) return;
-
-        if (mainWindow) {
-            if (mainWindow.isMaximized()) {
-                mainWindow.unmaximize();
-            } else {
-                mainWindow.maximize();
-            }
-        }
-    });
-
-    ipcMain.on('title-bar-double-click', (event) => {
-            if (!isTrustedLocalSender(event)) return;
-
-        if (mainWindow) {
-            if (mainWindow.isMaximized()) {
-                mainWindow.unmaximize();
-            } else {
-                mainWindow.maximize();
-            }
-        }
+    registerWindowIpc(ipcMain, {
+        trustedLocal: isTrustedLocalSender,
+        store,
+        window: () => mainWindow ?? null,
+        page: () => contentView?.webContents ?? null,
+        header: () => headerView?.webContents ?? null,
+        navigateBack,
+        headerTexts,
     });
 
     const sendMaximizedState = (): void => {
@@ -626,84 +601,6 @@ function setupWindowControls() {
 
     mainWindow.on('resize', () => {
         adjustContentViews();
-    });
-
-    ipcMain.on('close-window', (event) => {
-            if (!isTrustedLocalSender(event)) return;
-
-        if (mainWindow) {
-            const minimizeToTray = store.get('minimizeToTray', true);
-            if (minimizeToTray) {
-                mainWindow.hide();
-            } else {
-                mainWindow.close();
-            }
-        }
-    });
-
-    // nav handlers
-    ipcMain.on('navigate-back', (event) => {
-            if (!isTrustedLocalSender(event)) return;
-
-        navigateBack();
-    });
-
-    ipcMain.on('navigate-forward', (event) => {
-            if (!isTrustedLocalSender(event)) return;
-
-        if (contentView && contentView.webContents.navigationHistory.canGoForward()) {
-            contentView.webContents.navigationHistory.goForward();
-        }
-    });
-
-    ipcMain.on('refresh-page', (event) => {
-            if (!isTrustedLocalSender(event)) return;
-
-        if (contentView) {
-            if (headerView && headerView.webContents) {
-                headerView.webContents.send('refresh-state-changed', true);
-            }
-            console.log('Manual refresh triggered - reloading page');
-            contentView.webContents.reload();
-        }
-    });
-
-    ipcMain.on('cancel-refresh', (event) => {
-            if (!isTrustedLocalSender(event)) return;
-
-        if (contentView) {
-            contentView.webContents.stop();
-            if (headerView && headerView.webContents) {
-                headerView.webContents.send('refresh-state-changed', false);
-            }
-        }
-    });
-
-    // Подсказки кнопок шапки на языке приложения
-    ipcMain.handle('get-header-texts', (event) => {
-        if (!isTrustedLocalSender(event)) throw new Error('Недопустимый отправитель IPC');
-        return headerTexts();
-    });
-
-    // Handle is-maximized requests
-    ipcMain.handle('is-maximized', (event) => {
-            if (!isTrustedLocalSender(event)) throw new Error('Недопустимый отправитель IPC');
-
-        return mainWindow ? mainWindow.isMaximized() : false;
-    });
-
-    // Handle minimize to tray setting
-    ipcMain.handle('get-minimize-to-tray', (event) => {
-            if (!isTrustedLocalSender(event)) throw new Error('Недопустимый отправитель IPC');
-
-        return store.get('minimizeToTray', true);
-    });
-
-    // handle nav controls enabled setting
-    ipcMain.handle('get-navigation-controls-enabled', (event) => {
-            if (!isTrustedLocalSender(event)) throw new Error('Недопустимый отправитель IPC');
-
-        return store.get('navigationControlsEnabled', false);
     });
 
     adjustContentViews();
