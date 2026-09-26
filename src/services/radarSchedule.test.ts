@@ -126,6 +126,48 @@ it('параллельный вызов ждёт идущий проход, ош
     expect(radar.getState()).toMatchObject({ phase: 'error', error: 'Библиотека не ответила вовремя' });
 });
 
+// Замер 26.09.2026 на каталоге владельца: фоновый проход за 20 с обновляет 10-20 источников из 155, дальше проходы пустые
+it('после выпуска, когда обновлять нечего, проверка раз в час, но не позже минуты после следующего слота', async () => {
+    vi.useFakeTimers();
+    const radars: RadarScheduler[] = [];
+    try {
+        vi.setSystemTime(Date.parse('2026-09-30T10:00:00Z'));
+        let remaining = 5;
+        const env = scheduler(Date.now(), { now: () => Date.now(), collect: vi.fn(async (user: number) => ({ user, checked: 5, remaining, stopped: '' as const })) });
+        env.published.add('2026-09-25');
+        const radar = new RadarScheduler(env.deps);
+        radars.push(radar);
+        radar.start(0);
+        await vi.advanceTimersByTimeAsync(0);
+        expect(env.deps.collect).toHaveBeenCalledTimes(1);
+        // Несвежие остались: следующий проход как раньше, через 10 минут
+        remaining = 0;
+        await vi.advanceTimersByTimeAsync(10 * 60000);
+        expect(env.deps.collect).toHaveBeenCalledTimes(2);
+        // Всё свежее: час тишины
+        await vi.advanceTimersByTimeAsync(59 * 60000);
+        expect(env.deps.collect).toHaveBeenCalledTimes(2);
+        await vi.advanceTimersByTimeAsync(60000);
+        expect(env.deps.collect).toHaveBeenCalledTimes(3);
+
+        // За полчаса до слота пятницы (09:00 по Москве): новый выпуск начинается через минуту после слота, а не через час
+        vi.setSystemTime(Date.parse('2026-10-02T05:30:00Z'));
+        const near = scheduler(Date.now(), { now: () => Date.now() });
+        near.published.add('2026-09-25');
+        const late = new RadarScheduler(near.deps);
+        radars.push(late);
+        late.start(0);
+        await vi.advanceTimersByTimeAsync(0);
+        expect(near.deps.task).not.toHaveBeenCalled();
+        await vi.advanceTimersByTimeAsync(30 * 60000);
+        expect(near.deps.task).not.toHaveBeenCalled();
+        await vi.advanceTimersByTimeAsync(60000);
+        expect(near.deps.task).toHaveBeenCalledWith(77, '2026-10-02', Date.parse('2026-10-02T06:00:00Z'), 'Europe/Moscow');
+    } finally {
+        for (const radar of radars) radar.stop();
+        vi.useRealTimers();
+    }
+});
 it('таймер: первая проверка после запуска, дальше раз в интервал, без сети чаще; стоп гасит таймер', async () => {
     vi.useFakeTimers();
     try {

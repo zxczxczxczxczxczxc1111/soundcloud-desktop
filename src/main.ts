@@ -1,4 +1,4 @@
-import { DiagnosticJournal } from './services/diagnosticJournal';
+import { DiagnosticJournal, LOOP_RESOLUTION_MS, loopDelayStats, metricsDue } from './services/diagnosticJournal';
 import { monitorEventLoopDelay } from 'perf_hooks';
 import { installRendererRecovery } from './services/rendererRecovery';
 import { mediaControlsScript } from './services/mediaControls';
@@ -282,7 +282,9 @@ let diagnosticTimer: ReturnType<typeof setInterval> | undefined;
 const awayTracker = new AwayTracker(() => powerMonitor.getSystemIdleTime());
 let awayTimer: ReturnType<typeof setInterval> | undefined;
 let autoBackupTimer: ReturnType<typeof setTimeout> | undefined;
-const loopDelay = monitorEventLoopDelay({ resolution: 20 });
+// Шаг 100 мс: при 20 мс замер будил главный процесс 50 раз в секунду всю жизнь клиента
+const loopDelay = monitorEventLoopDelay({ resolution: LOOP_RESOLUTION_MS });
+let lastMetricsAt = 0;
 let trackUpdates = 0;
 let trackChanges = 0;
 let lastUpdateAt = Date.now();
@@ -747,13 +749,16 @@ async function init() {
         if (!app.setAsDefaultProtocolClient(OPEN_PROTOCOL, process.execPath, ['--'])) console.warn('Протокол ссылок на треки не зарегистрирован');
     }
     diagnosticTimer = setInterval(() => {
+        const shown = !!mainWindow && !mainWindow.isDestroyed() && mainWindow.isVisible() && !mainWindow.isMinimized();
+        if (!metricsDue(Date.now(), lastMetricsAt, !lastTrackInfo.isPlaying && !shown)) return;
+        lastMetricsAt = Date.now();
         const metrics = app.getAppMetrics();
         diagnostics.record('performance', {
             uptimeSeconds: process.uptime(), processes: metrics.length,
             cpuPercent: metrics.reduce((sum, item) => sum + item.cpu.percentCPUUsage, 0),
             workingSetMiB: metrics.reduce((sum, item) => sum + item.memory.workingSetSize, 0) / 1024,
             privateMiB: metrics.reduce((sum, item) => sum + (item.memory.privateBytes ?? 0), 0) / 1024,
-            loopP95Ms: loopDelay.percentile(95) / 1e6, loopMaxMs: loopDelay.max / 1e6,
+            ...loopDelayStats(loopDelay),
             updates: trackUpdates, trackChanges, sinceUpdateMs: Date.now() - lastUpdateAt,
             sinceProgressMs: Date.now() - lastProgressAt, playing: lastTrackInfo.isPlaying,
             hasTrack: !!lastTrackInfo.title, windowVisible: !!mainWindow && !mainWindow.isDestroyed() && mainWindow.isVisible(),

@@ -2,7 +2,7 @@ import { mkdtempSync, readFileSync, readdirSync, rmSync, existsSync, writeFileSy
 import { tmpdir } from 'os';
 import { join } from 'path';
 import { afterEach, expect, it, vi } from 'vitest';
-import { DiagnosticJournal, safeFields } from './diagnosticJournal';
+import { DiagnosticJournal, loopDelayStats, metricsDue, safeFields } from './diagnosticJournal';
 const roots: string[] = [];
 const journals: DiagnosticJournal[] = [];
 function create(limit?: number) {
@@ -24,6 +24,17 @@ it('allows diagnostics but drops secrets, URLs and arbitrary strings', () => {
     expect(text).not.toContain('secret');
     expect(text).toContain('TypeError');
     expect(stderr).toHaveBeenCalled();
+});
+it('задержка цикла пишется превышением над шагом замера, показатели в простое раз в 5 минут', () => {
+    // Замер 26.09.2026 на Node 24 под Windows: пустой процесс при шаге 100 мс даёт p95 110.9 и максимум 111.1
+    const quiet = loopDelayStats({ percentile: () => 110.9e6, max: 111.1e6 }, 100);
+    expect(quiet.loopP95Ms).toBeCloseTo(10.9);
+    expect(quiet.loopMaxMs).toBeCloseTo(11.1);
+    expect(loopDelayStats({ percentile: () => 109.3e6, max: 181e6 }, 100).loopMaxMs).toBeCloseTo(81);
+    expect(loopDelayStats({ percentile: () => 0, max: 0 }, 100)).toEqual({ loopP95Ms: 0, loopMaxMs: 0 });
+    expect(metricsDue(60_000, 30_000, false)).toBe(true);
+    expect(metricsDue(299_000, 0, true)).toBe(false);
+    expect(metricsDue(300_000, 0, true)).toBe(true);
 });
 it('пустая волна: в журнал попадают только числа по источникам', () => {
     const { root, journal } = create();

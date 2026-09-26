@@ -146,14 +146,17 @@ export interface RadarSchedulerDeps {
 
 // Планировщик: проверка при запуске, раз в 10 минут, после сна и по возвращении сети. Между слотами источники
 // подновляются понемногу, в слот собирается выпуск: задача периода одна, её старт переживает перезапуск,
-// публикация не позже бюджета от старта; пустота при незавершённом обходе не публикуется
+// публикация не позже бюджета от старта; пустота при незавершённом обходе не публикуется.
+// Когда после выпуска обновлять нечего, проверка раз в час, но не позже минуты после следующего слота: проход за 20 с
+// обновляет 10-20 источников, большой каталог так же обходится раз в 10 минут
 export class RadarScheduler {
     private timer: ReturnType<typeof setTimeout> | undefined;
     private running: Promise<void> | null = null;
     private stopped = false;
+    private quiet = false;
     private state: RadarState = { phase: 'idle', period: '', error: '', updated: 0 };
 
-    constructor(private deps: RadarSchedulerDeps, private interval = 10 * MINUTE, private backgroundBudget = 20000) {}
+    constructor(private deps: RadarSchedulerDeps, private interval = 10 * MINUTE, private backgroundBudget = 20000, private quietInterval = 60 * MINUTE) {}
 
     public getState(): RadarState {
         return this.state;
@@ -178,9 +181,16 @@ export class RadarScheduler {
             void this.tick().finally(() => {
                 // Без сети или входа проверка чаще: выпуск собирается вскоре после их возвращения
                 const waiting = this.state.phase === 'offline' || this.state.phase === 'no-session';
-                if (!this.stopped && this.timer === undefined) this.plan(waiting ? Math.min(MINUTE, this.interval) : this.interval);
+                if (!this.stopped && this.timer === undefined) this.plan(waiting ? Math.min(MINUTE, this.interval) : this.quiet ? this.quietDelay() : this.interval);
             });
         }, delay);
+    }
+    private quietDelay(): number {
+        const now = this.deps.now();
+        const schedule = this.deps.schedule();
+        // Следующий слот через неделю от текущего; полнедели запаса покрывает переход на летнее время
+        const next = radarPeriod(radarPeriod(now, schedule).at + 7.5 * 24 * 3600000, schedule).at;
+        return Math.min(this.quietInterval, Math.max(MINUTE, next - now + MINUTE));
     }
     private set(phase: RadarPhase, period: string, error = ''): void {
         this.state = { phase, period, error, updated: this.deps.now() };
@@ -195,6 +205,7 @@ export class RadarScheduler {
         return this.running;
     }
     private async run(): Promise<void> {
+        this.quiet = false;
         if (this.stopped) return;
         const schedule = this.deps.schedule();
         const period = radarPeriod(this.deps.now(), schedule);
@@ -207,6 +218,7 @@ export class RadarScheduler {
             // Между слотами каталог подновляется понемногу, чтобы к следующему выпуску почти всё было свежим
             const result = await this.deps.collect(user, this.backgroundBudget, this.deps.now() - 20 * 3600000);
             if (result?.stopped === 'auth') return this.set('no-session', period.key);
+            this.quiet = !!result && !result.stopped && result.remaining === 0;
             return this.set('published', period.key);
         }
         const task = await this.deps.task(user, period.key, period.at, schedule.zone);

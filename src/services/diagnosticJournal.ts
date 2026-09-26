@@ -20,6 +20,18 @@ const sourceFiles = new Set([
 const NODE_WARNING = /^\([a-z]+:\d+\) /;
 type Fields = Record<string, unknown>;
 
+// Гистограмма Node копит весь промежуток между срабатываниями таймера замера, а не лишнюю задержку: в простое при шаге 20 мс
+// это 31 мс (шаг таймера Windows 15,6 мс), при 100 мс около 110. В журнал идёт превышение над шагом
+export const LOOP_RESOLUTION_MS = 100;
+export function loopDelayStats(histogram: { percentile(value: number): number; max: number }, resolutionMs = LOOP_RESOLUTION_MS): { loopP95Ms: number; loopMaxMs: number } {
+    const excess = (nanoseconds: number): number => Math.max(0, nanoseconds / 1e6 - resolutionMs);
+    return { loopP95Ms: excess(histogram.percentile(95)), loopMaxMs: excess(histogram.max) };
+}
+// В простое (ничего не играет, окно скрыто или свёрнуто) показатели раз в 5 минут, иначе 2 МБ журнала хватало на полтора дня
+export function metricsDue(now: number, last: number, idle: boolean): boolean {
+    return !idle || now - last >= 5 * 60 * 1000;
+}
+
 // В журнал попадают только перечисленные поля. Тексты ошибок, URL и настройки не сериализуются.
 export function safeFields(input: Fields): Fields {
     const result: Fields = {};
