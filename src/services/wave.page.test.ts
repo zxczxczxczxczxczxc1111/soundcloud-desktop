@@ -1424,6 +1424,29 @@ it('сессия, закрытая во время игры, после запу
     expect(reloaded.player.getCurrentSound()?.id).toBe(tracks[1].id);
     expect(reloaded.player.isPlaying()).toBe(true);
 });
+it('сессия пишется по изменению: на паузе ни одной записи, при игре место раз в 30 секунд, смена трека сразу', async () => {
+    const tracks = relatedTracks(31).slice(0, 3);
+    const saved: PlaybackSnapshot = { version: 1, at: Date.now(), items: tracks.map((track) => ({ track, wave: true, explicit: false })),
+        index: 0, position: 1000, paused: true, active: true, mode: 'similar', genre: null, seed: null, fallback: true };
+    const site = fakeSite(relatedTracks, (name) => name === 'trackBatch' ? tracks : undefined);
+    const library = savedLibrary(saved);
+    window.eval(waveScript());
+    await vi.advanceTimersByTimeAsync(2000);
+    library.saveSession.mockClear();
+    await vi.advanceTimersByTimeAsync(10 * 60 * 1000);
+    expect(library.saveSession).not.toHaveBeenCalled();
+
+    site.player.playCurrent();
+    await vi.advanceTimersByTimeAsync(1000);
+    expect(library.saveSession).toHaveBeenCalledTimes(1);
+    await vi.advanceTimersByTimeAsync(60 * 1000);
+    expect(library.saveSession).toHaveBeenCalledTimes(3);
+
+    site.player.setCurrentItem(site.player.getQueue().slice()[1]);
+    await vi.advanceTimersByTimeAsync(1000);
+    expect(library.saveSession).toHaveBeenCalledTimes(4);
+    expect(library.saveSession).toHaveBeenLastCalledWith(77, expect.objectContaining({ index: 1, paused: false }));
+});
 it('добавляет трек следующим и в конец без остановки текущего', async () => {
     const site = fakeSite(relatedTracks, siteExtra);
     window.eval(waveScript()); await vi.advanceTimersByTimeAsync(100);

@@ -7,6 +7,8 @@ export interface PlaybackPageHost {
     library: NonNullable<WaveWindow['soundcloudAPI']>['library'];
     language: string;
     snapshot(): PlaybackSnapshot | null;
+    /** Дешёвый отпечаток того, что кроме очереди и паузы лежит в снимке: волна, режим, жанр, источник */
+    state(): string;
     restore(snapshot: PlaybackSnapshot, tracks: WaveTrack[]): boolean;
     resolve(ids: number[]): Promise<WaveTrack[]>;
     create(track: WaveTrack): SiteQueueItem | null;
@@ -42,6 +44,8 @@ export function installPlaybackPage(host: PlaybackPageHost): PlaybackPage {
     let lastQueue = '';
     let lastSave = 0;
     let lastState = '';
+    // Снимок не записан: сбой записи или сессия ещё не восстановлена
+    let unsaved = false;
     let dragged: SiteQueueItem | null = null;
     const rowKeys = new WeakMap<SiteQueueItem, number>();
     let nextRowKey = 0;
@@ -266,14 +270,20 @@ export function installPlaybackPage(host: PlaybackPageHost): PlaybackPage {
         void host.user().then(async (id) => { mixes = await host.library?.listMixes(id) ?? []; if (!disposed) renderMixes(); }).catch(fail);
     }
     async function save(): Promise<void> {
-        if (!host.library || !restored || restoring) return;
+        if (!host.library || !restored || restoring) { unsaved = true; return; }
         if (saving) { await saving; return save(); }
         const snapshot = host.snapshot(); if (!snapshot) return;
         saving = (async () => {
             const id = await host.user();
             if (id && !await host.library!.saveSession(id, snapshot)) throw new Error('Сессия не сохранена');
         })();
-        try { await saving; } finally { saving = null; }
+        try {
+            await saving;
+            unsaved = false;
+        } catch (error) {
+            unsaved = true;
+            throw error;
+        } finally { saving = null; }
     }
     async function ready(): Promise<boolean> {
         if (restored || restoring || !host.library) { if (!host.library) restored = true; return false; }
@@ -336,8 +346,11 @@ export function installPlaybackPage(host: PlaybackPageHost): PlaybackPage {
         const current = queue();
         const key = current ? current.index + ':' + current.items.map((item) => item.sound?.id).join(',') : '';
         if (key !== lastQueue) { lastQueue = key; if (dialog?.open) renderQueue(); }
-        const state = key + ':' + host.player()?.isPlaying();
-        if (Date.now() - lastSave >= 5000 || state !== lastState) {
+        const playing = host.player()?.isPlaying() === true;
+        const state = key + ':' + playing + ':' + host.state();
+        // Сразу при смене очереди, паузы или волны; место в треке при игре раз в 30 с, на паузе оно не меняется.
+        // Раньше снимок уходил в worker каждые 5 с и на паузе в трее тоже
+        if (state !== lastState || ((playing || unsaved) && Date.now() - lastSave >= 30000)) {
             lastSave = Date.now(); lastState = state; void save().catch(fail);
         }
     }

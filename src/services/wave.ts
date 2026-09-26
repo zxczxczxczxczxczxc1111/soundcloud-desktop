@@ -1395,7 +1395,7 @@ export function installWave(config: WaveConfig, createPlayback: typeof installPl
             active, mode, genre, seed: savedSeed(), fallback: fallbackBefore ?? p.getState('fallbackEnabled') === true };
     }
     // «Моя музыка» кладёт в сессию выбор, режим и номера оставшихся треков, без самих треков: пул на тысячи треков
-    // переписывался бы мегабайтами каждые 5 секунд. После перезапуска он собирается заново и идёт с того же места
+    // переписывался бы мегабайтами при каждой записи. После перезапуска он собирается заново и идёт с того же места
     function savedSeed(): Seed | null {
         if (seed?.kind !== 'library' || !seed.library) return seed;
         const left = seed.library.left ?? (ownAdded ? ownQueue.map((item) => item.track.id) : seed.own.map((track) => track.id));
@@ -1439,6 +1439,7 @@ export function installWave(config: WaveConfig, createPlayback: typeof installPl
     const queueControls = createPlayback({
         player: () => player, user: ensureUser, library: host.soundcloudAPI?.library, language: T.lang,
         snapshot, restore: restoreSnapshot, create: createQueueItem,
+        state: () => [active, mode, genre, fallbackBefore, seed?.kind, seed?.title, seed?.card, seed?.order, seed?.mode, seed?.library?.pick.join(','), seed?.library?.mode].join('|'),
         resolve: async (ids) => {
             const tracks: WaveTrack[] = [];
             for (let i = 0; i < ids.length && !disposed; i += 100) {
