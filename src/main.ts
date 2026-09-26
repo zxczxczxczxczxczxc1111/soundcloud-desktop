@@ -2,7 +2,7 @@ import { DiagnosticJournal, LOOP_RESOLUTION_MS, loopDelayStats, metricsDue } fro
 import { monitorEventLoopDelay } from 'perf_hooks';
 import { installRendererRecovery } from './services/rendererRecovery';
 import { protectContent, sitePagePath } from './contentPolicy';
-import { DISCORD_TEXT_KEYS, validateSettingChange, type SettingChange } from './settings/validateSetting';
+import { DISCORD_TEXT_KEYS, type SettingChange } from './settings/validateSetting';
 import { applyPreferenceMigrations } from './settings/preferenceMigrations';
 import { isTrustedLocalSender, trustLocalFile } from './trustedViews';
 import { PlaybackController } from './services/playbackController';
@@ -38,6 +38,7 @@ import { registerWaveIpc } from './ipc/waveIpc';
 import { createRadarScheduler, registerRadarIpc } from './ipc/radarIpc';
 import { registerLibraryIpc } from './ipc/libraryIpc';
 import { registerBackupIpc } from './ipc/backupIpc';
+import { registerSettingsIpc } from './ipc/settingsIpc';
 import {
     app,
     BrowserWindow,
@@ -928,38 +929,20 @@ async function init() {
     }
 
 
-    // Add settings toggle handler
-    ipcMain.on('toggle-settings', (event) => {
-            if (!isTrustedLocalSender(event)) return;
-
-        settingsManager.toggle();
-    });
-    ipcMain.removeAllListeners('toggle-history');
-    ipcMain.removeAllListeners('toggle-queue');
-    ipcMain.on('toggle-queue', (event) => {
-        if (!isTrustedLocalSender(event)) return;
-        historyManager?.hide();
-        if (settingsManager.getView()) settingsManager.toggle();
-        void contentView.webContents.executeJavaScript('window.__scQueue?.()').catch(console.error);
-    });
-    ipcMain.on('toggle-history', (event) => {
-        if (isTrustedLocalSender(event)) toggleHistory();
-    });
-
-    ipcMain.handle('open-external-url', async (_event, url: string) => {
-            if (!isTrustedLocalSender(_event)) throw new Error('Недопустимый отправитель IPC');
-
-        if (!url || typeof url !== 'string') return '';
-        const normalizedUrl = url.trim();
-
-        try {
-            const parsed = new URL(normalizedUrl);
-            if (parsed.protocol !== 'https:') return '';
-            await shell.openExternal(parsed.toString());
-            return '';
-        } catch {
-            return '';
-        }
+    registerSettingsIpc(ipcMain, {
+        trustedLocal: isTrustedLocalSender,
+        settings: () => settingsManager,
+        history: () => historyManager,
+        page: () => contentView.webContents,
+        toggleHistory,
+        openExternal: (url) => shell.openExternal(url),
+        saveDialog: (options) => dialog.showSaveDialog(mainWindow, options),
+        downloadsFolder: () => app.getPath('downloads'),
+        diagnostics,
+        translate: (key) => translationService.translate(key),
+        applySettingChange,
+        playback,
+        presence: () => presenceService,
     });
 
     setupWindowControls();
@@ -967,17 +950,6 @@ async function init() {
     initializeShortcuts();
 
     applyThemeToContent();
-    ipcMain.handle('export-diagnostics', async (event) => {
-        if (!isTrustedLocalSender(event)) throw new Error('Недопустимый отправитель IPC');
-        const result = await dialog.showSaveDialog(mainWindow, {
-            title: translationService.translate('saveJournalTitle'),
-            defaultPath: path.join(app.getPath('downloads'), 'soundcloud-diagnostics-' + new Date().toISOString().slice(0, 10) + '.log'),
-            filters: [{ name: translationService.translate('journalFileType'), extensions: ['log'] }],
-        });
-        if (result.canceled || !result.filePath) return false;
-        try { diagnostics.exportTo(result.filePath); return true; }
-        catch (error) { console.error('Не удалось сохранить журнал:', error); throw new Error('Не удалось сохранить журнал', { cause: error }); }
-    });
 
     // Резервная копия профиля: файл пишет и читает worker, диалоги и отметки ведёт backupIpc
     const backup = registerBackupIpc(ipcMain, {
@@ -1006,14 +978,7 @@ async function init() {
     clearTimeout(autoBackupTimer);
     autoBackupTimer = setTimeout(() => void backup.runAutoBackup().catch((error: unknown) => console.warn('Автокопия не выполнена', error)), AUTO_BACKUP_DELAY);
     autoBackupTimer.unref();
-    setupTranslationHandlers();
 
-    // Provide current track info to settings preview on demand
-    ipcMain.handle('get-current-track', (event) => {
-            if (!isTrustedLocalSender(event)) throw new Error('Недопустимый отправитель IPC');
-
-        return { track: playback.info, ...presenceService.preview() };
-    });
 
     // Configure session
 
@@ -1139,12 +1104,6 @@ async function init() {
         }
     }
 
-    // Register settings related events
-    ipcMain.on('setting-changed', (_event, data) => {
-            if (!isTrustedLocalSender(_event)) return;
-            if (!validateSettingChange(data)) return;
-        applySettingChange(data);
-    });
     // Смена из F1 и восстановление копии: запись в настройки и то, что должно поменяться сразу
     function applySettingChange(data: SettingChange): void {
         const key = data.key;
@@ -1539,47 +1498,4 @@ export function queueToastNotification(message: string) {
     if (mainWindow && notificationManager) {
         notificationManager.show(message);
     }
-}
-
-function setupTranslationHandlers() {
-    ipcMain.handle('get-translations', (event) => {
-            if (!isTrustedLocalSender(event)) throw new Error('Недопустимый отправитель IPC');
-
-        return {
-            client: translationService.translate('client'),
-            adBlocker: translationService.translate('adBlocker'),
-            enableAdBlocker: translationService.translate('enableAdBlocker'),
-            changesAppRestart: translationService.translate('changesAppRestart'),
-            proxy: translationService.translate('proxy'),
-            proxyHost: translationService.translate('proxyHost'),
-            proxyPort: translationService.translate('proxyPort'),
-            enableProxy: translationService.translate('enableProxy'),
-            webhooks: translationService.translate('webhooks'),
-            discord: translationService.translate('discord'),
-            enableWebhooks: translationService.translate('enableWebhooks'),
-            webhookUrl: translationService.translate('webhookUrl'),
-            webhookTrigger: translationService.translate('webhookTrigger'),
-            webhookDescription: translationService.translate('webhookDescription'),
-            showWebhookExample: translationService.translate('showWebhookExample'),
-            enableRichPresence: translationService.translate('enableRichPresence'),
-            displaySmallIcon: translationService.translate('displaySmallIcon'),
-            displayButtons: translationService.translate('displayButtons'),
-            useArtistInStatusLine: translationService.translate('useArtistInStatusLine'),
-            enableRichPresencePreview: translationService.translate('enableRichPresencePreview'),
-            richPresencePreview: translationService.translate('richPresencePreview'),
-            richPresencePreviewDescription: translationService.translate('richPresencePreviewDescription'),
-            applyChanges: translationService.translate('applyChanges'),
-            minimizeToTray: translationService.translate('minimizeToTray'),
-            enableNavigationControls: translationService.translate('enableNavigationControls'),
-            enableTrackParser: translationService.translate('enableTrackParser'),
-            trackParserDescription: translationService.translate('trackParserDescription'),
-            pressF1ToOpenSettings: translationService.translate('pressF1ToOpenSettings'),
-            closeSettings: translationService.translate('closeSettings'),
-            noActivityToShow: translationService.translate('noActivityToShow'),
-            richPresencePreviewTitle: translationService.translate('richPresencePreviewTitle'),
-            hidePromotions: translationService.translate('hidePromotions'),
-            hideEventsNearYou: translationService.translate('hideEventsNearYou'),
-            hideArtistUpsells: translationService.translate('hideArtistUpsells'),
-        };
-    });
 }
