@@ -414,9 +414,13 @@ describe('подборки', () => {
         // Десять песен одного загрузчика все проходят, когда заменить их нечем
         const one = Array.from({ length: 10 }, (_, i) => track(100 + i, { user_id: 7, title: 'Song ' + i }));
         expect(pickFinds(one, () => false, null, 30)).toHaveLength(10);
-        // Есть другие: не больше трёх от одного аккаунта
+        // Есть другие: не больше трёх от одного аккаунта (порядок случайный, поэтому сколько именно, не проверяется)
         const others = Array.from({ length: 10 }, (_, i) => track(200 + i, { user_id: 20 + i, title: 'Tune ' + i }));
-        expect(pickFinds([...one, ...others], () => false, null, 10).filter((entry) => entry.user_id === 7)).toHaveLength(3);
+        for (let run = 0; run < 20; run++) {
+            const mixed = pickFinds([...one, ...others], () => false, null, 10);
+            expect(mixed).toHaveLength(10);
+            expect(mixed.filter((entry) => entry.user_id === 7).length).toBeLessThanOrEqual(3);
+        }
     });
 
     it('A03: второй трек аккаунта, который подходит лучше, не теряется из-за порядка ответа', () => {
