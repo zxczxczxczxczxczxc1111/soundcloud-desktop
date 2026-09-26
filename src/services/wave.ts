@@ -1161,6 +1161,8 @@ export function installWave(config: WaveConfig, createPlayback: typeof installPl
         knownNames: Set<string>;
         loadedAt: number;
         likesCursor: Record<string, string | number> | null;
+        /** Лайки прошлого профиля, которых новое листание ещё не подтвердило: в конце листания снятые уходят */
+        unconfirmed?: Set<number>;
     }
     interface Cursor { query: Record<string, string | number> | null; done: boolean }
 
@@ -1536,8 +1538,18 @@ export function installWave(config: WaveConfig, createPlayback: typeof installPl
     function ensureProfile(): Promise<Profile> {
         if (profile && (Date.now() - profile.loadedAt < 30 * 60000 || Date.now() < profileRetryAt)) return Promise.resolve(profile);
         profilePromise ??= loadProfile().then((loaded) => {
-            // Прослушанное в этой сессии не теряется при обновлении профиля
-            if (profile) for (const id of profile.heard) loaded.heard.add(id);
+            // Прослушанное в этой сессии не теряется при обновлении профиля. Лайки тоже: новый профиль знает одну страницу,
+            // и до конца листания «Новое» пропускало бы старые лайки, а знакомые артисты шли бы «новыми»
+            const previous = profile;
+            if (previous) {
+                for (const id of previous.heard) loaded.heard.add(id);
+                loaded.unconfirmed = new Set([...previous.liked].filter((id) => !loaded.liked.has(id)));
+                for (const id of loaded.unconfirmed) loaded.liked.add(id);
+                const have = new Set(loaded.likedTracks.map((track) => track.id));
+                loaded.likedTracks.push(...previous.likedTracks.filter((track) => !have.has(track.id)));
+                for (const artist of previous.knownArtists) loaded.knownArtists.add(artist);
+                for (const name of previous.knownNames) loaded.knownNames.add(name);
+            }
             profile = loaded;
             profileRetryAt = 0;
             void expandLibrary(loaded).catch((error: unknown) => console.warn('Волна: библиотека догрузится позже', error));
@@ -1592,10 +1604,16 @@ export function installWave(config: WaveConfig, createPlayback: typeof installPl
                 visited.add(key);
                 const body = await call('soundLikesIds', {}, current.likesCursor);
                 if (disposed || profile !== current) return;
-                for (const id of collection(body)) if (typeof id === 'number') current.liked.add(id);
+                for (const id of collection(body)) if (typeof id === 'number') {
+                    current.liked.add(id);
+                    current.unconfirmed?.delete(id);
+                }
                 current.likesCursor = nextQuery(body);
             } while (!disposed && profile === current);
             if (disposed || profile !== current) return;
+            // Листание дошло до конца: лайки прошлого профиля, которых в нём не оказалось, сняты
+            for (const id of current.unconfirmed ?? []) current.liked.delete(id);
+            current.unconfirmed = undefined;
             publish();
             if (host.soundcloudAPI?.library && !await host.soundcloudAPI.library.saveCatalog(current.userId, current.likedTracks)) throw new Error('Каталог не сохранён');
         } finally {

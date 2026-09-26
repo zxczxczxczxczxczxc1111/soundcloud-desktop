@@ -1396,6 +1396,45 @@ it('не прерывает первую подборку ожиданием с�
     expect(library.saveCatalog).toHaveBeenCalledWith(77, expect.arrayContaining([expect.objectContaining({ id: 20249 })]));
 });
 
+it('обновление профиля раз в 30 минут не откатывает лайки к первой странице, снятый лайк уходит в конце листания', async () => {
+    const likes = Array.from({ length: 250 }, (_, i) => ({ id: 20000 + i, title: 'Like ' + i, user_id: 30000 + i, duration: 200000 }));
+    let unliked = false;
+    let release: (() => void) | undefined;
+    fakeSite(relatedTracks, (name, _path, query) => {
+        if (name === 'soundLikesIds') {
+            const ids = likes.map((track) => track.id).filter((id) => !(unliked && id === 20100));
+            if (!query.cursor) return { collection: ids.slice(0, 200), next_href: 'https://api-v2.soundcloud.com/me/likes/ids?cursor=next' };
+            if (!unliked) return { collection: ids.slice(200) };
+            return new Promise((resolve) => { release = () => resolve({ collection: ids.slice(200) }); });
+        }
+        if (name === 'trackBatch') return likes.filter((track) => String(query.ids).split(',').includes(String(track.id)));
+        return undefined;
+    });
+    Object.assign(window, { soundcloudAPI: { waveLibrary: libraryBridge() } });
+    window.eval(waveScript());
+    await vi.advanceTimersByTimeAsync(2000);
+    const count = (): string | undefined => libChip('likes').querySelector('.scw-chip-n')?.textContent ?? undefined;
+    const toggleList = async (): Promise<void> => {
+        document.querySelector<HTMLButtonElement>('#sc-wave [data-act="lib-list"]')!.click();
+        await vi.advanceTimersByTimeAsync(2000);
+    };
+    await toggleList();
+    expect(count()).toBe('250');
+    // Через полчаса профиль обновляется, вторая страница лайков пока не пришла
+    unliked = true;
+    await vi.advanceTimersByTimeAsync(31 * 60000);
+    await toggleList();
+    await toggleList();
+    // Список перерисован уже с новым профилем: без переноса тут было бы 200
+    await toggleList();
+    expect(release).toBeDefined();
+    expect(count()).toBe('250');
+    release!();
+    await vi.advanceTimersByTimeAsync(1000);
+    await toggleList();
+    expect(count()).toBe('249');
+});
+
 it('P3: фоном обходит лайки с датами, подписки и плейлисты в хранилище; 429 оставляет лайки неполными без повторов', async () => {
     const calls: unknown[][] = [];
     let run = 0;
