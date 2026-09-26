@@ -1167,6 +1167,9 @@ export interface WaveWindow extends Window {
 }
 interface WaveConfig {
     texts: Record<'ru' | 'en', WaveTexts>;
+    /** Музыка в этом запуске клиента уже звучала: сессия, сохранённая во время игры, продолжает играть (страница упала
+     * или перезагружена). Сразу после запуска клиента сессия встаёт на паузу, чтобы не встречать громкой музыкой */
+    resume: boolean;
 }
 
 export function installWave(config: WaveConfig, createPlayback: typeof installPlaybackPage, createRecovery: typeof installPlaybackRecovery): void {
@@ -1428,7 +1431,7 @@ export function installWave(config: WaveConfig, createPlayback: typeof installPl
         p.replaceQueue(items, selected, { pause: true });
         const sound = items[selected].sound;
         if (sound?.id === saved.items[saved.index].track.id && saved.position > 0) sound.seek(saved.position);
-        if (saved.paused) p.pauseCurrent({ userInitiated: true });
+        if (saved.paused || !config.resume) p.pauseCurrent({ userInitiated: true });
         else p.playCurrent({ userInitiated: true });
         state = active ? 'playing' : 'idle';
         render(); return true;
@@ -6262,7 +6265,7 @@ const pageHelpers = [
     ...identity.identityHelpers, ...sources.sourceHelpers, ...libraryMix.libraryHelpers, installPlaybackPage, installPlaybackRecovery,
 ];
 
-export function waveScript(): string {
-    const config: WaveConfig = { texts: WAVE_TEXTS };
+export function waveScript(resume = false): string {
+    const config: WaveConfig = { texts: WAVE_TEXTS, resume };
     return '(function(){\n' + pageHelpers.map((helper) => helper.toString()).join('\n') + '\n(' + installWave.toString() + ')(' + JSON.stringify(config) + ', installPlaybackPage, installPlaybackRecovery);\n})();';
 }

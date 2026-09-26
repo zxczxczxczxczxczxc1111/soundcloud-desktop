@@ -1401,6 +1401,29 @@ it('восстанавливает источник волны, очередь, 
     await (window as WaveWindow).__scSaveSession?.();
     expect(library.saveSession).toHaveBeenLastCalledWith(77, expect.objectContaining({ paused: true, active: true, mode: 'fresh', position: 43000 }));
 });
+// Случай владельца 26.09.2026: закрыл клиент во время громкой музыки, открыл через 5 минут, и она сразу заиграла
+it('сессия, закрытая во время игры, после запуска клиента встаёт на паузу; после подъёма упавшей страницы играет дальше', async () => {
+    const tracks = relatedTracks(31).slice(0, 3);
+    const saved: PlaybackSnapshot = { version: 1, at: Date.now(), items: tracks.map((track) => ({ track, wave: true, explicit: false })),
+        index: 1, position: 43000, paused: false, active: true, mode: 'fresh', genre: null, seed: null, fallback: true };
+    const started = fakeSite(relatedTracks, (name) => name === 'trackBatch' ? tracks : undefined);
+    savedLibrary(saved);
+    window.eval(waveScript());
+    await vi.advanceTimersByTimeAsync(100);
+    expect(started.player.getCurrentSound()?.id).toBe(tracks[1].id);
+    expect(position).toBe(43000);
+    expect(started.player.isPlaying()).toBe(false);
+    expect(started.player.playCurrent).not.toHaveBeenCalled();
+    window.dispatchEvent(new Event('pagehide'));
+
+    // Музыка в этом запуске уже звучала, страница упала и поднялась: продолжает играть
+    const reloaded = fakeSite(relatedTracks, (name) => name === 'trackBatch' ? tracks : undefined);
+    savedLibrary(saved);
+    window.eval(waveScript(true));
+    await vi.advanceTimersByTimeAsync(100);
+    expect(reloaded.player.getCurrentSound()?.id).toBe(tracks[1].id);
+    expect(reloaded.player.isPlaying()).toBe(true);
+});
 it('добавляет трек следующим и в конец без остановки текущего', async () => {
     const site = fakeSite(relatedTracks, siteExtra);
     window.eval(waveScript()); await vi.advanceTimersByTimeAsync(100);

@@ -522,6 +522,9 @@ let lastTrackInfo: TrackInfo = {
     url: '',
     artistUrl: '',
 };
+// Музыка в этом запуске уже звучала: после падения или перезагрузки страницы сессия играет дальше,
+// а сразу после запуска клиента встаёт на паузу
+let playedThisRun = false;
 
 function isTrustedSoundCloudSender(event: Pick<IpcMainEvent, 'sender' | 'senderFrame'>): boolean {
     if (!contentView || event.sender.id !== contentView.webContents.id || event.senderFrame !== event.sender.mainFrame) return false;
@@ -1665,7 +1668,7 @@ async function init() {
             // Плавность раньше волны: волна берёт у неё цвета обложек
             await contentView.webContents.executeJavaScript(pageMotionScript(store.get('reduceMotion', false) === true));
             await contentView.webContents.executeJavaScript(homePageScript());
-            await contentView.webContents.executeJavaScript(waveScript());
+            await contentView.webContents.executeJavaScript(waveScript(playedThisRun));
             await contentView.webContents.executeJavaScript(playerAreaScript());
 
             if (presenceService) {
@@ -2131,6 +2134,7 @@ function setupAudioHandler() {
         }
 
         const { data: result, reason } = update;
+        if (result.isPlaying) playedThisRun = true;
         trackUpdates++;
         lastUpdateAt = Date.now();
         if (reason === 'track-change') trackChanges++;
