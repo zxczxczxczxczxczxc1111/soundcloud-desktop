@@ -8,20 +8,21 @@ import { installPlaybackRecovery } from './playbackRecovery';
 import * as identity from './trackIdentity';
 import * as sources from './pageSources';
 import type { SyncBridge } from './pageSources';
-import type { MatchLevel, RecordingLink } from './trackIdentity';
+import type { RecordingLink } from './trackIdentity';
 import type { RadarCollectResult, RadarState } from './radarSchedule';
 import type { RadarReason } from './radar';
 import * as libraryMix from './libraryMix';
 import type { LibraryEntry, LibraryMode, MyMusicSetting } from './libraryMix';
 import * as siteModules from './siteModules';
 import type { SiteState, WebpackRequire } from './siteModules';
-import type { WaveTrack, WaveMode, OpenTrackResult, WaveReason, WaveCandidate, WaveFilter, WaveLinkKind, WaveTexts, TasteMaps } from './waveTypes';
+import type { WaveTrack, WaveMode, OpenTrackResult, WaveReason, WaveCandidate, WaveFilter, WaveLinkKind, WaveTexts, TasteMaps, MenuTarget } from './waveTypes';
 import { WAVE_TEXTS } from './waveTexts';
 import * as waveTexts from './waveTexts';
 import * as waveGenres from './waveGenres';
 import * as waveLinks from './waveLinks';
 import * as wavePicks from './wavePicks';
 import * as waveTaste from './waveTaste';
+import * as versionsSection from './wave/versions';
 
 // Разбор версий, сеть подбора и пул «Моей музыки» живут в своих модулях. Функции страницы зовут их по голому имени: в Node имя
 // берётся отсюда, на странице из объявлений identityHelpers и sourceHelpers в той же обёртке.
@@ -36,6 +37,8 @@ const { normalizeTag, tagKeys, tagShares, genreKeys, genreCanon, genreParts, gen
 const { classifyLink, canonicalUrl, trackPath, artworkUrl, playEnd, siteSource, retryDelay } = waveLinks;
 const { trackArtist, rememberRecent, isWaveEligible, acceptCandidate, pickSpaced, shuffleInPlace, capPerArtist, forgottenPicks, artistNames, isNewArtist, spreadBy } = wavePicks;
 const { tasteMaps, tasteScore, tasteOrder, tasteReason, applyTasteReasons, tasteGroups, moodTags, pickFinds } = waveTaste;
+// Разделы страницы волны в wave/: объявления уходят на страницу рядом с installWave и зовутся по голому имени
+const { installVersions } = versionsSection;
 // Прежние импорты из wave.ts остаются рабочими
 export type { WaveTrack, WaveMode, OpenTrackResult, WaveReason, WaveCandidate, WaveFilter, WaveLinkKind, WaveTexts, TasteMaps, TasteScore, TasteGroup } from './waveTypes';
 export { WAVE_TEXTS, fillText, reasonText, localDay, countText, formatTime, shapeSamples } from './waveTexts';
@@ -970,6 +973,32 @@ export function installWave(config: WaveConfig, createPlayback: typeof installPl
             id: entry.id, kind: 'track', title: entry.title, genre: entry.genre, tag_list: entry.tags, permalink_url: entry.url,
             user_id: entry.artistId || undefined, user: { id: entry.artistId || undefined, username: entry.artist },
         }));
+    // Исключённое уходит из подборки и из очереди впереди; играющий трек волны сразу сменяется следующим
+    function purgeExcluded(): void {
+        pool = pool.filter((item) => !isExcluded(item.track));
+        ownQueue = ownQueue.filter((item) => !isExcluded(item.track));
+        preview = preview.filter((item) => !isExcluded(item.track));
+        const p = player;
+        if (active && p) {
+            const { items, index } = queueView();
+            const bad = (item: SiteQueueItem | undefined): boolean => {
+                const candidate = item && ours.has(item) && item.sound ? known.get(item.sound.id) : undefined;
+                return !!candidate && isExcluded(candidate.track);
+            };
+            const kept = items.filter((item, i) => i <= index || !bad(item));
+            if (kept.length !== items.length) p.getQueue().reset(kept);
+            if (bad(items[index])) {
+                const next = kept.slice(index + 1).find((item) => ours.has(item));
+                if (next) {
+                    jumped = true;
+                    p.setCurrentItem(next, {});
+                    p.playCurrent({ userInitiated: true });
+                }
+            }
+            void refill();
+        }
+        render();
+    }
 
     function currentFilter(): WaveFilter {
         const p = profile;
@@ -1741,7 +1770,6 @@ export function installWave(config: WaveConfig, createPlayback: typeof installPl
 
     // ===== Волна от трека, артиста и плейлиста, отметки «Не нравится» =====
     /** Что под курсором при ПКМ: ссылка, артист трека (если виден) и сам трек, если он уже известен волне */
-    interface MenuTarget { kind: WaveLinkKind; url: string; artistUrl: string; track?: WaveTrack }
     interface Artist { id: number; username: string; url: string }
 
     // Ответ живёт 10 минут: плейлист правят, станция трека меняется, а страница живёт сутками
@@ -3123,244 +3151,31 @@ export function installWave(config: WaveConfig, createPlayback: typeof installPl
         }
     }
 
-    // ===== «Версии этого трека»: текстовый поиск по разным аккаунтам, точный выбор загрузки и решение «та же запись» =====
-    let versionsBox: HTMLElement | null = null;
-    let versionsRequest = 0;
-    let versionsReturn: HTMLElement | null = null;
-    let versionsTrack: WaveTrack | null = null;
-    let versionsFound: WaveTrack[] = [];
-    function closeVersions(): void {
-        versionsRequest++;
-        versionsBox?.remove();
-        versionsBox = null;
-        versionsTrack = null;
-        versionsFound = [];
-        document.removeEventListener('keydown', onVersionsKey, true);
-        const back = versionsReturn;
-        versionsReturn = null;
-        if (back?.isConnected) back.focus();
-    }
-    // Esc закрывает, Tab ходит по кругу внутри диалога
-    function onVersionsKey(event: KeyboardEvent): void {
-        if (!versionsBox) return;
-        if (event.key === 'Escape') {
-            event.preventDefault();
-            event.stopPropagation();
-            closeVersions();
-            return;
-        }
-        if (event.key !== 'Tab') return;
-        const items = [...versionsBox.querySelectorAll<HTMLElement>('button:not(:disabled)')];
-        if (!items.length) return;
-        const at = items.indexOf(document.activeElement as HTMLElement);
-        const next = event.shiftKey ? (at <= 0 ? items.length - 1 : at - 1) : (at < 0 || at === items.length - 1 ? 0 : at + 1);
-        event.preventDefault();
-        items[next].focus();
-    }
-    // Та же запись: подтверждённая группа (пользователь главнее каталога), иначе разбор пары
-    function versionLevel(track: WaveTrack, other: WaveTrack): MatchLevel {
-        const a = copyGroups.get('sc:track:' + track.id);
-        if (other.id !== track.id && a && a === copyGroups.get('sc:track:' + other.id)) return 'confirmed';
-        return matchLevel(track, other, recordingLinks);
-    }
-    function versionsStatus(text: string): HTMLElement {
-        const line = el('div', 'scw-hint', text);
-        line.setAttribute('role', 'status');
-        return line;
-    }
-    function renderVersions(): void {
-        const body = versionsBox?.querySelector<HTMLElement>('.scw-dialog-body');
-        const track = versionsTrack;
-        if (!body || !track) return;
-        const focused = document.activeElement instanceof HTMLElement && body.contains(document.activeElement)
-            ? (document.activeElement.dataset.act ?? '') + '|' + (document.activeElement.dataset.track ?? '')
-            : '';
-        body.textContent = '';
-        const same: Array<[WaveTrack, MatchLevel]> = [[track, 'same-upload']];
-        const other: Array<[WaveTrack, MatchLevel]> = [];
-        for (const found of versionsFound) {
-            if (found.id === track.id) continue;
-            const level = versionLevel(track, found);
-            if (level === 'confirmed' || level === 'probable') same.push([found, level]);
-            else if (level === 'version') other.push([found, level]);
-        }
-        const section = (title: string, rows: Array<[WaveTrack, MatchLevel]>, empty: string): void => {
-            body.append(el('div', 'scw-dialog-h', title));
-            if (!rows.length) {
-                body.append(el('div', 'scw-hint', empty));
-                return;
-            }
-            const list = el('div', 'scw-vlist');
-            for (const [item, level] of rows) {
-                const line = el('div', 'scw-vrow');
-                const play = el('button', 'scw-vplay');
-                play.type = 'button';
-                play.dataset.act = 'version-play';
-                play.dataset.track = String(item.id);
-                const cover = el('div', 'scw-art');
-                art(cover, item, 't300x300');
-                const text = el('div', 'scw-row-t');
-                text.append(el('b', '', (item.title ?? '').trim() || '…'), el('span', '', artistName(item)));
-                play.append(cover, text);
-                const end = el('div', 'scw-row-e');
-                const badge = level === 'same-upload' ? T.versionsThis : level === 'confirmed' ? T.versionsConfirmed : level === 'probable' ? T.versionsProbable : '';
-                if (badge) end.append(el('span', 'scw-badge', badge));
-                end.append(el('span', 'scw-row-d', formatTime(item.full_duration || item.duration || 0)));
-                line.append(play, end);
-                // Решение пользователя: подтверждённую пару можно разъединить, остальные объединить
-                if (level !== 'same-upload') {
-                    const link = el('button', 'scw-btn', level === 'confirmed' ? T.versionsUnlink : T.versionsLink);
-                    link.type = 'button';
-                    link.dataset.act = level === 'confirmed' ? 'version-unlink' : 'version-link';
-                    link.dataset.track = String(item.id);
-                    line.append(link);
-                }
-                list.append(line);
-            }
-            body.append(list);
-        };
-        section(T.versionsSame, same, T.versionsEmpty);
-        section(T.versionsOther, other, T.versionsEmpty);
-        if (focused) {
-            const [act, id] = focused.split('|');
-            body.querySelector<HTMLElement>('[data-act="' + act + '"][data-track="' + id + '"]')?.focus();
-        }
-    }
-    async function openVersions(target: MenuTarget): Promise<void> {
-        closeVersions();
-        ensureStyle();
-        const request = versionsRequest;
-        versionsReturn = document.activeElement instanceof HTMLElement ? document.activeElement : null;
-        const back = el('div', 'scw-dialog-back');
-        const dialog = el('div', 'scw-dialog');
-        dialog.setAttribute('role', 'dialog');
-        dialog.setAttribute('aria-modal', 'true');
-        dialog.setAttribute('aria-labelledby', 'scw-versions-title');
-        const head = el('div', 'scw-dialog-top');
-        const title = el('b', '', T.menuVersions);
-        title.id = 'scw-versions-title';
-        const close = button('scw-icon', 'versions-close', T.dialogClose, 'x');
-        close.title = T.dialogClose;
-        head.append(title, close);
-        const body = el('div', 'scw-dialog-body');
-        body.append(versionsStatus(T.versionsLoading));
-        dialog.append(head, body);
-        back.append(dialog);
-        back.addEventListener('click', onVersionsClick);
-        document.body.append(back);
-        document.addEventListener('keydown', onVersionsKey, true);
-        versionsBox = back;
-        close.focus();
-        try {
-            const [track] = await Promise.all([trackOf(target), ensureExclusions()]);
-            if (request !== versionsRequest) return;
-            if (!track) throw new Error('Трек не распознан');
-            title.textContent = fillText(T.versionsTitle, { title: (track.title ?? '').trim() || '…' });
-            // Для явного действия только текстовый поиск этой версии и других версий песни
-            const queries = searchQueries(track).filter((query) => query.purpose !== 'songs');
-            let failed = 0;
-            const lists = await Promise.all(queries.map((query) => searchTracks(query.q).catch((error: unknown) => {
-                failed++;
-                console.warn('Версии: поиск не удался', error);
-                return [] as WaveTrack[];
-            })));
-            if (request !== versionsRequest) return;
-            if (queries.length && failed === queries.length) throw new Error('Поиск не ответил');
-            const seen = new Set<number>();
-            versionsTrack = track;
-            versionsFound = lists.flat().filter((item) => !seen.has(item.id) && !!seen.add(item.id));
-            renderVersions();
-        } catch (error) {
-            if (request !== versionsRequest) return;
-            console.warn('Версии: список не собран', error);
-            body.textContent = '';
-            body.append(versionsStatus(T.versionsFailed));
-        }
-    }
-    function onVersionsClick(event: MouseEvent): void {
-        const target = event.target instanceof Element ? event.target : null;
-        if (!target) return;
-        if (!target.closest('.scw-dialog')) {
-            closeVersions();
-            return;
-        }
-        const control = target.closest<HTMLElement>('[data-act]');
-        const id = Number(control?.dataset.track);
-        switch (control?.dataset.act) {
-            case 'versions-close':
-                closeVersions();
-                return;
-            case 'version-play': {
-                // Играет ровно выбранная загрузка, страница сайта не меняется
-                const item = [versionsTrack, ...versionsFound].find((track) => track?.id === id);
-                const path = item ? trackPath(item.permalink_url) : '';
-                if (!path) {
-                    showToast(T.toastFailed);
-                    return;
-                }
-                void openTrack(path, false).then((result) => {
-                    if (result !== 'played' && result !== 'superseded') showToast(T.toastFailed);
-                }, (error: unknown) => {
-                    console.warn('Версии: трек не включился', error);
-                    showToast(T.toastFailed);
-                });
-                return;
-            }
-            case 'version-link':
-            case 'version-unlink':
-                void linkVersion(id, control.dataset.act === 'version-link');
-                return;
-        }
-    }
-    async function linkVersion(id: number, same: boolean): Promise<void> {
-        const track = versionsTrack;
-        const request = versionsRequest;
-        if (!track || !isId(id)) return;
-        try {
-            const user = await ensureUser();
-            const saved = user ? await host.soundcloudAPI?.recommend?.setRecordingLink?.(user, 'sc:track:' + track.id, 'sc:track:' + id, same) : false;
-            if (saved !== true) {
-                showToast(T.toastNotSaved);
-                return;
-            }
-            // Связи перечитываются: запреты и слышанное сразу переходят на подтверждённые копии
-            copyGroups = await loadCopyGroups(user);
+    // ===== Разделы из wave/: сборка с ядром =====
+    // «Версии этого трека»: раздел в wave/versions.ts
+    const versions = installVersions({
+        texts: T,
+        host,
+        copyGroups: () => copyGroups,
+        recordingLinks: () => recordingLinks,
+        linked: (groups) => {
+            copyGroups = groups;
             exclusionsRevision++;
-            showToast(same ? T.toastLinked : T.toastUnlinked);
-            if (request === versionsRequest) renderVersions();
-            render();
-        } catch (error) {
-            console.warn('Версии: решение не сохранено', error);
-            showToast(T.toastFailed);
-        }
-    }
-    // Исключённое уходит из подборки и из очереди впереди; играющий трек волны сразу сменяется следующим
-    function purgeExcluded(): void {
-        pool = pool.filter((item) => !isExcluded(item.track));
-        ownQueue = ownQueue.filter((item) => !isExcluded(item.track));
-        preview = preview.filter((item) => !isExcluded(item.track));
-        const p = player;
-        if (active && p) {
-            const { items, index } = queueView();
-            const bad = (item: SiteQueueItem | undefined): boolean => {
-                const candidate = item && ours.has(item) && item.sound ? known.get(item.sound.id) : undefined;
-                return !!candidate && isExcluded(candidate.track);
-            };
-            const kept = items.filter((item, i) => i <= index || !bad(item));
-            if (kept.length !== items.length) p.getQueue().reset(kept);
-            if (bad(items[index])) {
-                const next = kept.slice(index + 1).find((item) => ours.has(item));
-                if (next) {
-                    jumped = true;
-                    p.setCurrentItem(next, {});
-                    p.playCurrent({ userInitiated: true });
-                }
-            }
-            void refill();
-        }
-        render();
-    }
-
+        },
+        el,
+        button,
+        art: (node, track, size) => art(node, track, size),
+        artistName: (track) => artistName(track),
+        ensureStyle,
+        trackOf,
+        ensureExclusions,
+        searchTracks,
+        showToast,
+        openTrack,
+        ensureUser,
+        loadCopyGroups,
+        render: () => render(),
+    });
     // ===== Блок на главной =====
     const ICON: Record<string, string> = {
         play: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M8 5.5v13l11-6.5z"/></svg>',
@@ -4900,7 +4715,7 @@ export function installWave(config: WaveConfig, createPlayback: typeof installPl
             case 'unlater': void setExcluded('later-track', target, act === 'later'); return;
             case 'later-artist':
             case 'unlater-artist': void setExcluded('later-artist', target, act === 'later-artist'); return;
-            case 'versions': void openVersions(target); return;
+            case 'versions': void versions.open(target); return;
             case 'hide-family':
             case 'show-family': void setFamily(target, act === 'hide-family'); return;
         }
@@ -5230,7 +5045,7 @@ export function installWave(config: WaveConfig, createPlayback: typeof installPl
         delete host.__scRadarChanged;
         delete host.__scRadarReload;
         radarRequest++;
-        closeVersions();
+        versions.close();
     };
     host.__disposeWave = dispose;
     // Выход из приложения: main забирает недописанное вместе с текущим прослушиванием,
@@ -5274,6 +5089,7 @@ const pageHelpers = [
     isWaveEligible, acceptCandidate, pickSpaced, tasteMaps, tasteScore, tasteOrder, tasteReason, applyTasteReasons, shuffleInPlace, topGenres, fillText, reasonText, shapeSamples,
     artworkUrl, formatTime, playEnd, siteSource, moodTags, trackPath, localDay, countText, tasteGroups, capPerArtist, forgottenPicks, artistNames, isNewArtist, spreadBy, pickFinds,
     ...identity.identityHelpers, ...sources.sourceHelpers, ...libraryMix.libraryHelpers, siteRequires, installPlaybackPage, installPlaybackRecovery,
+    installVersions,
 ];
 
 export function waveScript(resume = false): string {

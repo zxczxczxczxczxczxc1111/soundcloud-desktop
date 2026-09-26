@@ -73,6 +73,8 @@ export interface WaveFilter {
 }
 
 export type WaveLinkKind = 'track' | 'artist' | 'playlist';
+/** Цель меню по правому клику: трек, артист или плейлист по ссылке, трек волны сразу с данными */
+export interface MenuTarget { kind: WaveLinkKind; url: string; artistUrl: string; track?: WaveTrack }
 
 export type WaveTexts = Record<
     | 'wave' | 'similar' | 'fresh' | 'anyGenre' | 'genreInput' | 'fromLikes' | 'hintSimilar' | 'hintFresh' | 'hintGenre' | 'hintGenres'
