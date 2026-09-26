@@ -397,9 +397,12 @@ describe('подборки', () => {
         const finds = pickFinds(candidates, (entry) => entry.id === 6, null, 10);
         expect(finds.map((entry) => entry.id).sort((a, b) => a - b)).toEqual([1, 2, 3, 4, 5, 8]);
         expect(pickFinds(candidates, () => false, null, 2)).toHaveLength(2);
-        // Десять песен одного загрузчика все проходят, потолка на аккаунт нет
+        // Десять песен одного загрузчика все проходят, когда заменить их нечем
         const one = Array.from({ length: 10 }, (_, i) => track(100 + i, { user_id: 7, title: 'Song ' + i }));
         expect(pickFinds(one, () => false, null, 30)).toHaveLength(10);
+        // Есть другие: не больше трёх от одного аккаунта
+        const others = Array.from({ length: 10 }, (_, i) => track(200 + i, { user_id: 20 + i, title: 'Tune ' + i }));
+        expect(pickFinds([...one, ...others], () => false, null, 10).filter((entry) => entry.user_id === 7)).toHaveLength(3);
     });
 
     it('A03: второй трек аккаунта, который подходит лучше, не теряется из-за порядка ответа', () => {

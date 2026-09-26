@@ -1396,6 +1396,20 @@ it('не прерывает первую подборку ожиданием с�
     expect(library.saveCatalog).toHaveBeenCalledWith(77, expect.arrayContaining([expect.objectContaining({ id: 20249 })]));
 });
 
+it('зёрна обычной волны от разных артистов: любимый артист в истории не даёт два-три зерна из трёх', async () => {
+    const history = [
+        ...Array.from({ length: 10 }, (_, i): WaveTrack => ({ id: 40001 + i, kind: 'track', title: 'Fav ' + i, user_id: 900, duration: 200000 })),
+        { id: 40101, kind: 'track', title: 'A', user_id: 901, duration: 200000 }, { id: 40102, kind: 'track', title: 'B', user_id: 902, duration: 200000 },
+    ];
+    const site = fakeSite(relatedTracks, (name) => (name === 'playHistoryTracks' ? { collection: history.map((track) => ({ track })) } : undefined));
+    window.eval(waveScript());
+    await vi.advanceTimersByTimeAsync(2000);
+    const seeds = site.api.callEndpoint.mock.calls.filter(([name]) => name === 'relatedSounds').slice(0, 3).map(([, path]) => Number((path as { track_id?: unknown }).track_id));
+    const artists = seeds.map((id) => history.find((track) => track.id === id)?.user_id);
+    expect(seeds).toHaveLength(3);
+    expect(new Set(artists).size).toBe(3);
+});
+
 it('обновление профиля раз в 30 минут не откатывает лайки к первой странице, снятый лайк уходит в конце листания', async () => {
     const likes = Array.from({ length: 250 }, (_, i) => ({ id: 20000 + i, title: 'Like ' + i, user_id: 30000 + i, duration: 200000 }));
     let unliked = false;

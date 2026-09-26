@@ -973,7 +973,11 @@ export function pickFinds(
     }
     const fresh = [...best.values()].sort((a, b) => a.track.id - b.track.id).map((entry) => ({ track: entry.track }));
     const ordered = taste ? tasteOrder(fresh, taste, random) : shuffleInPlace(fresh);
-    return spreadBy(ordered.slice(0, limit), (entry) => trackArtist(entry.track), 1).map((entry) => entry.track);
+    // Не больше трёх треков аккаунта, пока есть чем заменить: похожие у маленьких артистов часто замкнуты на каталог
+    // любимого, и он забирал бы находки. Кандидатов мало - добор остатком (A01: знакомый аккаунт может дать несколько)
+    const tracks = ordered.map((entry) => entry.track);
+    const capped = capPerArtist(tracks, 3);
+    return spreadBy([...capped, ...tracks.filter((track) => !capped.includes(track))].slice(0, limit), trackArtist, 1);
 }
 
 // Настроение зёрен для запасного пути волны: их жанр и теги, а если их нет, самые частые жанры и теги
@@ -2071,9 +2075,18 @@ export function installWave(config: WaveConfig, createPlayback: typeof installPl
         if (seed) picked = seeds.slice(0, seed.kind === 'tracks' ? 5 : 3);
         else {
             picked = likedSeeds.filter((track) => seeds.includes(track)).slice(0, 1);
-            const rest = seeds.filter((track) => !picked.includes(track)).slice(0, 12);
-            shuffleInPlace(rest);
-            picked.push(...rest.slice(0, 3 - picked.length));
+            const rest = seeds.filter((track) => !picked.includes(track));
+            const near = shuffleInPlace(rest.slice(0, 12));
+            // Одно зерно на артиста за проход: любимый артист в истории иначе часто даёт два-три зерна из трёх,
+            // и похожие сходятся на его же каталог. Разных артистов не хватило - добор из ближних зёрен
+            const artistOf = new Set(picked.map(trackArtist));
+            for (const track of [...near, ...rest.slice(12)]) {
+                if (picked.length >= 3) break;
+                if (artistOf.has(trackArtist(track))) continue;
+                artistOf.add(trackArtist(track));
+                picked.push(track);
+            }
+            for (const track of near) if (picked.length < 3 && !picked.includes(track)) picked.push(track);
         }
         for (const track of picked) usedSeeds.add(track.id);
         // Всё, что пришло из похожих и станции, включая отсеянное: по нему считается настроение запасного пути
@@ -2963,7 +2976,9 @@ export function installWave(config: WaveConfig, createPlayback: typeof installPl
 
         // Находки дня: неслышанные записи из похожих на восемь любимых; знакомый аккаунт не исключается
         const seedPool = taste ? tasteOrder(liked.map((track) => ({ track })), taste).map((entry) => entry.track) : shuffleInPlace(liked.slice());
-        const daySeeds = seedPool.slice(0, 8);
+        // Восемь зёрен от восьми разных артистов, если столько набирается
+        const distinct = capPerArtist(seedPool, 1);
+        const daySeeds = [...distinct, ...seedPool.filter((track) => !distinct.includes(track))].slice(0, 8);
         const candidates: WaveTrack[] = [];
         await Promise.all(daySeeds.map((from) =>
             call('relatedSounds', { track_id: from.id }, { limit: 50 }).then((body) => {
