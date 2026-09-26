@@ -2768,6 +2768,7 @@ export function installWave(config: WaveConfig, createPlayback: typeof installPl
         const meta = el('div', 'scw-meta');
         if (current) {
             const like = button('scw-like', 'like', T.like, 'heart');
+            like.title = T.like;
             like.setAttribute('aria-pressed', String(currentLiked));
             const later = button('scw-like', 'later', T.later, 'later');
             later.title = T.later;
