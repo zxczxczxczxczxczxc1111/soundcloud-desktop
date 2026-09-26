@@ -118,6 +118,33 @@ it('нет сети, нет входа, чужой аккаунт: состоя�
     expect(other.deps.build).not.toHaveBeenCalled();
 });
 
+it('зависшая страница не держит радар: сбор ограничен бюджетом плюс минута, следующий проход идёт', async () => {
+    vi.useFakeTimers();
+    try {
+        const slot = Date.parse('2026-09-25T06:00:00Z');
+        const env = scheduler(slot + 60000, { collect: vi.fn(() => new Promise<RadarCollectResult | null>(() => undefined)) });
+        const radar = new RadarScheduler(env.deps);
+        let done = false;
+        void radar.tick().then(() => { done = true; });
+        await vi.advanceTimersByTimeAsync(RADAR_BUDGET_MS + 59_000);
+        expect(done).toBe(false);
+        await vi.advanceTimersByTimeAsync(1_000);
+        expect(done).toBe(true);
+        expect(radar.getState().phase).toBe('error');
+        const hung = scheduler(slot, { user: vi.fn(() => new Promise<number>(() => undefined)) });
+        const other = new RadarScheduler(hung.deps);
+        let finished = false;
+        void other.tick().then(() => { finished = true; });
+        await vi.advanceTimersByTimeAsync(15_000);
+        expect(finished).toBe(true);
+        void radar.tick();
+        await vi.advanceTimersByTimeAsync(0);
+        expect(env.deps.collect).toHaveBeenCalledTimes(2);
+    } finally {
+        vi.useRealTimers();
+    }
+});
+
 it('параллельный вызов ждёт идущий проход, ошибка видна в состоянии и не роняет планировщик', async () => {
     const env = scheduler(Date.parse('2026-09-25T07:00:00Z'), { status: vi.fn(async () => { throw new Error('Библиотека не ответила вовремя'); }) });
     const radar = new RadarScheduler(env.deps);

@@ -64,9 +64,11 @@ export class LibraryService {
     private sequence = 0;
     private closed = false;
     private closing: Promise<void> | null = null;
-    private pending = new Map<number, { resolve(value: unknown): void; reject(error: Error): void; timer: ReturnType<typeof setTimeout> }>();
+    private pending = new Map<number, { resolve(value: unknown): void; reject(error: Error): void; timer: ReturnType<typeof setTimeout>; backup: boolean }>();
     private marks = new Map<number, TasteMark[]>();
-    constructor(private directory: string, private flush: () => void, private workerPath = join(__dirname, 'libraryWorker.js')) {}
+    // Тайм-ауты подряд у обычных запросов: второй значит, что поток завис на долгом запросе и все ждут за ним
+    private timeouts = 0;
+    constructor(private directory: string, private flush: () => void, private workerPath = join(__dirname, 'libraryWorker.js'), private timeout = 60000) {}
 
     private start(): Worker {
         if (this.closed) throw new Error('Библиотека закрыта');
@@ -74,6 +76,7 @@ export class LibraryService {
         const worker = new Worker(this.workerPath, { workerData: { directory: this.directory } });
         this.worker = worker;
         worker.on('message', (reply: LibraryReply) => {
+            this.timeouts = 0;
             const pending = this.pending.get(reply.id);
             if (!pending) return;
             this.pending.delete(reply.id);
@@ -98,17 +101,30 @@ export class LibraryService {
             if (method === 'sync' || method === 'profile' || method === 'view' || method === 'radarBuild' || method === 'radarView' || method === 'radarFound' || method === 'backupSave' || method === 'backupInspect') this.flush();
             const worker = this.start();
             const id = ++this.sequence;
+            const backup = method.startsWith('backup');
             return new Promise((resolve, reject) => {
                 const timer = setTimeout(() => {
                     this.pending.delete(id);
                     reject(new Error('Библиотека не ответила вовремя'));
-                }, method.startsWith('backup') ? BACKUP_TIMEOUT : 60000);
-                this.pending.set(id, { resolve: (value) => resolve(value as LibraryOperations[K]['result']), reject, timer });
+                    if (!backup) this.timedOut(worker);
+                }, backup ? BACKUP_TIMEOUT : this.timeout);
+                this.pending.set(id, { resolve: (value) => resolve(value as LibraryOperations[K]['result']), reject, timer, backup });
                 worker.postMessage({ id, method, args });
             });
         } catch (error) {
             return Promise.reject(error);
         }
+    }
+    // Раньше поток после тайм-аута работал дальше, и запросы вставали за зависшим до перезапуска клиента. Копию и
+    // восстановление не прерываем: у них свой предел и откат, а обрыв посреди них оставил бы полдела
+    private timedOut(worker: Worker): void {
+        if (this.worker !== worker || ++this.timeouts < 2 || [...this.pending.values()].some((item) => item.backup)) return;
+        console.warn('Worker библиотеки не отвечает: перезапуск');
+        this.timeouts = 0;
+        this.worker = null;
+        for (const item of this.pending.values()) { clearTimeout(item.timer); item.reject(new Error('Библиотека перезапущена')); }
+        this.pending.clear();
+        void worker.terminate().catch((cause: unknown) => console.warn('Worker библиотеки не остановлен', cause));
     }
     public invalidate(userId: unknown, marks: TasteMark[]): void {
         if (typeof userId !== 'number' || !Number.isSafeInteger(userId) || userId <= 0) return;

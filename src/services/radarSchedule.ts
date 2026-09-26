@@ -1,7 +1,10 @@
 // Расписание пятничного радара: период выпуска в часовом поясе пользователя и планировщик в main.
 // Время, сеть, страница и хранилище приходят зависимостями: так планировщик проверяется без Electron
+import { withTimeout } from '../utils/withTimeout';
 
 const MINUTE = 60000;
+/** Сколько ждать ответа страницы на короткий вопрос: кто вошёл */
+const PAGE_ANSWER_MS = 15000;
 
 export interface RadarSchedule {
     /** День недели 0-6, воскресенье 0; пятница 5 */
@@ -210,13 +213,14 @@ export class RadarScheduler {
         const schedule = this.deps.schedule();
         const period = radarPeriod(this.deps.now(), schedule);
         if (!this.deps.online()) return this.set('offline', period.key);
-        const user = await this.deps.user();
+        // Страница могла зависнуть или перезагрузиться: без предела проход висел бы до перезапуска клиента, и радар вставал
+        const user = await withTimeout(this.deps.user(), PAGE_ANSWER_MS, 'радар: вход');
         if (!user) return this.set('no-session', period.key);
         const status = await this.deps.status(user, period.key, period.at);
         const staleBefore = period.at - RADAR_FRESH_MS;
         if (status.published) {
             // Между слотами каталог подновляется понемногу, чтобы к следующему выпуску почти всё было свежим
-            const result = await this.deps.collect(user, this.backgroundBudget, this.deps.now() - 20 * 3600000);
+            const result = await withTimeout(this.deps.collect(user, this.backgroundBudget, this.deps.now() - 20 * 3600000), this.backgroundBudget + MINUTE, 'радар: сбор');
             if (result?.stopped === 'auth') return this.set('no-session', period.key);
             this.quiet = !!result && !result.stopped && result.remaining === 0;
             return this.set('published', period.key);
@@ -225,7 +229,7 @@ export class RadarScheduler {
         const deadline = task.started + RADAR_BUDGET_MS;
         this.set('collecting', period.key);
         const budget = Math.max(deadline - this.deps.now(), 30000);
-        const collected = await this.deps.collect(user, budget, staleBefore);
+        const collected = await withTimeout(this.deps.collect(user, budget, staleBefore), budget + MINUTE, 'радар: сбор');
         if (!collected) return this.set('collecting', period.key, 'page');
         if (collected.stopped === 'auth' || collected.stopped === 'no-api') return this.set('no-session', period.key);
         if (collected.stopped === 'account-changed' || collected.user !== user) return this.set('collecting', period.key, 'account-changed');

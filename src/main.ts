@@ -34,6 +34,7 @@ import { getSiteDictionary } from './services/siteDictionary';
 import { guardGpuStartup, isGpuCompatibilityMode, shouldRunGpuInProcess, type GpuRuntimeState } from './services/gpuProcessMode';
 import { detectNvidiaAdapter } from './services/gpuDetection';
 import { cleanSiteState, siteBroken } from './services/siteModules';
+import { TimeoutError, withTimeout } from './utils/withTimeout';
 import { tintIcon } from './services/devIcon';
 import { revealWindow } from './services/revealWindow';
 import { watchHiddenPage } from './services/hiddenPageWatchdog';
@@ -896,7 +897,8 @@ async function init() {
         const fullLoad = (): void => {
             if (!contents.isDestroyed()) contents.loadURL(url).catch((error: unknown) => console.warn('Страница сайта не открыта:', error));
         };
-        (contents.executeJavaScript('window.__scNavigate ? window.__scNavigate(' + JSON.stringify(pagePath) + ') : false') as Promise<unknown>)
+        // Зависшая страница не ответит никогда: без предела клик по ссылке ничего бы не делал
+        withTimeout(contents.executeJavaScript('window.__scNavigate ? window.__scNavigate(' + JSON.stringify(pagePath) + ') : false') as Promise<unknown>, 3000, 'переход внутри сайта')
             .then((done) => { if (done !== true) fullLoad(); })
             .catch((error: unknown) => {
                 console.warn('Переход внутри сайта не удался:', error);
@@ -2071,9 +2073,14 @@ function openTrackLink(trackPath: string, attempt = 0, request = ++openLinkReque
     }
     // userGesture: воспроизведение по ссылке запускает пользователь, политика автовоспроизведения его не держит
     const script = 'window.__scOpenTrack ? window.__scOpenTrack(' + JSON.stringify(trackPath) + ') : "not-ready"';
-    (view.webContents.executeJavaScript(script, true) as Promise<unknown>).then(
+    // Страница ищет трек у сайта сама, с пределом 15 с на запрос; зависшая страница без предела держала бы ссылку вечно.
+    // Истёкший предел не повторяется: трек мог уже начать играть
+    withTimeout(view.webContents.executeJavaScript(script, true) as Promise<unknown>, 30000, 'ссылка на трек').then(
         (done) => { if (done === 'not-ready') retry(); else if (done === 'failed' || done === 'unavailable') queueToastNotification(translationService.translate('pageLoadFailed')); },
-        (error: unknown) => { console.warn('Ссылка на трек не открыта:', error); retry(); },
+        (error: unknown) => {
+            console.warn('Ссылка на трек не открыта:', error);
+            if (!(error instanceof TimeoutError)) retry();
+        },
     );
 }
 

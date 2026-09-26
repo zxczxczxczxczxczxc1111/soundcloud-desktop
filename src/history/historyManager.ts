@@ -3,6 +3,7 @@ import { join } from 'path';
 import { trustLocalFile } from '../trustedViews';
 import type { LibraryService } from '../services/libraryService';
 import { trackPathOf } from '../services/waveSignals';
+import { withTimeout } from '../utils/withTimeout';
 
 const HEADER = 32;
 const DAY = 86400000;
@@ -29,14 +30,6 @@ const isId = (value: unknown): value is number => typeof value === 'number' && N
 // Границы от страницы: не раньше 2020 года и не дальше двух суток вперёд
 const isBound = (value: unknown): value is number =>
     typeof value === 'number' && Number.isFinite(value) && value >= Date.UTC(2020, 0, 1) && value <= Date.now() + 2 * DAY;
-
-function withTimeout<T>(work: Promise<T>, ms: number, label: string): Promise<T> {
-    let timer: ReturnType<typeof setTimeout> | undefined;
-    const late = new Promise<never>((_, reject) => {
-        timer = setTimeout(() => reject(new Error('Тайм-аут: ' + label)), ms);
-    });
-    return Promise.race([work, late]).finally(() => clearTimeout(timer));
-}
 
 // Страница истории поверх сайта: от шапки до плеера сайта, плеер остаётся виден и управляем
 export class HistoryManager {
