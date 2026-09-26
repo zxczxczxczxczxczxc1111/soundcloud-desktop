@@ -50,6 +50,7 @@ import {
     dialog,
     powerMonitor,
     net,
+    Notification,
     type IpcMainEvent,
     type NativeImage,
 } from 'electron';
@@ -1636,6 +1637,14 @@ async function init() {
             lastTrackInfo = { title: '', author: '', artwork: '', elapsed: '', duration: '', isPlaying: false, isLiked: false, url: '', artistUrl: '' };
         },
         onRepeatedCrash: () => queueToastNotification(translationService.translate('playerCrashed')),
+        online: () => net.isOnline(),
+        // Окно в трее: сообщение внутри окна никто не увидит, поэтому одно системное уведомление
+        onGaveUp: () => {
+            const text = translationService.translate('pageGaveUp');
+            queueToastNotification(text);
+            const hidden = !mainWindow || mainWindow.isDestroyed() || !mainWindow.isVisible() || mainWindow.isMinimized();
+            if (hidden && Notification.isSupported()) new Notification({ title: appTitle, body: text }).show();
+        },
     });
 
     // Track if this is initial load

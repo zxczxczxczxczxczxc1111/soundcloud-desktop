@@ -33,13 +33,14 @@ app.whenReady().then(async () => {
     }
     const { installRendererRecovery } = require('../tsc/services/rendererRecovery');
     let crashes = 0, repeated = 0;
-    installRendererRecovery(win.webContents, { isQuitting: () => false, onCrash: () => crashes++, onRepeatedCrash: () => repeated++ });
+    const stopRecovery = installRendererRecovery(win.webContents, { isQuitting: () => false, onCrash: () => crashes++, onRepeatedCrash: () => repeated++, online: () => true, onGaveUp: () => undefined });
     const reloaded = new Promise((resolve, reject) => {
         const timeout = setTimeout(() => reject(new Error('Renderer recovery timeout')), 10000);
         win.webContents.once('did-finish-load', () => { clearTimeout(timeout); resolve(); });
     });
     win.webContents.forcefullyCrashRenderer();
     await reloaded;
+    stopRecovery();
     assert.equal(crashes, 1);
     assert.equal(repeated, 0);
     assert.equal(await win.webContents.executeJavaScript('document.body.textContent'), 'Theme test');
