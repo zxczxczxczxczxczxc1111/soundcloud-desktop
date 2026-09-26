@@ -103,7 +103,7 @@ export type WaveTexts = Record<
     | 'radarRevision' | 'radarFoundEmpty' | 'radarNoMatch' | 'whyRadar' | 'whyRadarArtist' | 'whyRadarFollow' | 'whyRadarTag' | 'whyRadarTaste'
     | 'menuVersions' | 'menuHideFamily' | 'menuShowFamily' | 'toastFamilyHidden' | 'toastFamilyShown' | 'versionsTitle' | 'versionsSame'
     | 'versionsOther' | 'versionsLoading' | 'versionsEmpty' | 'versionsFailed' | 'versionsLink' | 'versionsUnlink' | 'versionsProbable'
-    | 'versionsConfirmed' | 'versionsThis' | 'toastLinked' | 'toastUnlinked' | 'dialogClose' | 'radarPost',
+    | 'versionsConfirmed' | 'versionsThis' | 'toastLinked' | 'toastUnlinked' | 'dialogClose' | 'radarPost' | 'rowPlay',
     string
 >;
 
@@ -143,7 +143,7 @@ export const WAVE_TEXTS: Record<'ru' | 'en', WaveTexts> = {
         seedGroup: 'Твой вкус: {seed}', seedTracks: 'Волна по подборке: {seed}',
         menuPick: 'Добавить в подборку', menuUnpick: 'Убрать из подборки', toastPicked: 'В подборке {count}', toastUnpicked: 'Трек убран из подборки',
         toastPickFull: 'В подборке уже {count}', pickStart: 'Включить волну по подборке', pickClear: 'Очистить подборку',
-        mixPlay: 'Слушать подборку', mixClose: 'Свернуть', mixLoading: 'Загружаю треки', mixFailed: 'Треки не загрузились, нажми на карточку ещё раз',
+        mixPlay: 'Слушать подборку', rowPlay: 'Слушать: {title}', mixClose: 'Свернуть', mixLoading: 'Загружаю треки', mixFailed: 'Треки не загрузились, нажми на карточку ещё раз',
         mixEmpty: 'Все треки подборки ты убрал из волны',
         whyVersion: 'Другая версия {seed}',
         radar: 'Радар релизов', radarUploads: 'Новые загрузки',
@@ -200,7 +200,7 @@ export const WAVE_TEXTS: Record<'ru' | 'en', WaveTexts> = {
         seedGroup: 'Your taste: {seed}', seedTracks: 'Wave from picks: {seed}',
         menuPick: 'Add to picks', menuUnpick: 'Remove from picks', toastPicked: 'Picks: {count}', toastUnpicked: 'Removed from picks',
         toastPickFull: 'Picks are full: {count}', pickStart: 'Play wave from picks', pickClear: 'Clear picks',
-        mixPlay: 'Play mix', mixClose: 'Collapse', mixLoading: 'Loading tracks', mixFailed: 'Couldn’t load tracks, click the card again',
+        mixPlay: 'Play mix', rowPlay: 'Play: {title}', mixClose: 'Collapse', mixLoading: 'Loading tracks', mixFailed: 'Couldn’t load tracks, click the card again',
         mixEmpty: 'You removed every track of this mix from My Wave',
         whyVersion: 'Another version of {seed}',
         radar: 'Release Radar', radarUploads: 'New uploads',
@@ -1200,7 +1200,7 @@ export function installWave(config: WaveConfig, createPlayback: typeof installPl
     let lastInput = { at: 0, pick: false };
     const onUserInput = (event: Event): void => {
         const target = event.target instanceof Element ? event.target : null;
-        const pick = event.type === 'click' && !!target?.closest('.scw-tile[data-track], .scw-row[data-track], #sc-desktop-queue .scq-name');
+        const pick = event.type === 'click' && !target?.closest('a.scw-link') && !!target?.closest('.scw-tile[data-track], .scw-row[data-track], #sc-desktop-queue .scq-name');
         lastInput = { at: Date.now(), pick };
     };
     // Трек сменился в течение 4 секунд после действия: сменил человек (опрос раз в секунду, плюс запас на загрузку)
@@ -2633,6 +2633,8 @@ export function installWave(config: WaveConfig, createPlayback: typeof installPl
     const PICKS_MAX = 5;
     // Раскрытая под полкой подборка и её треки по номеру карточки
     let openCard: number | null = null;
+    // Прокрутка списка раскрытой подборки: отсоединённый при уходе со страницы список её забывает, по «Назад» она берётся отсюда
+    let keptRowsScroll = 0;
     const mixLists = new Map<number, WaveTrack[] | 'loading' | 'failed'>();
     const isId = (value: unknown): value is number => typeof value === 'number' && Number.isSafeInteger(value) && value > 0;
     // Радар на полке: номера карточек отрицательные и не -1, -1 в обработчике кнопок значит «подборки нет»
@@ -2820,6 +2822,7 @@ export function installWave(config: WaveConfig, createPlayback: typeof installPl
             return;
         }
         openCard = index;
+        keptRowsScroll = 0;
         const card = shelf?.cards[index];
         const loaded = mixLists.get(index);
         if (card && !Array.isArray(loaded) && loaded !== 'loading') {
@@ -3053,6 +3056,7 @@ export function installWave(config: WaveConfig, createPlayback: typeof installPl
             return;
         }
         openCard = index;
+        keptRowsScroll = 0;
         if (!radarLoaded) loadRadar();
         else if (radarEdition) {
             loadRadarTracks(index);
@@ -3782,9 +3786,13 @@ export function installWave(config: WaveConfig, createPlayback: typeof installPl
         '.scw-mix-title span{color:var(--scw-muted)}',
         '.scw-mix .scw-hint{padding:8px 0 12px}',
         '.scw-mix-rows{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));column-gap:16px;max-height:432px;overflow-y:auto;margin:0 -8px;padding-bottom:8px;scrollbar-width:thin;scrollbar-color:rgba(255,255,255,.2) transparent}',
-        '#sc-wave .scw-row{display:grid;grid-template-columns:40px minmax(0,1fr) auto;align-items:center;gap:12px;height:48px;padding:4px 8px;border-radius:4px;text-align:left;min-width:0}',
+        '#sc-wave .scw-row{display:grid;grid-template-columns:40px minmax(0,1fr) auto;align-items:center;gap:12px;height:48px;padding:4px 8px;border-radius:4px;text-align:left;min-width:0;cursor:pointer;box-sizing:border-box}',
         '#sc-wave .scw-row:hover{background:var(--scw-film)}',
         '.scw-row .scw-art{width:40px;height:40px;margin:0}',
+        '#sc-wave .scw-row-play{background:var(--scw-tile)}',
+        // Название и автор ссылками: цвет строки, подчёркивание только при наведении
+        '#sc-wave .scw-link,#sc-wave .scw-link:visited{color:inherit;text-decoration:none}',
+        '#sc-wave .scw-link:hover{text-decoration:underline}',
         '.scw-row-t{min-width:0}',
         '.scw-row-t b,.scw-row-t span{display:block;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}',
         '.scw-row-t b{font-weight:600}',
@@ -3794,7 +3802,7 @@ export function installWave(config: WaveConfig, createPlayback: typeof installPl
         // Строка списка и окна версий играет по нажатию: при наведении на обложке значок «слушать»
         '#sc-wave .scw-row .scw-art::before,.scw-vplay .scw-art::before{content:"";position:absolute;z-index:1;inset:0;background:rgba(0,0,0,.5);opacity:0;transition:opacity .12s}',
         '#sc-wave .scw-row .scw-art::after,.scw-vplay .scw-art::after{content:"";position:absolute;z-index:1;left:50%;top:50%;width:12px;height:14px;margin:-7px 0 0 -5px;background:#fff;clip-path:polygon(0 0,100% 50%,0 100%);opacity:0;transition:opacity .12s}',
-        '#sc-wave .scw-row:hover .scw-art::before,#sc-wave .scw-row:hover .scw-art::after,#sc-wave .scw-row:focus-visible .scw-art::before,#sc-wave .scw-row:focus-visible .scw-art::after,.scw-vplay:hover .scw-art::before,.scw-vplay:hover .scw-art::after,.scw-vplay:focus-visible .scw-art::before,.scw-vplay:focus-visible .scw-art::after{opacity:1}',
+        '#sc-wave .scw-row:hover .scw-art::before,#sc-wave .scw-row:hover .scw-art::after,#sc-wave .scw-row-play:focus-visible::before,#sc-wave .scw-row-play:focus-visible::after,.scw-vplay:hover .scw-art::before,.scw-vplay:hover .scw-art::after,.scw-vplay:focus-visible .scw-art::before,.scw-vplay:focus-visible .scw-art::after{opacity:1}',
         // Радар: инструменты в шапке списка, фильтры «Всех найденных», метки строк, заготовка карточки
         '.scw-mix-tools{display:flex;align-items:center;gap:8px;flex-wrap:wrap}',
         '.scw-mix-tools.scw-filters{margin:0 0 8px}',
@@ -3935,6 +3943,41 @@ export function installWave(config: WaveConfig, createPlayback: typeof installPl
     };
     const art = (node: HTMLElement, track: WaveTrack, size: 't300x300' | 't500x500'): void => paintArt(node, artworkUrl(track, size), coverPath(track));
     const artistName = (track: WaveTrack): string => track.user?.username ?? '';
+    // Текст ссылкой на страницу сайта; без пути (приватный трек, секретная часть в адресе) остаётся просто текстом
+    function linkText<K extends 'b' | 'span' | 'div'>(tag: K, className: string, text: string, path: string): HTMLElementTagNameMap[K] {
+        const node = el(tag, className);
+        if (!path) {
+            node.textContent = text;
+            return node;
+        }
+        const link = el('a', 'scw-link', text);
+        link.href = path;
+        node.append(link);
+        return node;
+    }
+    // Название ведёт на трек, автор на профиль загрузчика: профиль это первая часть пути трека
+    const titleLink = <K extends 'b' | 'div'>(tag: K, className: string, track: WaveTrack): HTMLElementTagNameMap[K] =>
+        linkText(tag, className, (track.title ?? '').trim() || '…', trackPath(track.permalink_url));
+    const artistLink = <K extends 'span' | 'div'>(tag: K, className: string, track: WaveTrack): HTMLElementTagNameMap[K] => {
+        const path = trackPath(track.permalink_url);
+        return linkText(tag, className, artistName(track), path.slice(0, path.indexOf('/', 1)));
+    };
+    // Строка любого списка волны: обложка кнопкой «слушать», название и автор ссылками, клик по пустому месту тоже включает трек.
+    // Значки и длительность кладутся в end
+    function trackRow(track: WaveTrack, now: number): { row: HTMLDivElement; end: HTMLDivElement } {
+        const row = el('div', 'scw-row');
+        row.dataset.track = String(track.id);
+        if (track.id === now) row.setAttribute('aria-current', 'true');
+        const cover = el('button', 'scw-art scw-row-play');
+        cover.type = 'button';
+        cover.setAttribute('aria-label', fillText(T.rowPlay, { title: (track.title ?? '').trim() || '…' }));
+        art(cover, track, 't300x300');
+        const text = el('div', 'scw-row-t');
+        text.append(titleLink('b', '', track), artistLink('span', '', track));
+        const end = el('div', 'scw-row-e');
+        row.append(cover, text, end);
+        return { row, end };
+    }
     const hintText = (): string => {
         if (seed) return seedText(seed, false);
         const genres = genre ? parseGenres(genre) : [];
@@ -4081,8 +4124,8 @@ export function installWave(config: WaveConfig, createPlayback: typeof installPl
             if (candidate) art(cover, candidate.track, 't300x300');
             tile.append(
                 cover,
-                el('div', 'scw-t1', candidate?.track.title ?? '\u00a0'),
-                el('div', 'scw-t2', candidate ? artistName(candidate.track) : '\u00a0'),
+                candidate ? titleLink('div', 'scw-t1', candidate.track) : el('div', 'scw-t1', '\u00a0'),
+                candidate ? artistLink('div', 'scw-t2', candidate.track) : el('div', 'scw-t2', '\u00a0'),
                 el('div', 'scw-t3', candidate ? reasonText(candidate.reason, T) : '\u00a0'),
             );
             tiles.append(tile);
@@ -4299,20 +4342,11 @@ export function installWave(config: WaveConfig, createPlayback: typeof installPl
         const now = active ? player?.getCurrentSound()?.id ?? 0 : 0;
         for (const track of tracks) {
             const item = byId.get(track.id);
-            const row = el('button', 'scw-row');
-            row.type = 'button';
-            row.dataset.track = String(track.id);
-            if (track.id === now) row.setAttribute('aria-current', 'true');
-            const cover = el('div', 'scw-art');
-            art(cover, track, 't300x300');
-            const text = el('div', 'scw-row-t');
-            text.append(el('b', '', (track.title ?? '').trim() || '…'), el('span', '', artistName(track)));
-            const end = el('div', 'scw-row-e');
+            const { row, end } = trackRow(track, now);
             if (item?.after) end.append(el('span', 'scw-badge', T.radarAfter));
             if (item?.kind === 'upload' && !uploads) end.append(el('span', 'scw-badge', T.radarPost));
             if (item?.heard) end.append(el('span', 'scw-badge', T.radarHeard));
             end.append(el('span', 'scw-row-d', formatTime(track.full_duration || track.duration || 0)));
-            row.append(cover, text, end);
             list.append(row);
         }
         box.append(list);
@@ -4350,30 +4384,26 @@ export function installWave(config: WaveConfig, createPlayback: typeof installPl
         const rows = el('div', 'scw-mix-rows');
         const now = active ? player?.getCurrentSound()?.id ?? 0 : 0;
         for (const track of tracks) {
-            const row = el('button', 'scw-row');
-            row.type = 'button';
-            row.dataset.track = String(track.id);
-            if (track.id === now) row.setAttribute('aria-current', 'true');
-            const cover = el('div', 'scw-art');
-            art(cover, track, 't300x300');
-            const text = el('div', 'scw-row-t');
-            text.append(el('b', '', (track.title ?? '').trim() || '…'), el('span', '', artistName(track)));
-            row.append(cover, text, el('div', 'scw-row-d', formatTime(track.full_duration || track.duration || 0)));
+            const { row, end } = trackRow(track, now);
+            end.append(el('span', 'scw-row-d', formatTime(track.full_duration || track.duration || 0)));
             rows.append(row);
         }
         box.append(rows);
         return box;
     }
-    function render(): void {
+    // rowsAt: прокрутка списка подборки, когда секция вернулась на страницу и своя прокрутка списка потеряна
+    function render(rowsAt?: number): void {
         if (!section) return;
         hideTip();
         const focusedNode = document.activeElement instanceof HTMLElement && section.contains(document.activeElement) ? document.activeElement : null;
         const focused = focusedNode ? focusedNode.dataset.act ?? focusedNode.dataset.mode ?? focusedNode.dataset.role ?? '' : '';
-        // У карточек полки одни действия на всех: фокус возвращается по номеру карточки, в списке подборки по треку
+        // У карточек полки одни действия на всех: фокус возвращается по номеру карточки, в строке списка по треку и месту в строке
         const focusedCard = focusedNode?.dataset.card;
-        const focusedTrack = focusedNode?.classList.contains('scw-row') ? focusedNode.dataset.track : undefined;
+        const focusedRow = focusedNode?.closest<HTMLElement>('.scw-row[data-track]');
+        const focusedTrack = focusedRow?.dataset.track;
+        const focusedPart = focusedRow && focusedNode ? [...focusedRow.querySelectorAll('button, a')].indexOf(focusedNode) : -1;
         // Пересборка секции не должна сбрасывать прокрутку списка подборки
-        const rowsScroll = section.querySelector('.scw-mix-rows')?.scrollTop ?? 0;
+        const rowsScroll = rowsAt ?? section.querySelector('.scw-mix-rows')?.scrollTop ?? 0;
         section.textContent = '';
         section.setAttribute('aria-label', T.wave);
         section.append(renderHead());
@@ -4388,7 +4418,7 @@ export function installWave(config: WaveConfig, createPlayback: typeof installPl
         const lines = el('div', '');
         const current = currentCandidate();
         if (current) {
-            lines.append(el('div', 'scw-track', current.track.title ?? ''), el('div', 'scw-artist', artistName(current.track)));
+            lines.append(titleLink('div', 'scw-track', current.track), artistLink('div', 'scw-artist', current.track));
         } else {
             const text = state === 'loading' ? T.loading : state === 'empty' ? emptyLine() : state === 'error' ? T.error : state === 'unavailable' ? T.unavailable : idleLine();
             const line = el('div', 'scw-track wrap', text);
@@ -4430,8 +4460,11 @@ export function installWave(config: WaveConfig, createPlayback: typeof installPl
         section.append(body, ...renderTiles(), ...renderShelf());
         const rowsBox = section.querySelector('.scw-mix-rows');
         if (rowsBox) rowsBox.scrollTop = rowsScroll;
-        if (focusedTrack) section.querySelector<HTMLElement>('.scw-row[data-track="' + focusedTrack + '"]')?.focus({ preventScroll: true });
-        else if (focused) {
+        if (focusedTrack) {
+            const row = '.scw-row[data-track="' + focusedTrack + '"] ';
+            const parts = section.querySelectorAll<HTMLElement>(row + 'button, ' + row + 'a');
+            (parts[focusedPart] ?? parts[0])?.focus({ preventScroll: true });
+        } else if (focused) {
             const again = focusedCard !== undefined
                 ? section.querySelector<HTMLElement>('[data-act="' + focused + '"][data-card="' + focusedCard + '"]')
                 : section.querySelector<HTMLElement>('[data-act="' + focused + '"],[data-mode="' + focused + '"],[data-role="' + focused + '"]');
@@ -4587,6 +4620,13 @@ export function installWave(config: WaveConfig, createPlayback: typeof installPl
     function onClick(event: MouseEvent): void {
         const target = event.target instanceof Element ? event.target : null;
         if (!target || !section) return;
+        // Название и автор ведут на страницу сайта; строка и плитка при этом трек не включают
+        const link = target.closest<HTMLAnchorElement>('a.scw-link');
+        if (link) {
+            event.preventDefault();
+            navigate(link.getAttribute('href') ?? '');
+            return;
+        }
         const tile = target.closest<HTMLElement>('.scw-tile[data-track]');
         if (tile) {
             const id = Number(tile.dataset.track);
@@ -4803,7 +4843,7 @@ export function installWave(config: WaveConfig, createPlayback: typeof installPl
             const tile = node.closest<HTMLElement>('.scw-tile[data-track], .scw-row[data-track]');
             const id = tile ? Number(tile.dataset.track) : 0;
             const track = id
-                ? known.get(id)?.track ?? preview.find((item) => item.track.id === id)?.track ?? shelfTracks.get(id)
+                ? known.get(id)?.track ?? preview.find((item) => item.track.id === id)?.track ?? shelfTracks.get(id) ?? radarTracks.get(id)
                 : node.closest('.scw-body') ? currentCandidate()?.track : undefined;
             return track ? fromTrack(track) : null;
         }
@@ -5098,10 +5138,16 @@ export function installWave(config: WaveConfig, createPlayback: typeof installPl
             section.addEventListener('mouseleave', () => { hideTip(); if (hover !== null) { hover = null; paint(); } });
             section.addEventListener('mousemove', onMove);
             section.addEventListener('mousedown', onDown);
+            // События прокрутки не всплывают: список подборки ловится на погружении
+            section.addEventListener('scroll', (event) => {
+                if (event.target instanceof HTMLElement && event.target.classList.contains('scw-mix-rows')) keptRowsScroll = event.target.scrollTop;
+            }, true);
         }
         if (!(section.isConnected && section.nextElementSibling === anchor)) {
+            // Возврат на главную («Назад» после перехода по ссылке): список подборки встаёт на прежнюю прокрутку
+            const back = !section.isConnected && section.childElementCount > 0;
             anchor.parentElement.insertBefore(section, anchor);
-            render();
+            render(back ? keptRowsScroll : undefined);
         }
         // Подбор до запуска только для видимого блока: скрытая в F1 волна не ходит в API
         if (state === 'idle' && !active && !preview.length && player && isVisible()) void preparePreview();

@@ -998,7 +998,7 @@ it('раскрытая подборка: треки списком, трек и�
     const section = document.getElementById('sc-wave')!;
     section.querySelector<HTMLButtonElement>('[data-act="shelf-open"][data-card="0"]')!.click();
     await vi.advanceTimersByTimeAsync(100);
-    const rows = section.querySelectorAll<HTMLButtonElement>('.scw-mix .scw-row[data-track]');
+    const rows = section.querySelectorAll<HTMLElement>('.scw-mix .scw-row[data-track]');
     expect(rows).toHaveLength(12);
     expect(rows[0].querySelector('.scw-row-t b')?.textContent).toBe('Find 0');
     expect(rows[0].querySelector('.scw-row-t span')?.textContent).toBe('Artist 0');
@@ -1013,7 +1013,7 @@ it('раскрытая подборка: треки списком, трек и�
     expect(section.querySelector('.scw-row[aria-current="true"]')?.getAttribute('data-track')).toBe('5004');
     // Трек уже в очереди этой подборки: переход к нему без новой очереди
     const calls = site.player.replaceQueue.mock.calls.length;
-    section.querySelector<HTMLButtonElement>('.scw-row[data-track="5006"]')!.click();
+    section.querySelector<HTMLElement>('.scw-row[data-track="5006"]')!.click();
     await vi.advanceTimersByTimeAsync(200);
     expect(site.player.replaceQueue.mock.calls.length).toBe(calls);
     expect(site.player.getCurrentSound()?.id).toBe(5006);
@@ -1021,6 +1021,86 @@ it('раскрытая подборка: треки списком, трек и�
     section.querySelector('.scw-mix')!.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
     expect(section.querySelector('.scw-mix')).toBeNull();
     expect(document.activeElement?.getAttribute('data-act')).toBe('shelf-open');
+});
+
+it('ссылки в строках и шапке: название на трек, автор на профиль, без запуска; обложка и пустое место играют; приватный без ссылок', async () => {
+    const finds = Array.from({ length: 12 }, (_, i): WaveTrack => ({
+        id: 5001 + i, kind: 'track', user_id: 600 + i, duration: 200000, title: 'Find ' + i, user: { id: 600 + i, username: 'Artist ' + i },
+        permalink_url: i === 1 ? 'https://soundcloud.com/artist-1/find-1/s-SeCrEt' : 'https://soundcloud.com/artist-' + i + '/find-' + i,
+    }));
+    const site = fakeSite(relatedTracks, (name, _path, query) => (name === 'trackBatch' ? batchOf(finds)(query) : undefined));
+    const snapshot = { day: localDay(Date.now()), v: 2, cards: [{ kind: 'daily', title: '', sub: '', ids: finds.map((track) => track.id), seeds: [1], keys: [], art: [] }] };
+    Object.assign(window, { soundcloudAPI: { waveShelf: { load: vi.fn(async () => ({ snapshot, recent: [] })), save: vi.fn(async () => true) } } });
+    window.eval(waveScript());
+    await vi.advanceTimersByTimeAsync(100);
+    const section = document.getElementById('sc-wave')!;
+    section.querySelector<HTMLButtonElement>('[data-act="shelf-open"][data-card="0"]')!.click();
+    await vi.advanceTimersByTimeAsync(100);
+    const row = (id: number): HTMLElement => section.querySelector<HTMLElement>('.scw-mix .scw-row[data-track="' + id + '"]')!;
+    const hrefs = (root: Element): (string | null)[] => [...root.querySelectorAll('a.scw-link')].map((link) => link.getAttribute('href'));
+    expect(hrefs(row(5001))).toEqual(['/artist-0/find-0', '/artist-0']);
+    expect(hrefs(row(5002))).toEqual([]);
+    expect(row(5002).querySelector('.scw-row-t b')?.textContent).toBe('Find 1');
+    expect(row(5001).querySelector('button.scw-row-play')?.getAttribute('aria-label')).toBe('Play: Find 0');
+
+    // Переход идёт через роутер сайта: ловим ссылку, которую страница кликает вне секции
+    const opened: (string | null)[] = [];
+    const onLink = (event: MouseEvent): void => {
+        if (!(event.target instanceof HTMLAnchorElement) || section.contains(event.target)) return;
+        opened.push(event.target.getAttribute('href'));
+        event.preventDefault();
+    };
+    document.addEventListener('click', onLink);
+    try {
+        row(5003).querySelector<HTMLAnchorElement>('.scw-row-t b a')!.click();
+        row(5003).querySelector<HTMLAnchorElement>('.scw-row-t span a')!.click();
+    } finally {
+        document.removeEventListener('click', onLink);
+    }
+    await vi.advanceTimersByTimeAsync(100);
+    expect(opened).toEqual(['/artist-2/find-2', '/artist-2']);
+    expect(site.player.replaceQueue).not.toHaveBeenCalled();
+
+    row(5005).querySelector<HTMLButtonElement>('.scw-row-play')!.click();
+    await vi.advanceTimersByTimeAsync(100);
+    expect(site.player.getCurrentSound()?.id).toBe(5005);
+    row(5008).querySelector<HTMLElement>('.scw-row-e')!.click();
+    await vi.advanceTimersByTimeAsync(200);
+    expect(site.player.getCurrentSound()?.id).toBe(5008);
+    expect(hrefs(section.querySelector('.scw-body')!)).toEqual(['/artist-7/find-7', '/artist-7']);
+
+    // Фокус на ссылке автора переживает пересборку секции
+    row(5010).querySelector<HTMLAnchorElement>('.scw-row-t span a')!.focus();
+    row(5009).querySelector<HTMLElement>('.scw-row-e')!.click();
+    await vi.advanceTimersByTimeAsync(200);
+    expect(document.activeElement?.getAttribute('href')).toBe('/artist-9');
+});
+
+it('«Назад» после перехода по ссылке: раскрытая подборка на месте, список на прежней прокрутке', async () => {
+    const finds = Array.from({ length: 12 }, (_, i): WaveTrack => ({ id: 5001 + i, kind: 'track', user_id: 600 + i, duration: 200000, title: 'Find ' + i }));
+    fakeSite(relatedTracks, (name, _path, query) => (name === 'trackBatch' ? batchOf(finds)(query) : undefined));
+    const snapshot = { day: localDay(Date.now()), v: 2, cards: [{ kind: 'daily', title: '', sub: '', ids: finds.map((track) => track.id), seeds: [1], keys: [], art: [] }] };
+    Object.assign(window, { soundcloudAPI: { waveShelf: { load: vi.fn(async () => ({ snapshot, recent: [] })), save: vi.fn(async () => true) } } });
+    window.eval(waveScript());
+    await vi.advanceTimersByTimeAsync(100);
+    const section = document.getElementById('sc-wave')!;
+    section.querySelector<HTMLButtonElement>('[data-act="shelf-open"][data-card="0"]')!.click();
+    await vi.advanceTimersByTimeAsync(100);
+    const list = section.querySelector<HTMLElement>('.scw-mix-rows')!;
+    list.scrollTop = 120;
+    list.dispatchEvent(new Event('scroll'));
+    // Сайт уводит главную со страницы; отсоединённый список прокрутку не помнит
+    const parent = section.parentElement!;
+    const next = section.nextElementSibling;
+    section.remove();
+    list.scrollTop = 0;
+    await vi.advanceTimersByTimeAsync(100);
+    parent.insertBefore(document.createElement('div'), next);
+    await vi.advanceTimersByTimeAsync(100);
+    const back = document.getElementById('sc-wave')!;
+    expect(back.isConnected).toBe(true);
+    expect(back.querySelector('.scw-mix')).not.toBeNull();
+    expect(back.querySelector<HTMLElement>('.scw-mix-rows')?.scrollTop).toBe(120);
 });
 
 it('снимок дня старого формата пересобирается из лайков: находки, давно не слушал, два вкуса, и сохраняется', async () => {
@@ -1470,6 +1550,10 @@ it('P7: радар первым на полке, список с «Already heard
     expect(section.querySelector('.scw-mix-title span')?.textContent).toBe('3 tracks · Sources checked: 10 of 12');
     expect([...section.querySelectorAll<HTMLOptionElement>('[data-role="radar-archive"] option')].map((option) => option.value)).toEqual(['2026-09-25|1', '2026-09-18|1']);
     expect(site.player.replaceQueue).not.toHaveBeenCalled();
+    // Меню строки радара работает и до запуска выпуска: трек берётся из загруженных треков радара
+    expect(rightClick(rows[0]).defaultPrevented).toBe(true);
+    expect(menuActs()).toContain('pick');
+    document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
 
     section.querySelector<HTMLButtonElement>('[data-act="mix-play"]')!.click();
     await vi.advanceTimersByTimeAsync(100);
@@ -1479,7 +1563,7 @@ it('P7: радар первым на полке, список с «Already heard
     expect(section.querySelector('[data-act="shelf-play"][data-card="-10"]')?.getAttribute('aria-pressed')).toBe('true');
 
     // Причина тегом: слово как у самого трека
-    section.querySelector<HTMLButtonElement>('.scw-row[data-track="8003"]')!.click();
+    section.querySelector<HTMLElement>('.scw-row[data-track="8003"]')!.click();
     await vi.advanceTimersByTimeAsync(200);
     expect(section.querySelector('.scw-why')?.textContent).toBe('Fresh techno');
 
