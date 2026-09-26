@@ -11,9 +11,10 @@ import { RADAR_FRESH_MS } from './radarSchedule';
 
 const DAY = 86400000;
 
-/** Параметры радара; version растёт при каждом изменении их смысла и попадает в выпуск */
+/** Параметры радара; version растёт при каждом изменении их смысла и попадает в выпуск.
+ *  4: потолок аккаунта и в «Новых загрузках» (26.09.2026) */
 export const RADAR_PARAMS = {
-    version: 3,
+    version: 4,
     /** Окно свежести версии, дни до отсечки. Неделя между выпусками (решение владельца 25.09.2026, было 28) */
     windowDays: 7,
     /** Последние дни окна получают небольшую прибавку (приоритет последней неделе внутри разных вкусов) */
@@ -519,7 +520,8 @@ export function buildRadar(input: RadarInput): RadarEdition | null {
         algorithm: P.version,
         taste: input.tasteVersion,
         items: selectEdition(releaseGroups.map((entry) => entry.lead), input.history).map(item).filter((entry): entry is RadarItem => entry !== null),
-        uploads: selectRadar(freshGroups.map((entry) => entry.lead), [], P.uploadsSize).map(item).filter((entry): entry is RadarItem => entry !== null),
+        // Тот же потолок аккаунта, что в основном списке: сборный канал с тридцатью исполнителями иначе занимает все места
+        uploads: selectRadar(freshGroups.map((entry) => entry.lead), [], P.uploadsSize, P.perUploader).map(item).filter((entry): entry is RadarItem => entry !== null),
     };
 }
 

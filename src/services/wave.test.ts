@@ -121,6 +121,14 @@ describe('жанр', () => {
         expect(trackMatchesGenre(track(5, { genre: 'Trap' }), genreKeys('rap'))).toBe(false);
         expect(trackMatchesGenre(track(6, { genre: 'Rap / Trap' }), genreKeys('rap'))).toBe(true);
         expect(trackMatchesGenre(track(7, {}), [])).toBe(true);
+        // Witch house только звучит как house
+        expect(trackMatchesGenre(track(8, { genre: 'Witch House' }), genreKeys('house'))).toBe(false);
+        expect(trackMatchesGenre(track(9, { genre: 'Deep House' }), genreKeys('house'))).toBe(true);
+        // Зёрна строго по полю жанра: метка Hip Hop у рокового трека не делает его зерном хип-хопа, трек без жанра идёт по меткам
+        const spam = track(10, { genre: 'Alternative Rock', tag_list: '"Hip Hop" Rap Ambient' });
+        expect(trackMatchesGenre(spam, genreKeys('hip hop'))).toBe(true);
+        expect(trackMatchesGenre(spam, genreKeys('hip hop'), true)).toBe(false);
+        expect(trackMatchesGenre(track(11, { tag_list: '"Hip Hop"' }), genreKeys('hip hop'), true)).toBe(true);
     });
     it('настроение: жанр и теги зерна, у зерна без них самые частые среди похожих', () => {
         expect(moodTags([track(1, { genre: 'Witch House', tag_list: 'dark "haunted mound"' })], [track(2, { genre: 'Rap' })], 2)).toEqual(['witch house', 'dark']);

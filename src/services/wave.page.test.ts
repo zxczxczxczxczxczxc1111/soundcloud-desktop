@@ -1076,6 +1076,28 @@ it('ссылки в строках и шапке: название на трек
     expect(document.activeElement?.getAttribute('href')).toBe('/artist-9');
 });
 
+it('повторный запуск карточки играет её целиком: отданное сайту в прошлых подборках не отсекает её список', async () => {
+    const finds = Array.from({ length: 12 }, (_, i): WaveTrack => ({ id: 5001 + i, kind: 'track', user_id: 600 + i, duration: 200000, title: 'Find ' + i }));
+    const other = Array.from({ length: 12 }, (_, i): WaveTrack => ({ id: 6001 + i, kind: 'track', user_id: 650 + i, duration: 200000, title: 'Other ' + i }));
+    const site = fakeSite(relatedTracks, (name, _path, query) => (name === 'trackBatch' ? batchOf([...finds, ...other])(query) : undefined));
+    const snapshot = { day: localDay(Date.now()), v: 3, cards: [
+        { kind: 'daily', title: '', sub: '', ids: finds.map((track) => track.id), seeds: [1], keys: [], art: [] },
+        { kind: 'forgotten', title: '', sub: '', ids: other.map((track) => track.id), seeds: [], keys: [], art: [] },
+    ] };
+    Object.assign(window, { soundcloudAPI: { waveShelf: { load: vi.fn(async () => ({ snapshot, recent: [] })), save: vi.fn(async () => true) } } });
+    window.eval(waveScript());
+    await vi.advanceTimersByTimeAsync(100);
+    const play = async (card: number): Promise<number[]> => {
+        document.querySelector<HTMLButtonElement>('#sc-wave [data-act="shelf-play"][data-card="' + card + '"]')!.click();
+        await vi.advanceTimersByTimeAsync(2000);
+        return queuedIds(site);
+    };
+    expect((await play(0)).slice(0, 3)).toEqual([5001, 5002, 5003]);
+    // «Давно не слушал» без выбранного трека перемешивается: важен состав, а не порядок
+    expect((await play(1)).slice(0, 10).every((id) => id > 6000 && id < 6013)).toBe(true);
+    expect((await play(0)).slice(0, 10)).toEqual(finds.slice(0, 10).map((track) => track.id));
+});
+
 it('«Назад» после перехода по ссылке: раскрытая подборка на месте, список на прежней прокрутке', async () => {
     const finds = Array.from({ length: 12 }, (_, i): WaveTrack => ({ id: 5001 + i, kind: 'track', user_id: 600 + i, duration: 200000, title: 'Find ' + i }));
     fakeSite(relatedTracks, (name, _path, query) => (name === 'trackBatch' ? batchOf(finds)(query) : undefined));
@@ -1130,6 +1152,31 @@ it('снимок дня старого формата пересобираетс
     expect(saved.cards[1].ids).not.toContain(2001);
     expect(saved.cards.slice(2).map((card) => card.title).sort()).toEqual(['Lo-Fi and Chill', 'Techno and Industrial']);
     expect(document.querySelectorAll('#sc-wave .scw-card[data-card]')).toHaveLength(4);
+});
+
+it('полка без модели вкуса (main не ответил) не хранится до полуночи и через 10 минут собирается заново', async () => {
+    const liked = Array.from({ length: 30 }, (_, i): WaveTrack => ({
+        id: 2001 + i, kind: 'track', duration: 200000, title: 'Like ' + i, user_id: 500 + (i % 5), user: { id: 500 + (i % 5), username: 'Tech' + (i % 5) }, genre: 'Techno', tag_list: 'industrial',
+    }));
+    fakeSite(relatedTracks, (name, _path, query) => {
+        if (name === 'soundLikesIds') return { collection: liked.map((track) => track.id) };
+        if (name === 'trackBatch') return batchOf(liked)(query);
+        return undefined;
+    });
+    const shelf = { load: vi.fn(async () => ({ snapshot: null, recent: [] })), save: vi.fn(async () => true) };
+    const profile = { artists: [[500, 1]], tags: [], tracks: [] };
+    const waveTaste = { load: vi.fn(async (): Promise<unknown> => null) };
+    Object.assign(window, { soundcloudAPI: { waveShelf: shelf, waveTaste } });
+    window.eval(waveScript());
+    await vi.advanceTimersByTimeAsync(100);
+    expect(document.querySelectorAll('#sc-wave .scw-card[data-card]').length).toBeGreaterThan(0);
+    expect(shelf.save).not.toHaveBeenCalled();
+    waveTaste.load.mockImplementation(async () => profile);
+    await vi.advanceTimersByTimeAsync(10 * 60000);
+    // Страница сайта меняется постоянно: следующая перестройка DOM зовёт сборку снова
+    document.body.append(document.createElement('div'));
+    await vi.advanceTimersByTimeAsync(500);
+    expect(shelf.save).toHaveBeenCalledOnce();
 });
 
 it('жанр полки: не больше 5 треков одного артиста, в подписи артисты, характерные именно для этого жанра', async () => {

@@ -384,15 +384,20 @@ export function trackPath(value: unknown): string {
     return /^\/[a-z0-9_-]+\/[a-z0-9_-]+$/.test(path) ? path : '';
 }
 
-export function trackMatchesGenre(track: WaveTrack, keys: string[]): boolean {
+// strict: только поле жанра, метки лишь у трека без жанра. Так выбираются зёрна: артист с пачкой меток на все жанры
+// иначе засевал бы волну Hip-hop своими роковыми треками. Кандидатов из поиска по жанру проверяют и метки:
+// у нишевых жанров (witch house, phonk) в поле жанра часто стоит просто Electronic
+export function trackMatchesGenre(track: WaveTrack, keys: string[], strict = false): boolean {
     if (!keys.length) return true;
     const parts: string[] = [];
     const genre = track.genre ?? '';
     parts.push(normalizeTag(genre));
     for (const part of genre.split(/[/,&|+;]/)) parts.push(normalizeTag(part));
-    for (const match of (track.tag_list ?? '').matchAll(/"([^"]+)"|(\S+)/g)) parts.push(normalizeTag(match[1] ?? match[2] ?? ''));
-    // Короткий ключ только целиком: rap не должен находиться в trap
-    return parts.some((part) => part && keys.some((key) => part === key || (key.length >= 5 && part.includes(key))));
+    if (!strict || !parts.some(Boolean)) for (const match of (track.tag_list ?? '').matchAll(/"([^"]+)"|(\S+)/g)) parts.push(normalizeTag(match[1] ?? match[2] ?? ''));
+    // Короткий ключ только целиком: rap не должен находиться в trap. Длинный ищется и внутри (darkwitchhouse это witch house),
+    // кроме жанров, которые только звучат похоже: witch house не house
+    const unlike: Record<string, string[]> = { house: ['witchhouse', 'wtchhs'] };
+    return parts.some((part) => part && keys.some((key) => part === key || (key.length >= 5 && part.includes(key) && !(unlike[key] ?? []).some((other) => part.includes(other)))));
 }
 
 export function trackArtist(track: WaveTrack): number {
@@ -1176,6 +1181,9 @@ export function installWave(config: WaveConfig, createPlayback: typeof installPl
     const ours = new WeakSet<SiteQueueItem>();
     const known = new Map<number, WaveCandidate>();
     const taken = new Set<number>();
+    // Отдано сайту с начала текущей подборки (радар, карточка, артист): её собственный список отсекает только это.
+    // known копится всю жизнь страницы, и повторный запуск радара вечером терял бы всё, что ушло в очередь утром
+    const seedGiven = new Set<number>();
     // Версии, рано пропущенные человеком в этой сессии: их копии не повторяются, остальной аккаунт играет дальше
     const skipped = new Set<string>();
     const likedSeeds: WaveTrack[] = [];
@@ -1254,6 +1262,7 @@ export function installWave(config: WaveConfig, createPlayback: typeof installPl
     let taste: TasteMaps | null = null;
     let tasteAt = 0;
     let tastePromise: Promise<void> | null = null;
+    let tasteFailed = false;
     // Слежение за текущим треком: журнал, пропуски и лайки
     let currentId = 0;
     let currentPosition = 0;
@@ -1347,6 +1356,9 @@ export function installWave(config: WaveConfig, createPlayback: typeof installPl
         if (selected < 0) return false;
         openRequest++; seedRequest++; resetGeneration();
         active = saved.active; mode = saved.mode; genre = saved.genre; seed = saved.seed;
+        // Сессия продолжает ту же подборку: уже стоявшее в очереди её список не повторяет
+        seedGiven.clear();
+        for (const item of items) if (ours.has(item) && item.sound) seedGiven.add(item.sound.id);
         fallbackBefore = active ? saved.fallback : null;
         p.toggleState('fallbackEnabled', active ? false : saved.fallback);
         startedAt = Date.now(); jumped = true;
@@ -1844,12 +1856,16 @@ export function installWave(config: WaveConfig, createPlayback: typeof installPl
         if (taste && Date.now() - tasteAt < 30 * 60000) return Promise.resolve();
         tastePromise ??= (async () => {
             const id = await ensureUser();
-            const maps = tasteMaps(id ? await host.soundcloudAPI?.waveTaste?.load(id) : null);
+            const bridge = host.soundcloudAPI?.waveTaste;
+            const maps = tasteMaps(id && bridge ? await bridge.load(id) : null);
             if (maps) {
                 taste = maps;
                 tasteAt = Date.now();
             }
+            // Для известного пользователя main всегда отдаёт профиль, хотя бы пустой: null значит сбой модели
+            tasteFailed = !maps && !!id && !!bridge;
         })().catch((error: unknown) => {
+            tasteFailed = true;
             console.warn('Волна: вкус не загружен', error);
         }).finally(() => {
             tastePromise = null;
@@ -1916,7 +1932,7 @@ export function installWave(config: WaveConfig, createPlayback: typeof installPl
             if (seen.has(track.id) || usedSeeds.has(track.id)) return false;
             if (!chosen.has(track.id) && (skipped.has(copyKey(track)) || isExcluded(track))) return false;
             seen.add(track.id);
-            return !!seed || trackMatchesGenre(track, keys);
+            return !!seed || trackMatchesGenre(track, keys, true);
         });
         const fresh = list.filter((track) => !staleSeeds.has(track.id));
         // Встряхивали столько раз, что свежих зёрен не осталось: круг начинается заново
@@ -1986,13 +2002,17 @@ export function installWave(config: WaveConfig, createPlayback: typeof installPl
                 if (current.order === 'fixed' && ownQueue.length >= BATCH) return ownQueue.length;
             } else if (current.order) {
                 const reason: WaveReason = current.kind === 'daily' ? { kind: 'daily' } : current.kind === 'forgotten' ? { kind: 'forgotten' } : { kind: 'group', name: current.title };
-                // Радар играет выпуск целиком: «Уже слышал» и недавно игравшее в нём остаются, запреты проверены при запуске
-                const ownFilter: WaveFilter = current.kind === 'radar' ? { ...filter, recent: new Set<number>() } : filter;
+                // Радар играет выпуск целиком: «Уже слышал» и недавно игравшее в нём остаются, запреты проверены при запуске.
+                // Свой список отсекает только отданное сайту в этой подборке, а не всё, что волна отдавала раньше
+                const ownFilter: WaveFilter = { ...filter, taken: new Set(seedGiven), ...(current.kind === 'radar' ? { recent: new Set<number>() } : {}) };
                 for (const track of current.own)
                     accept(ownQueue, { track, reason: current.kind === 'radar' ? { kind: 'radar', why: radarReasons.get(track.id) ?? '' } : reason }, ownFilter);
                 // Подборка целиком впереди: похожие понадобятся, когда она кончится
                 if (current.order === 'fixed' && ownQueue.length >= BATCH) return ownQueue.length;
-            } else for (const track of current.own) accept(found, { track, reason: { kind: 'artistTrack', artist: current.title } }, filter);
+            } else {
+                const ownFilter: WaveFilter = { ...filter, taken: new Set(seedGiven) };
+                for (const track of current.own) accept(found, { track, reason: { kind: 'artistTrack', artist: current.title } }, ownFilter);
+            }
         }
         const tags = !seed && genre ? parseGenres(genre) : [];
         const keys = tags.length ? genreKeysFor(genre) : [];
@@ -2190,6 +2210,7 @@ export function installWave(config: WaveConfig, createPlayback: typeof installPl
             item.release?.();
             ours.add(item);
             known.set(candidate.track.id, candidate);
+            seedGiven.add(candidate.track.id);
             items.push(item);
         }
         return items;
@@ -2737,10 +2758,12 @@ export function installWave(config: WaveConfig, createPlayback: typeof installPl
         popOpen = false;
         staleSeeds.clear();
         resetGeneration();
+        seedGiven.clear();
         const first = loaded.first;
         // Стартовый трек встанет первым или уже играет: станция и треки артиста не должны вернуть его ещё раз
         if (first) {
             taken.add(first.id);
+            seedGiven.add(first.id);
             for (const key of copyKeys(first)) signatures.add(key);
         }
         const keep = !!first && player?.getCurrentSound()?.id === first.id;
@@ -2771,6 +2794,8 @@ export function installWave(config: WaveConfig, createPlayback: typeof installPl
     let shelf: Shelf | null = null;
     let shelfPromise: Promise<void> | null = null;
     let shelfFailedAt = 0;
+    // Полка собрана без модели вкуса (main не ответил): показана, но не сохранена и через 10 минут собирается заново
+    let shelfRetryAt = 0;
     // Треки подборок по id: снимок хранит только номера, названия и обложки добирает trackBatch
     const shelfTracks = new Map<number, WaveTrack>();
     const picks: WaveTrack[] = [];
@@ -2951,7 +2976,7 @@ export function installWave(config: WaveConfig, createPlayback: typeof installPl
     function ensureShelf(): void {
         const bridge = host.soundcloudAPI?.waveShelf;
         const day = localDay(Date.now());
-        if (!bridge || shelfPromise || (shelf && shelf.day === day) || Date.now() - shelfFailedAt < 30000) return;
+        if (!bridge || shelfPromise || (shelf && shelf.day === day && (!shelfRetryAt || Date.now() < shelfRetryAt)) || Date.now() - shelfFailedAt < 30000) return;
         // Полка прошлых суток сменилась: номер карточки у играющей волны больше ни на что не указывает
         // Карточки радара от полки не зависят и остаются как были
         const replace = (next: Shelf): void => {
@@ -2966,7 +2991,7 @@ export function installWave(config: WaveConfig, createPlayback: typeof installPl
             if (!id) throw new Error('Пользователь не определён');
             const loaded = (await bridge.load(id)) as { snapshot?: unknown; recent?: unknown; heard?: unknown; playlists?: unknown } | null;
             const saved = asShelf(loaded?.snapshot);
-            if (saved && saved.day === day && saved.v === SHELF_FORMAT) {
+            if (saved && saved.day === day && saved.v === SHELF_FORMAT && !shelfRetryAt) {
                 replace(saved);
                 return;
             }
@@ -2976,8 +3001,12 @@ export function installWave(config: WaveConfig, createPlayback: typeof installPl
             const built = await buildShelf(day, recent, [...extra.values()]);
             if (disposed) return;
             replace(built);
+            // Без вкуса зёрна находок случайны, «Давно не слушал» идёт только по порядку лайков, жанры без прослушанного:
+            // такую полку до полуночи не хранит
+            const tasteless = taste === null && tasteFailed;
+            shelfRetryAt = tasteless ? Date.now() + 10 * 60000 : 0;
             // Пустую полку не хранит: лайки могли не загрузиться, следующий запуск соберёт заново
-            if (built.cards.length && (await bridge.save(id, built)) !== true) console.warn('Волна: подборки не сохранены');
+            if (built.cards.length && !tasteless && (await bridge.save(id, built)) !== true) console.warn('Волна: подборки не сохранены');
         })().catch((error: unknown) => {
             shelfFailedAt = Date.now();
             console.warn('Волна: подборки не собраны', error);

@@ -216,6 +216,15 @@ it('пачка без дат релиза (решение владельца 25.
     expect(rows(edition.uploads, 31, 37)).toHaveLength(0);
 });
 
+it('«Новые загрузки»: сборный канал с десятью исполнителями занимает не больше трёх мест, как в основном списке', () => {
+    const names = ['alpha', 'bravo', 'charlie', 'delta', 'echo', 'foxtrot', 'golf', 'hotel', 'india', 'juliet'];
+    const hub = names.map((name, i) => upload(100 + i, name + ' - Song ' + i, 50, 'Hub'));
+    const edition = buildRadar(input(hub, { profile: { artists: [], credits: names.map((name): [string, number] => [name, 2]), tags: [['phonk', 1]], families: [], markers: [], tracks: [] } }))!;
+    const fromHub = [...edition.items, ...edition.uploads].filter((item) => item.id >= 100 && item.id < 110);
+    expect(fromHub.length).toBeGreaterThan(0);
+    expect(edition.uploads.filter((item) => item.id >= 100 && item.id < 110)).toHaveLength(Math.min(RADAR_PARAMS.perUploader, fromHub.length));
+});
+
 it('история выпусков: направление, которого давно не было, получает большую прибавку', () => {
     const pool = [candidate(1, 0.8, 'phonk'), candidate(2, 0.8, 'jazz')];
     expect(selectRadar(pool, [['phonk', 'phonk'], ['phonk']])[0].direction).toBe('jazz');
