@@ -50,9 +50,19 @@ export type WaveReason =
     /** Трек «Моей музыки»: name это плейлист, из которого он пришёл, пусто у лайков */
     | { kind: 'library'; name: string };
 
+/** Для журнала: откуда кандидат на самом деле и как его оценил вкус; причина в reason может смениться причиной по вкусу */
+export interface WaveTrace {
+    origin: WaveReason['kind'];
+    /** Трек-зерно, от которого найден кандидат; 0 без зерна */
+    seed: number;
+    /** Оценка вкуса при упорядочивании; null, пока профиля вкуса нет */
+    score: number | null;
+    known: boolean;
+}
 export interface WaveCandidate {
     track: WaveTrack;
     reason: WaveReason;
+    trace?: WaveTrace;
 }
 
 export interface WaveFilter {

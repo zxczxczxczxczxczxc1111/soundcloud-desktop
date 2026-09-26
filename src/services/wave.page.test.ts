@@ -5,6 +5,7 @@
 import { afterEach, beforeEach, expect, it, vi } from 'vitest';
 import { localDay, waveScript, type WaveTrack, type WaveWindow } from './wave';
 import type { PlaybackSnapshot } from './playbackStore';
+import type { PlaySignal } from '../types';
 
 // Поддельный сайт: плеер, API и модель трека через тот же webpackJsonp, что у SoundCloud
 interface FakeItem { sound: { id: number; currentTime?(): number; getMediaDuration?(): number }; explicit?: boolean; sourceInfo?: { type: string } }
@@ -776,10 +777,13 @@ it('журнал сигналов: где ушёл, сколько прозву�
     const signals = bridge.waveSignals.add.mock.calls.flatMap(([userId, list]) => (userId === 77 ? list : []));
     expect(signals[0]).toEqual(expect.objectContaining({
         id: queued[0].sound.id, end: 'skip', source: 'wave:similar', why: 'similar', dur: 200000, liked: false, disliked: false,
-        v: 3, tz: -new Date().getTimezoneOffset(), title: expect.stringMatching(/^Rel /), path: '',
+        v: 4, tz: -new Date().getTimezoneOffset(), title: expect.stringMatching(/^Rel /), path: '',
         // Трек сменил не человек: кнопок и клавиш за 4 секунды до смены не было. Кнопка «играть» блока трек не выбирает
         endedBy: 'auto', picked: false,
+        // Разбор выдачи: первое место поколения, найден от одного из трёх зёрен истории, режим «Похожее», отметок не было
+        gen: expect.any(Number), slot: 1, origin: 'similar', seed: expect.any(Number), mode: 'similar', laterNow: false, moreNow: false,
     }));
+    expect([1, 2, 3]).toContain(signals[0].seed);
     expect(signals[0].heard).toBeGreaterThanOrEqual(39000);
     expect(signals[0].heard).toBeLessThanOrEqual(41000);
     expect(signals[0].pos).toBeGreaterThanOrEqual(100000);
@@ -794,7 +798,53 @@ it('журнал сигналов: где ушёл, сколько прозву�
     site.setItems([{ sound: { id: 6 } }], 0);
     await vi.advanceTimersByTimeAsync(7000);
     const later = bridge.waveSignals.add.mock.calls.flatMap(([, list]) => list);
-    expect(later.find((signal: { id: number }) => signal.id === 5)).toEqual(expect.objectContaining({ end: 'done', source: 'site:playlist', why: '' }));
+    const siteTrack = later.find((signal: { id: number }) => signal.id === 5);
+    expect(siteTrack).toEqual(expect.objectContaining({ end: 'done', source: 'site:playlist', why: '' }));
+    // У трека сайта разбора выдачи нет
+    expect(siteTrack).not.toHaveProperty('gen');
+    expect(siteTrack).not.toHaveProperty('origin');
+});
+
+it('журнал v4: оценка вкуса, «Не сейчас» во время трека, трек волны после её конца не пишется историей сайта', async () => {
+    const site = fakeSite(relatedTracks);
+    const waveSignals = { add: vi.fn() };
+    // Артист 10 (первый похожий первого зерна) знаком вкусу, остальные нет
+    const waveTaste = { load: vi.fn(async () => ({ artists: [[10, 2]], tags: [], tracks: [] })) };
+    const waveExclusions = { load: vi.fn(async () => ({ tracks: [], artists: [] })), set: vi.fn(async () => true) };
+    Object.assign(window, { soundcloudAPI: { waveSignals, waveTaste, waveExclusions, sendTrackMeta: vi.fn() } });
+    window.eval(waveScript());
+    await vi.advanceTimersByTimeAsync(100);
+    const section = document.getElementById('sc-wave')!;
+    section.querySelector<HTMLButtonElement>('.scw-play')!.click();
+    await vi.advanceTimersByTimeAsync(1000);
+    await playFor(5000);
+    const first = site.player.getCurrentSound()!.id;
+    section.querySelector<HTMLButtonElement>('[data-act="later"]')!.click();
+    await vi.advanceTimersByTimeAsync(1000);
+    await playFor(3000);
+    // Волна кончилась: пользователь включил своё, очередь больше не наша
+    const ourItem = site.player.getQueue().slice().find((item) => item.sound.id !== first && item.sound.id !== site.player.getCurrentSound()!.id)!;
+    position = 0;
+    site.setItems([{ sound: { id: 5, currentTime: () => position, getMediaDuration: () => 200000 }, sourceInfo: { type: 'playlist' } }], 0);
+    await vi.advanceTimersByTimeAsync(1000);
+    await playFor(5000);
+    // Кнопкой «назад» вернулся к треку волны
+    position = 0;
+    site.setItems([ourItem], 0);
+    await vi.advanceTimersByTimeAsync(1000);
+    await playFor(3000);
+    site.setItems([{ sound: { id: 6 } }], 0);
+    await vi.advanceTimersByTimeAsync(7000);
+    const signals = waveSignals.add.mock.calls.flatMap(([, list]) => list) as PlaySignal[];
+    const wave = signals.filter((signal) => signal.source.startsWith('wave:'));
+    expect(signals.find((signal) => signal.id === first)).toEqual(expect.objectContaining({ laterNow: true, moreNow: false }));
+    // Профиль вкуса был: у каждого трека волны оценка и знакомость артиста, знаком только артист 10
+    for (const signal of wave) {
+        expect(typeof signal.score).toBe('number');
+        expect(signal.known).toBe(signal.artist === 10);
+    }
+    expect(signals.find((signal) => signal.id === ourItem.sound.id)).toEqual(expect.objectContaining({ source: 'wave:similar', origin: 'similar', mode: 'similar', slot: expect.any(Number) }));
+    expect(signals.find((signal) => signal.id === 5)?.source).toBe('site:playlist');
 });
 
 it('A21: повтор одного места не растит покрытие, смену кнопкой плеера отличает от смены самим сайтом', async () => {
@@ -832,7 +882,7 @@ it('A21: повтор одного места не растит покрытие
     await vi.advanceTimersByTimeAsync(6000);
     const signals = bridge.waveSignals.add.mock.calls.flatMap(([, list]) => list) as Array<{ id: number; heard: number; spans: Array<[number, number]>; endedBy: string; picked: boolean; end: string }>;
     const five = signals.find((signal) => signal.id === 5);
-    expect(five).toEqual(expect.objectContaining({ v: 3, end: 'skip', endedBy: 'user', picked: false, spans: [[0, 20000], [100000, 110000]] }));
+    expect(five).toEqual(expect.objectContaining({ v: 4, end: 'skip', endedBy: 'user', picked: false, spans: [[0, 20000], [100000, 110000]] }));
     expect(five?.heard).toBe(40000);
     expect(signals.find((signal) => signal.id === 6)).toEqual(expect.objectContaining({ end: 'skip', endedBy: 'auto', heard: 5000 }));
     next.remove();

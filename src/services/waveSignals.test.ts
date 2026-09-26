@@ -119,6 +119,27 @@ it('запись v3: участки сливаются и проверяются
     expect(old?.endedBy).toBeUndefined();
 });
 
+it('запись v4: разбор выдачи волны принимается по полю, кривое поле пропадает, строка остаётся', () => {
+    const now = Date.UTC(2026, 8, 26, 12);
+    const trace = {
+        gen: now - 60000, slot: 7, origin: 'similar', seed: 42, score: 1.23456, known: false, mode: 'fresh', waveGenre: 'phonk, drift phonk',
+        libMode: 'smart', laterNow: true, moreNow: false,
+    } as const;
+    const v4 = validateSignal(signal({ at: now, v: 4, endedBy: 'user', ...trace }), now);
+    expect(v4).toEqual(expect.objectContaining({ v: 4, endedBy: 'user', ...trace, score: 1.23 }));
+    const junk = validateSignal({
+        ...signal({ at: now, v: 4 }), gen: now + 3 * 86400000, slot: -1, origin: 'drop table', seed: 1.5, score: Infinity, known: 'yes', mode: 'wild',
+        waveGenre: '\u0000', libMode: 'random', laterNow: 1, moreNow: 'no',
+    }, now);
+    expect(junk).toEqual(expect.objectContaining({ v: 4, id: 11 }));
+    for (const field of Object.keys(trace)) expect(junk).not.toHaveProperty(field);
+    // Зерно 0 значит «без зерна», место 0 значит «неизвестно»: оба допустимы
+    expect(validateSignal(signal({ at: now, v: 4, seed: 0, slot: 0 }), now)).toEqual(expect.objectContaining({ seed: 0, slot: 0 }));
+    // Поля v4 у записи v3 не принимаются
+    const v3 = validateSignal(signal({ at: now, v: 3, ...trace }), now);
+    for (const field of Object.keys(trace)) expect(v3).not.toHaveProperty(field);
+});
+
 it('«не у компьютера» решает main, признак со страницы не принимается', () => {
     const directory = dir();
     const away = vi.fn((from: number) => from === Date.UTC(2026, 7, 20, 10));

@@ -11,6 +11,7 @@ import type { SyncBridge } from './pageSources';
 import type { RecordingLink } from './trackIdentity';
 import type { RadarCollectResult } from './radarSchedule';
 import * as libraryMix from './libraryMix';
+import type { LibraryMode } from './libraryMix';
 import * as siteModules from './siteModules';
 import type { SiteState, WebpackRequire } from './siteModules';
 import type { WaveTrack, WaveMode, OpenTrackResult, WaveReason, WaveCandidate, WaveFilter, WaveTexts, TasteMaps, MenuTarget, Excluded, MarkKind, Profile, Seed, WaveState as State } from './waveTypes';
@@ -221,6 +222,12 @@ export function installWave(config: WaveConfig, createPlayback: typeof installPl
     let autoplayReleased = false;
     const ours = new WeakSet<SiteQueueItem>();
     const known = new Map<number, WaveCandidate>();
+    // Паспорт элемента очереди волны для журнала: поколение, место в выдаче и откуда волна в момент постановки.
+    // Трек волны остаётся треком волны и после её конца, а не пишется историей сайта
+    interface QueueTrace { gen: number; slot: number; source: string; mode: WaveMode; waveGenre: string; libMode?: LibraryMode }
+    const itemTrace = new WeakMap<SiteQueueItem, QueueTrace>();
+    let generationAt = Date.now();
+    let givenInGeneration = 0;
     const taken = new Set<number>();
     // Отдано сайту с начала текущей подборки (радар, карточка, артист): её собственный список отсекает только это.
     // known копится всю жизнь страницы, и повторный запуск радара вечером терял бы всё, что ушло в очередь утром
@@ -571,6 +578,8 @@ export function installWave(config: WaveConfig, createPlayback: typeof installPl
         if (selected < 0) return false;
         openRequest++; seedRequest++; resetGeneration();
         active = saved.active; mode = saved.mode; genre = saved.genre; seed = saved.seed;
+        // Место в выдаче после перезапуска неизвестно
+        for (const item of items) if (ours.has(item)) itemTrace.set(item, queueTrace(0));
         // Сессия продолжает ту же подборку: уже стоявшее в очереди её список не повторяет
         seedGiven.clear();
         for (const item of items) if (ours.has(item) && item.sound) seedGiven.add(item.sound.id);
@@ -1206,10 +1215,12 @@ export function installWave(config: WaveConfig, createPlayback: typeof installPl
         staleSeeds.clear();
         return list;
     }
-    function accept(list: WaveCandidate[], candidate: WaveCandidate, filter: WaveFilter): boolean {
+    // seedId: зерно, от которого найден кандидат, для журнала
+    function accept(list: WaveCandidate[], candidate: WaveCandidate, filter: WaveFilter, seedId = 0): boolean {
         if (!acceptCandidate(candidate.track, filter) || signatures.has(copyKey(candidate.track))) return false;
         for (const key of copyKeys(candidate.track)) signatures.add(key);
         taken.add(candidate.track.id);
+        if (!candidate.trace) candidate.trace = { origin: candidate.reason.kind, seed: seedId, score: null, known: false };
         list.push(candidate);
         return true;
     }
@@ -1315,7 +1326,7 @@ export function installWave(config: WaveConfig, createPlayback: typeof installPl
                 : filter.mode === 'fresh' && isNewArtist(track, p.knownArtists, p.knownNames)
                     ? { kind: 'newArtist' }
                     : { kind: filter.mode === 'fresh' ? 'fresh' : 'similar', seed: seedTitle };
-            if (accept(found, { track, reason }, filter) && seed && derivedSeeds.length < 100) derivedSeeds.push(track);
+            if (accept(found, { track, reason }, filter, from.id) && seed && derivedSeeds.length < 100) derivedSeeds.push(track);
         };
         let failures = 0;
         const tasks: Promise<void>[] = picked.map((from) =>
@@ -1355,7 +1366,7 @@ export function installWave(config: WaveConfig, createPlayback: typeof installPl
                         continue;
                     }
                     observed.push(track);
-                    if (trackMatchesGenre(track, keys)) accept(found, { track, reason: { kind: 'version', seed: (probe.title ?? '').trim() || '…' } }, filter);
+                    if (trackMatchesGenre(track, keys)) accept(found, { track, reason: { kind: 'version', seed: (probe.title ?? '').trim() || '…' } }, filter, probe.id);
                 }
             }).catch((error: unknown) => { failures++; console.warn('Волна: поиск не ответил', error); }));
         await Promise.all(tasks);
@@ -1407,6 +1418,13 @@ export function installWave(config: WaveConfig, createPlayback: typeof installPl
         // По вкусу, если профиль есть; без него как раньше, перемешиванием
         const current = taste;
         if (current) {
+            // Оценка в журнал до замены причин: по ней меряется, угадывает ли вкус пропуски
+            for (const candidate of found) {
+                if (!candidate.trace) continue;
+                const score = tasteScore(candidate.track, current);
+                candidate.trace.score = Math.round(score.score * 100) / 100;
+                candidate.trace.known = score.known;
+            }
             applyTasteReasons(found, current);
             pool.push(...tasteOrder(found, current));
         } else pool.push(...shuffleInPlace(found));
@@ -1454,6 +1472,8 @@ export function installWave(config: WaveConfig, createPlayback: typeof installPl
     }
     function resetGeneration(): void {
         generation++;
+        generationAt = Date.now();
+        givenInGeneration = 0;
         pool = [];
         ownQueue = [];
         preview = [];
@@ -1473,6 +1493,12 @@ export function installWave(config: WaveConfig, createPlayback: typeof installPl
         for (const candidate of known.values()) taken.add(candidate.track.id);
     }
 
+    function queueTrace(slot: number): QueueTrace {
+        return {
+            gen: generationAt, slot, source: 'wave:' + (seed ? seed.kind : mode), mode: seed?.mode ?? mode, waveGenre: seed ? '' : genre ?? '',
+            libMode: seed?.kind === 'library' ? seed.library?.mode : undefined,
+        };
+    }
     function makeItems(list: WaveCandidate[]): SiteQueueItem[] {
         const Item = player?.getQueue().model;
         if (!Item || !SoundModel) return [];
@@ -1484,6 +1510,7 @@ export function installWave(config: WaveConfig, createPlayback: typeof installPl
             const item = new Item({}, { sound, originalModel: sound, queryPosition: index, sourceInfo: { type: 'history' }, index });
             item.release?.();
             ours.add(item);
+            itemTrace.set(item, queueTrace(++givenInGeneration));
             known.set(candidate.track.id, candidate);
             seedGiven.add(candidate.track.id);
             items.push(item);
@@ -1765,11 +1792,21 @@ export function installWave(config: WaveConfig, createPlayback: typeof installPl
         }
     }
 
+    // Разбор выдачи для журнала (v4): поколение, место, исходная причина и зерно, оценка вкуса, режим
+    function waveFields(candidate: WaveCandidate, trace: QueueTrace | undefined): Partial<PlaySignal> {
+        const fields: Partial<PlaySignal> = { origin: candidate.trace?.origin ?? candidate.reason.kind, seed: candidate.trace?.seed ?? 0, laterNow: false, moreNow: false };
+        if (trace) Object.assign(fields, { gen: trace.gen, slot: trace.slot, mode: trace.mode });
+        if (trace?.waveGenre) fields.waveGenre = trace.waveGenre;
+        if (trace?.libMode) fields.libMode = trace.libMode;
+        if (candidate.trace && candidate.trace.score !== null) Object.assign(fields, { score: candidate.trace.score, known: candidate.trace.known });
+        return fields;
+    }
     function beginPlay(sound: SiteSound, picked = false): void {
         const attrs = sound.attributes ?? { id: sound.id };
         const item = player?.getCurrentQueueItem();
         const candidate = known.get(sound.id);
-        const waveItem = fromWave(item) && !!candidate;
+        const trace = item && ours.has(item) ? itemTrace.get(item) : undefined;
+        const waveItem = !!candidate && (fromWave(item) || !!trace);
         play = {
             signal: {
                 at: Date.now(),
@@ -1779,7 +1816,7 @@ export function installWave(config: WaveConfig, createPlayback: typeof installPl
                 pos: 0,
                 heard: 0,
                 end: 'skip',
-                source: waveItem ? 'wave:' + (seed ? seed.kind : mode) : siteSource(item?.sourceInfo?.type),
+                source: waveItem ? trace?.source ?? 'wave:' + (seed ? seed.kind : mode) : siteSource(item?.sourceInfo?.type),
                 why: waveItem && candidate ? candidate.reason.kind : '',
                 liked: currentLiked,
                 likedNow: false,
@@ -1787,13 +1824,14 @@ export function installWave(config: WaveConfig, createPlayback: typeof installPl
                 hiddenArtist: false,
                 genre: textOf(attrs.genre, 80),
                 tags: textOf(attrs.tag_list, 300),
-                v: 3,
+                v: 4,
                 tz: -new Date().getTimezoneOffset(),
                 title: textOf(attrs.title, 300),
                 artistName: textOf((attrs.user as { username?: unknown } | undefined)?.username, 200),
                 path: trackPath(attrs.permalink_url),
                 artwork: textOf(attrs.artwork_url, 400),
                 picked,
+                ...(waveItem && candidate ? waveFields(candidate, trace) : {}),
             },
             lastPosition: positionOf(sound),
             likedAtStart: currentLiked,
@@ -2158,6 +2196,8 @@ export function installWave(config: WaveConfig, createPlayback: typeof installPl
             // Отметка о том, что сейчас играет, уходит и в журнал сигналов
             if (play && kind === 'track' && play.signal.id === entry.id) play.signal.disliked = excluded;
             if (play && kind === 'artist' && play.signal.artist === entry.id) play.signal.hiddenArtist = excluded;
+            if (play && ((kind === 'later-track' && play.signal.id === entry.id) || (kind === 'later-artist' && play.signal.artist === entry.id))) play.signal.laterNow = excluded;
+            if (play && kind === 'more' && play.signal.id === entry.id) play.signal.moreNow = excluded;
             if (kind === 'more') {
                 // Профиль вкуса пересчитается к следующему подбору, а сам трек сразу становится зерном, как лайк
                 tasteAt = 0;

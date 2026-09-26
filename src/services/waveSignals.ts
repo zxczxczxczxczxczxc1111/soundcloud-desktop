@@ -41,6 +41,26 @@ export function cleanSpans(value: unknown): Array<[number, number]> | undefined 
 /** Уникальное покрытие трека участками, мс */
 export const spanCoverage = (spans: ReadonlyArray<readonly [number, number]>): number => spans.reduce((sum, [from, to]) => sum + Math.max(0, to - from), 0);
 
+// Поля v4 (разбор выдачи волны) проверяются по одному, как v3: кривое поле пропадает, строка остаётся
+function waveTrace(value: Partial<Record<keyof PlaySignal, unknown>>, now: number): Partial<PlaySignal> {
+    const trace: Partial<PlaySignal> = {};
+    const { gen, slot, seed, score } = value;
+    if (typeof gen === 'number' && Number.isSafeInteger(gen) && gen >= Date.UTC(2020, 0, 1) && gen <= now + 86400000) trace.gen = gen;
+    if (typeof slot === 'number' && Number.isInteger(slot) && slot >= 0 && slot <= 100000) trace.slot = slot;
+    const origin = text(value.origin, 20);
+    if (/^[a-zA-Z]{1,20}$/.test(origin)) trace.origin = origin;
+    if (seed === 0 || isId(seed)) trace.seed = seed;
+    if (typeof score === 'number' && Number.isFinite(score) && Math.abs(score) <= 100) trace.score = Math.round(score * 100) / 100;
+    if (typeof value.known === 'boolean') trace.known = value.known;
+    if (value.mode === 'similar' || value.mode === 'fresh') trace.mode = value.mode;
+    const waveGenre = text(value.waveGenre, 200);
+    if (waveGenre) trace.waveGenre = waveGenre;
+    if (value.libMode === 'order' || value.libMode === 'shuffle' || value.libMode === 'smart') trace.libMode = value.libMode;
+    if (typeof value.laterNow === 'boolean') trace.laterNow = value.laterNow;
+    if (typeof value.moreNow === 'boolean') trace.moreNow = value.moreNow;
+    return trace;
+}
+
 // Событие со страницы недоверенное: всё, что не проходит проверку, отбрасывается целиком
 export function validateSignal(input: unknown, now = Date.now()): PlaySignal | null {
     if (!input || typeof input !== 'object' || Array.isArray(input)) return null;
@@ -54,9 +74,10 @@ export function validateSignal(input: unknown, now = Date.now()): PlaySignal | n
     if (!/^(wave:(similar|fresh|track|artist|playlist|daily|forgotten|group|tracks|radar|library)|site(:[a-z][a-z_-]{0,23})?)$/.test(source)) return null;
     const flags = ['liked', 'likedNow', 'disliked', 'hiddenArtist'] as const;
     if (flags.some((flag) => typeof value[flag] !== 'boolean')) return null;
-    // Поля v3 проверяются по одному: без них запись остаётся v2, а не выдумывает причину смены
-    const spans = value.v === 3 ? cleanSpans(value.spans) : undefined;
-    const endedBy = value.v === 3 && (value.endedBy === 'user' || value.endedBy === 'auto') ? value.endedBy : undefined;
+    // Поля v3 проверяются по одному: без них запись остаётся v2, а не выдумывает причину смены. v4 их продолжает
+    const v3 = value.v === 3 || value.v === 4;
+    const spans = v3 ? cleanSpans(value.spans) : undefined;
+    const endedBy = v3 && (value.endedBy === 'user' || value.endedBy === 'auto') ? value.endedBy : undefined;
     const signal: PlaySignal = {
         at: Math.round(value.at),
         id: value.id,
@@ -74,7 +95,7 @@ export function validateSignal(input: unknown, now = Date.now()): PlaySignal | n
         genre: text(value.genre, 80),
         tags: text(value.tags, 300),
         // Поля v2 необязательные: запись без них остаётся записью v1, кривое поле пустеет, а не губит строку
-        v: value.v === 3 ? 3 : value.v === 2 ? 2 : 1,
+        v: value.v === 4 ? 4 : value.v === 3 ? 3 : value.v === 2 ? 2 : 1,
         tz: typeof value.tz === 'number' && Number.isInteger(value.tz) && Math.abs(value.tz) <= 840 ? value.tz : undefined,
         title: text(value.title, 300),
         artistName: text(value.artistName, 200),
@@ -84,7 +105,8 @@ export function validateSignal(input: unknown, now = Date.now()): PlaySignal | n
     };
     if (spans) signal.spans = spans;
     if (endedBy) signal.endedBy = endedBy;
-    if (value.v === 3 && typeof value.picked === 'boolean') signal.picked = value.picked;
+    if (v3 && typeof value.picked === 'boolean') signal.picked = value.picked;
+    if (value.v === 4) Object.assign(signal, waveTrace(value, now));
     return signal;
 }
 

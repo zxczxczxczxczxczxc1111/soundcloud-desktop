@@ -56,6 +56,14 @@ const open = (journal: Journal, directory = dir()): HistoryIndex => {
     indexes.push(index);
     return index;
 };
+/** Колонки схемы 5: индекс прошлой схемы изображается их удалением */
+const V5 = ['why', 'origin', 'seed', 'gen', 'slot', 'score', 'known', 'mode', 'wave_genre', 'lib_mode', 'disliked', 'hidden', 'later_now', 'more_now'];
+const downgrade = (directory: string, version: number, columns: string[]): void => {
+    const old = new DatabaseSync(join(directory, 'history-' + USER + '.sqlite'));
+    for (const column of columns) old.exec('alter table plays drop column ' + column);
+    old.exec('pragma user_version = ' + version);
+    old.close();
+};
 
 it('sync переносит журнал один раз и дальше читает только хвост', () => {
     const journal = new Journal();
@@ -277,10 +285,7 @@ it('индекс второй схемы получает колонки v3 на
     first.sync(USER);
     expect(first.resolve(USER, [11], [{ id: 11, title: 'С сайта' }])).toBe(1);
     first.close();
-    const old = new DatabaseSync(join(directory, 'history-' + USER + '.sqlite'));
-    for (const column of ['covered', 'ended_by', 'picked', 'pos']) old.exec('alter table plays drop column ' + column);
-    old.exec('pragma user_version = 2');
-    old.close();
+    downgrade(directory, 2, ['covered', 'ended_by', 'picked', 'pos', ...V5]);
     journal.list.push(signal({ at: T0 + HOUR, id: 12, v: 3, spans: [[0, 50000]], endedBy: 'auto' }));
     const index = open(journal, directory);
     const warn = vi.spyOn(console, 'warn');
@@ -304,14 +309,47 @@ it('индекс третьей схемы получает место оста�
     first.sync(USER);
     expect(first.resolve(USER, [11], [{ id: 11, title: 'С сайта' }])).toBe(1);
     first.close();
-    const old = new DatabaseSync(join(directory, 'history-' + USER + '.sqlite'));
-    old.exec('alter table plays drop column pos');
-    old.exec('pragma user_version = 3');
-    old.close();
+    downgrade(directory, 3, ['pos', ...V5]);
     const index = open(journal, directory);
     expect(index.sync(USER)).toBe(0);
     expect(journal.calls[journal.calls.length - 1]).toBe(0);
     expect(index.day(USER, T0, T0 + HOUR)).toEqual([expect.objectContaining({ id: 11, title: 'С сайта', pos: 150000, heard: 40000 })]);
+});
+
+it('индекс четвёртой схемы получает разбор выдачи волны на месте: названия остаются, записи v4 дозаполняются из журнала', () => {
+    const directory = dir();
+    const journal = new Journal();
+    journal.list = [
+        signal({ v: 3, why: 'tasteTag', disliked: true }),
+        signal({
+            at: T0 + HOUR, id: 12, v: 4, why: 'tasteArtist', origin: 'similar', seed: 3, gen: T0 + HOUR - 5000, slot: 4, score: 1.25, known: true,
+            mode: 'fresh', waveGenre: 'phonk', laterNow: true, moreNow: false,
+        }),
+        signal({ at: T0 + 2 * HOUR, id: 13, v: 4, source: 'wave:library', why: 'library', origin: 'library', seed: 0, gen: T0, slot: 0, mode: 'similar', libMode: 'smart' }),
+    ];
+    const first = open(journal, directory);
+    first.sync(USER);
+    expect(first.resolve(USER, [11], [{ id: 11, title: 'С сайта' }])).toBe(1);
+    first.close();
+    downgrade(directory, 4, V5);
+    const index = open(journal, directory);
+    const warn = vi.spyOn(console, 'warn');
+    expect(index.sync(USER)).toBe(0);
+    expect(warn).not.toHaveBeenCalled();
+    expect(index.day(USER, T0, T0 + HOUR)).toEqual([expect.objectContaining({ id: 11, title: 'С сайта' })]);
+    index.close();
+    const db = new DatabaseSync(join(directory, 'history-' + USER + '.sqlite'));
+    const rows = db.prepare('select id, ' + V5.join(', ') + ' from plays order by at').all();
+    db.close();
+    expect(rows).toEqual([
+        // Запись до v4: причина и «Не нравится» есть, разбора выдачи нет
+        expect.objectContaining({ id: 11, why: 'tasteTag', origin: null, gen: null, slot: null, score: null, known: null, disliked: 1, later_now: null }),
+        expect.objectContaining({
+            id: 12, why: 'tasteArtist', origin: 'similar', seed: 3, gen: T0 + HOUR - 5000, slot: 4, score: 1.25, known: 1, mode: 'fresh', wave_genre: 'phonk',
+            lib_mode: null, disliked: 0, hidden: 0, later_now: 1, more_now: 0,
+        }),
+        expect.objectContaining({ id: 13, origin: 'library', seed: 0, slot: 0, score: null, lib_mode: 'smart' }),
+    ]);
 });
 
 it('строка журнала дня отдаёт место остановки и кто сменил трек', () => {

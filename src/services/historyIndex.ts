@@ -11,7 +11,9 @@ import { copyKey, nameKey, performerKey, trackCredits } from './trackIdentity';
 // 2: теги трека и лайк во время прослушивания для модели вкуса волны
 // 3: покрытие сыгранными участками, кто сменил трек и выбран ли он кликом (сигналы v3)
 // 4: место остановки: «пропущен на» показывает его, а не сколько играло
-export const HISTORY_SCHEMA = 4;
+// 5: разбор выдачи волны для замера (сигналы v4): причина и исходная причина, зерно, поколение, место, оценка вкуса,
+//    режим, жанр и порядок «Моей музыки», отметки во время трека
+export const HISTORY_SCHEMA = 5;
 /** Трек засчитывается в топах и счётчиках с 30 секунд реально прозвучавшего звука */
 export const COUNTED_MS = 30000;
 const DAY = 86400000;
@@ -105,6 +107,9 @@ export interface ResolvedTrack {
 
 const isId = (value: unknown): value is number => typeof value === 'number' && Number.isSafeInteger(value) && value > 0;
 const isTime = (value: unknown): value is number => typeof value === 'number' && Number.isFinite(value) && value >= 0 && value <= 24 * 3600000;
+/** Колонки схемы 5: у записей до v4 разбора выдачи нет, они остаются пустыми */
+const V5_COLUMNS = ['why text', 'origin text', 'seed integer', 'gen integer', 'slot integer', 'score real', 'known integer', 'mode text', 'wave_genre text', 'lib_mode text', 'disliked integer', 'hidden integer', 'later_now integer', 'more_now integer'];
+const flag = (value: boolean | undefined): number | null => (value === undefined ? null : value ? 1 : 0);
 export const genreKey = (value: unknown): string => text(value, 80).toLowerCase().replace(/\s+/g, ' ');
 
 /** Местное время записи для чтения через getUTC*: пояс из записи, у старых записей пояс машины на тот момент */
@@ -131,7 +136,8 @@ export function ftsQuery(value: unknown): string {
 const SCHEMA = [
     'create table if not exists meta(key text primary key, value integer not null)',
     "create table if not exists tracks(id integer primary key, artist integer not null default 0, title text not null default '', artist_name text not null default '', path text not null default '', artwork text not null default '', genre text not null default '', tags text not null default '', dur integer not null default 0, resolved integer not null default 0)",
-    'create table if not exists plays(at integer not null, id integer not null, artist integer not null, heard integer not null, dur integer not null, end text not null, source text not null, liked integer not null, liked_now integer not null default 0, away integer not null, tz integer, covered integer, ended_by text, picked integer, pos integer, primary key(at, id)) without rowid',
+    'create table if not exists plays(at integer not null, id integer not null, artist integer not null, heard integer not null, dur integer not null, end text not null, source text not null, liked integer not null, liked_now integer not null default 0, away integer not null, tz integer, covered integer, ended_by text, picked integer, pos integer, ' +
+        'why text, origin text, seed integer, gen integer, slot integer, score real, known integer, mode text, wave_genre text, lib_mode text, disliked integer, hidden integer, later_now integer, more_now integer, primary key(at, id)) without rowid',
     'create index if not exists plays_id on plays(id)',
     'create index if not exists plays_artist on plays(artist, at)',
     'create index if not exists tracks_resolved on tracks(resolved)',
@@ -223,10 +229,10 @@ export class HistoryIndex {
         let db = new DatabaseSync(this.file(userId));
         try {
             let version = num((db.prepare('pragma user_version').get() as Values | undefined)?.user_version);
-            const added: Record<number, string[]> = { 2: ['covered integer', 'ended_by text', 'picked integer', 'pos integer'], 3: ['pos integer'] };
+            const added: Record<number, string[]> = { 2: ['covered integer', 'ended_by text', 'picked integer', 'pos integer', ...V5_COLUMNS], 3: ['pos integer', ...V5_COLUMNS], 4: V5_COLUMNS };
             if (added[version]) {
-                // Со второй и третьей схемы колонки добавляются на месте: пересборка потеряла бы названия, добранные у сайта.
-                // Журнал перечитывается целиком, чтобы старые записи получили место остановки.
+                // Со второй по четвёртую схему колонки добавляются на месте: пересборка потеряла бы названия, добранные у сайта.
+                // Журнал перечитывается целиком, чтобы старые записи получили место остановки и то, что есть о выдаче волны.
                 // Не вышло: индекс собирается заново ниже, как при любой чужой схеме
                 db.exec('begin');
                 try {
@@ -319,10 +325,15 @@ export class HistoryIndex {
         const { db } = handle;
         const upsert = db.prepare(UPSERT_TRACK);
         const insert = db.prepare(
-            'insert or ignore into plays(at, id, artist, heard, dur, end, source, liked, liked_now, away, tz, covered, ended_by, picked, pos) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
+            'insert or ignore into plays(at, id, artist, heard, dur, end, source, liked, liked_now, away, tz, covered, ended_by, picked, pos, ' +
+                'why, origin, seed, gen, slot, score, known, mode, wave_genre, lib_mode, disliked, hidden, later_now, more_now) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
         );
-        // Запись из индекса прошлой схемы: место остановки дописывается, остальное не трогается
-        const fillPos = db.prepare('update plays set pos = ? where at = ? and id = ? and pos is null');
+        // Запись из индекса прошлой схемы: пустые колонки дописываются из журнала, заполненные не трогаются
+        const fill = db.prepare(
+            'update plays set pos = coalesce(pos, ?), why = coalesce(why, ?), origin = coalesce(origin, ?), seed = coalesce(seed, ?), gen = coalesce(gen, ?), slot = coalesce(slot, ?), ' +
+                'score = coalesce(score, ?), known = coalesce(known, ?), mode = coalesce(mode, ?), wave_genre = coalesce(wave_genre, ?), lib_mode = coalesce(lib_mode, ?), ' +
+                'disliked = coalesce(disliked, ?), hidden = coalesce(hidden, ?), later_now = coalesce(later_now, ?), more_now = coalesce(more_now, ?) where at = ? and id = ?',
+        );
         let added = 0;
         let latest = 0;
         db.exec('begin');
@@ -330,13 +341,17 @@ export class HistoryIndex {
             for (const signal of signals) {
                 const title = signal.title ?? '';
                 upsert.run(signal.id, signal.artist, title, signal.artistName ?? '', signal.path ?? '', signal.artwork ?? '', genreKey(signal.genre), text(signal.tags, 300), signal.dur, title ? 1 : 0);
+                const wave = [
+                    signal.why, signal.origin ?? null, signal.seed ?? null, signal.gen ?? null, signal.slot ?? null, signal.score ?? null, flag(signal.known),
+                    signal.mode ?? null, signal.waveGenre ?? null, signal.libMode ?? null, flag(signal.disliked), flag(signal.hiddenArtist), flag(signal.laterNow), flag(signal.moreNow),
+                ];
                 const result = insert.run(
                     signal.at, signal.id, signal.artist, signal.heard, signal.dur, signal.end, signal.source,
                     signal.liked || signal.likedNow ? 1 : 0, signal.likedNow ? 1 : 0, signal.away ? 1 : 0, signal.tz ?? null,
-                    signal.spans ? spanCoverage(signal.spans) : null, signal.endedBy ?? null, signal.picked === undefined ? null : signal.picked ? 1 : 0, signal.pos,
+                    signal.spans ? spanCoverage(signal.spans) : null, signal.endedBy ?? null, flag(signal.picked), signal.pos, ...wave,
                 );
                 if (num(result.changes)) added++;
-                else fillPos.run(signal.pos, signal.at, signal.id);
+                else fill.run(signal.pos, ...wave, signal.at, signal.id);
                 latest = Math.max(latest, signal.at);
             }
             db.prepare("insert into meta(key, value) values ('synced_at', ?) on conflict(key) do update set value = max(meta.value, excluded.value)").run(latest);
