@@ -73,12 +73,6 @@
             drop: 'Убрать из вкуса',
             removed: 'Убрано из вкуса:',
             restore: 'Вернуть во вкус волны',
-            early: 'Пропуски до 0:30',
-            earlyTotal: (share) => share + '% за 30 дней',
-            earlyNone: 'волна ещё не играла',
-            earlyDay: (day, share, early, total) => day + ': ' + share + '%, ' + early + ' из ' + total,
-            earlyIdle: (day) => day + ': волна не играла',
-            earlyLabel: 'Доля ранних пропусков в волне по дням за 30 дней',
             waveTitle: 'Как попадает волна',
             waveCount: (n, p) => n + ' ' + plural(n, ['трек', 'трека', 'треков']) + ' волны ' + TEXTS.ru.periodText(p),
             waveLoading: 'Считаю',
@@ -96,6 +90,10 @@
             waveRepeats: (n) => n + ' ' + plural(n, ['повтор', 'повтора', 'повторов']) + ' недавнего',
             waveRepeatsTip: 'Трек волны уже звучал за 3 дня до этого',
             waveNewTip: 'Впервые прослушаны дольше 30 секунд, и именно в волне',
+            waveDays: 'Пропуски до 0:30 по дням',
+            waveDaysLabel: 'Доля ранних пропусков в волне по дням',
+            waveDay: (day, share, early, total) => day + ': ' + share + '%, ' + early + ' из ' + total,
+            waveDayIdle: (day) => day + ': волна не играла',
             waveWeeks: 'Пропуски до 0:30 по неделям',
             waveWeeksLabel: 'Доля ранних пропусков в волне по неделям',
             waveWeek: (d, share, early, total) => 'С ' + d + ': ' + share + '%, ' + early + ' из ' + total,
@@ -106,7 +104,7 @@
             waveSlot: 'Место в выдаче',
             slots: { first: 'Первые три', later: 'С четвёртого' },
             sources: {
-                similar: 'Похожее', fresh: 'Новое', track: 'Волна по треку', artist: 'Волна по артисту', playlist: 'Волна по плейлисту', daily: 'Находки дня',
+                similar: 'Моя волна: похожее', fresh: 'Моя волна: новое', track: 'Волна по треку', artist: 'Волна по артисту', playlist: 'Волна по плейлисту', daily: 'Находки дня',
                 forgotten: 'Давно не слушал', group: 'Твой вкус', tracks: 'Волна по подборке', radar: 'Радар релизов', library: 'В «Моей музыке»',
             },
             reasons: {
@@ -180,12 +178,6 @@
             drop: 'Remove from taste',
             removed: 'Removed from taste:',
             restore: 'Put back into the wave’s taste',
-            early: 'Skips before 0:30',
-            earlyTotal: (share) => share + '% in 30 days',
-            earlyNone: 'the wave hasn’t played yet',
-            earlyDay: (day, share, early, total) => day + ': ' + share + '%, ' + early + ' of ' + total,
-            earlyIdle: (day) => day + ': the wave didn’t play',
-            earlyLabel: 'Share of early skips in the wave by day, last 30 days',
             waveTitle: 'How well the wave fits',
             waveCount: (n, p) => n + ' wave ' + plural(n, ['track', 'tracks']) + ' ' + TEXTS.en.periodText(p),
             waveLoading: 'Counting',
@@ -203,6 +195,10 @@
             waveRepeats: (n) => n + ' recent ' + plural(n, ['repeat', 'repeats']),
             waveRepeatsTip: 'The wave track had already played in the 3 days before',
             waveNewTip: 'First played for over 30 seconds, and in the wave',
+            waveDays: 'Skips before 0:30 by day',
+            waveDaysLabel: 'Share of early skips in the wave by day',
+            waveDay: (day, share, early, total) => day + ': ' + share + '%, ' + early + ' of ' + total,
+            waveDayIdle: (day) => day + ': the wave didn’t play',
             waveWeeks: 'Skips before 0:30 by week',
             waveWeeksLabel: 'Share of early skips in the wave by week',
             waveWeek: (d, share, early, total) => 'From ' + d + ': ' + share + '%, ' + early + ' of ' + total,
@@ -213,7 +209,7 @@
             waveSlot: 'Place in the batch',
             slots: { first: 'First three', later: 'Fourth on' },
             sources: {
-                similar: 'Similar', fresh: 'New', track: 'Wave from track', artist: 'Wave from artist', playlist: 'Wave from playlist', daily: 'Daily finds',
+                similar: 'My Wave: Similar', fresh: 'My Wave: New', track: 'Wave from track', artist: 'Wave from artist', playlist: 'Wave from playlist', daily: 'Daily finds',
                 forgotten: 'Not played in a while', group: 'Your taste', tracks: 'Wave from picks', radar: 'Release Radar', library: 'Inside My music',
             },
             reasons: {
@@ -457,24 +453,6 @@
             '</ol>'
         );
     }
-    function earlyChart(days) {
-        const cols = 'grid-template-columns:repeat(' + days.length + ',minmax(0,1fr))';
-        const lines = [0, 25, 50, 75, 100].map((v) => '<div style="bottom:' + v + '%"><span class="num">' + v + '%</span></div>').join('');
-        const last = days.length - 1;
-        const bars = days.map((d) => {
-            const share = d.total ? Math.round((d.early / d.total) * 100) : 0;
-            const day = cap(fmtWd.format(d.start));
-            const tipText = d.total ? T.earlyDay(day, share, d.early, d.total) : T.earlyIdle(day);
-            // День с волной без ранних пропусков виден чертой у оси, пустой день пуст
-            const height = d.total ? Math.max(2, share) : 0;
-            return '<div class="cc-slot" tabindex="0" data-tip="' + esc(tipText) + '" aria-label="' + esc(tipText) + '"><i style="height:' + height + '%"></i></div>';
-        }).join('');
-        const labels = days.map((d, i) => '<span>' + ((last - i) % 7 === 0 ? esc(i === last ? T.todayLower : fmtShort.format(d.start)) : '') + '</span>').join('');
-        return (
-            '<div class="cc" role="group" aria-label="' + esc(T.earlyLabel) + '"><div class="cc-plot"><div class="cc-grid">' + lines + '</div><div class="cc-bars" style="' + cols + '">' + bars + '</div></div>' +
-            '<div class="cc-x" style="' + cols + '">' + labels + '</div></div>'
-        );
-    }
     function tasteBlock() {
         const t = state.taste;
         if (!t) return '';
@@ -487,14 +465,10 @@
               removed.map(([kind, key, name]) => '<button class="chip" data-restore="' + kind + '" data-key="' + esc(key) + '" data-tip="' + esc(T.restore) + '">' + esc(name) + ICON.undo + '</button>').join('') +
               '</div>'
             : '';
-        const total = t.early.reduce((sum, d) => sum + d.total, 0);
-        const early = t.early.reduce((sum, d) => sum + d.early, 0);
         return (
             '<div class="grid2 sec"><div><div class="sec-h"><h2>' + esc(T.tasteArtists) + '</h2></div>' + tasteList('artist', t.artists) + '</div>' +
             '<div><div class="sec-h"><h2>' + esc(T.tasteTags) + '</h2></div>' + tasteList('tag', t.tags) + '</div></div>' +
-            restoreLine +
-            '<div class="sec"><div class="sec-h"><h2>' + esc(T.early) + '</h2><span class="sub num">' + esc(total ? T.earlyTotal(Math.round((early / total) * 100)) : T.earlyNone) + '</span></div>' +
-            earlyChart(t.early) + '</div>'
+            restoreLine
         );
     }
 
@@ -522,6 +496,28 @@
                 (f.note ? '<em' + (f.noteTip ? ' data-tip="' + esc(f.noteTip) + '"' : '') + '>' + esc(f.note) + '</em>' : '') + '</div>',
             ).join('') +
             '</div>'
+        );
+    }
+    // Сутки периода до месяца; день без волны пустое место, день без ранних пропусков черта у оси
+    function waveDays(q) {
+        const days = q.days;
+        if (days.filter((d) => d.plays).length < 2) return '';
+        const cols = 'grid-template-columns:repeat(' + days.length + ',minmax(0,1fr))';
+        const lines = [0, 25, 50, 75, 100].map((v) => '<div style="bottom:' + v + '%"><span class="num">' + v + '%</span></div>').join('');
+        const last = days.length - 1;
+        const every = days.length > 7 ? 7 : 1;
+        const bars = days.map((d) => {
+            const share = pct(d.early, d.plays);
+            const day = cap(fmtWd.format(d.from));
+            const tipText = d.plays ? T.waveDay(day, share, d.early, d.plays) : T.waveDayIdle(day);
+            const height = d.plays ? Math.max(2, share) : 0;
+            return '<div class="cc-slot" tabindex="0" data-tip="' + esc(tipText) + '" aria-label="' + esc(tipText) + '"><i style="height:' + height + '%"></i></div>';
+        }).join('');
+        const labels = days.map((d, i) => '<span>' + ((last - i) % every === 0 ? esc(d.from === today() ? T.todayLower : fmtShort.format(d.from)) : '') + '</span>').join('');
+        return (
+            '<div class="wq-part"><h3>' + esc(T.waveDays) + '</h3>' +
+            '<div class="cc" role="group" aria-label="' + esc(T.waveDaysLabel) + '"><div class="cc-plot"><div class="cc-grid">' + lines + '</div><div class="cc-bars" style="' + cols + '">' + bars + '</div></div>' +
+            '<div class="cc-x" style="' + cols + '">' + labels + '</div></div></div>'
         );
     }
     // Недели идут от конца периода; пустая неделя остаётся пустым местом, чтобы шаг оси не врал
@@ -584,9 +580,11 @@
         else if (!q) body = '<p class="sub">' + esc(T.waveLoading) + '</p>';
         else if (!q.wave.plays) body = '<p class="sub">' + esc(T.waveNone) + '</p>';
         else {
-            const slots = [{ key: 'first', ...q.slots.first }, { key: 'later', ...q.slots.later }];
+            // Места сравнивают первые три трека выдачи с остальными: одна строка без пары ничего не говорит
+            const slots = q.slots.first.plays && q.slots.later.plays ? [{ key: 'first', ...q.slots.first }, { key: 'later', ...q.slots.later }] : [];
+            // Период до месяца по дням, длиннее по неделям
             body =
-                waveFigures(q) + waveWeeks(q) +
+                waveFigures(q) + (q.days.length ? waveDays(q) : waveWeeks(q)) +
                 '<div class="grid2 wq-part"><div>' + waveTable(T.waveSource, q.sources, (key) => T.sources[key] || key) +
                 waveTable(T.waveSlot, slots, (key) => T.slots[key]) + '</div>' +
                 '<div>' + waveTable(T.waveReason, q.reasons, (key) => T.reasons[key] || key) + '</div></div>';

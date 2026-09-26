@@ -110,7 +110,7 @@ export type WaveTexts = Record<
     | 'radarAlbum' | 'radarEp' | 'radarSingle' | 'radarCompilation' | 'radarGroupAll' | 'radarGroupQueued'
     | 'library' | 'libraryLikes' | 'libraryOrder' | 'libraryShuffle' | 'librarySmart' | 'libraryOrderTip' | 'libraryShuffleTip' | 'librarySmartTip'
     | 'libraryPlay' | 'libraryPick' | 'libraryLoading' | 'libraryFailed' | 'libraryBuilding' | 'libraryEmpty' | 'libraryList' | 'libraryMore'
-    | 'libraryModes' | 'librarySources' | 'libraryPlaying' | 'libraryPaused' | 'libraryPlaylists' | 'libraryHere' | 'whyLibrary' | 'whyLibraryLikes' | 'seedLibrary',
+    | 'libraryModes' | 'librarySources' | 'libraryPlaying' | 'libraryPaused' | 'libraryPlaylists' | 'libraryHere' | 'libraryOf' | 'whyLibrary' | 'whyLibraryLikes' | 'seedLibrary',
     string
 >;
 

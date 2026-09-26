@@ -2420,16 +2420,18 @@ export function installWave(config: WaveConfig, createPlayback: typeof installPl
         '.scw-lib{padding:16px 16px 8px;border-radius:6px;background:var(--scw-film)}',
         '#sc-wave .scw-lib .scw-seg button[aria-checked="true"]{background:rgba(255,255,255,.14);color:#fff}',
         '#sc-wave .scw-lib .scw-btn[aria-expanded="true"]{box-shadow:inset 0 0 0 32px var(--scw-film-strong)}',
-        '.scw-chip-n{margin-left:6px;font-weight:400;opacity:.7}',
         '.scw-lib .scw-mix-head{flex-wrap:wrap}',
-        // Выбор источников: без галочек, выбранное светлой плёнкой и белым текстом, остальное приглушено
+        // Выбор источников: без галочек, выбранное светлой плёнкой и полужирным; название светлее числа
         '.scw-lib-pick{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:2px 16px;margin:4px -8px 8px;padding-top:8px;border-top:1px solid var(--scw-film-strong)}',
-        '#sc-wave .scw-lib-opt{display:flex;align-items:center;min-width:0;height:36px;padding:0 8px;border-radius:4px;text-align:left;color:var(--scw-muted);transition:background-color .12s,color .12s}',
+        '#sc-wave .scw-lib-opt{display:flex;align-items:center;min-width:0;height:36px;padding:0 8px;border-radius:4px;text-align:left;color:rgba(255,255,255,.85);transition:background-color .12s,color .12s}',
         '#sc-wave .scw-lib-opt:hover{background:var(--scw-film);color:#fff}',
         '#sc-wave .scw-lib-opt[aria-pressed="true"]{background:rgba(255,255,255,.14);color:#fff;font-weight:600}',
-        '.scw-lib-name{flex:1;min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}',
-        // Источник, из которого играет трек: оранжевая точка перед названием
-        '.scw-lib-here::before{content:"";display:inline-block;width:6px;height:6px;margin-right:8px;border-radius:50%;background:#ff5500;vertical-align:1px}',
+        '.scw-lib-name{min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}',
+        // Число прижато вправо и одной ширины цифр: столбец чисел ровный
+        '.scw-lib-n{margin-left:auto;padding-left:12px;flex:none;color:var(--scw-muted);font-weight:400;font-variant-numeric:tabular-nums}',
+        // Источник, из которого играет трек: оранжевая волна сразу за названием
+        '.scw-lib-here{flex:none;display:grid;margin-left:8px;color:#ff5500}',
+        '.scw-lib-here svg{width:14px;height:14px}',
         '.scw-lib-pick .scw-hint{grid-column:1/-1;padding:4px 8px}',
         '#sc-wave .scw-lib-more{grid-column:1/-1;justify-self:center;margin:8px 0}',
         '#sc-wave .scw-row{display:grid;grid-template-columns:40px minmax(0,1fr) auto;align-items:center;gap:12px;height:48px;padding:4px 8px;border-radius:4px;text-align:left;min-width:0;cursor:pointer;box-sizing:border-box}',
@@ -2459,9 +2461,10 @@ export function installWave(config: WaveConfig, createPlayback: typeof installPl
         '.scw-select{height:32px;max-width:220px;padding:0 8px;border-radius:4px;border:0;background:var(--scw-surface);color:inherit;font:inherit;cursor:pointer}',
         '.scw-row-e{display:flex;align-items:center;gap:6px;min-width:0}',
         '.scw-badge{font-size:11px;line-height:16px;padding:0 6px;border-radius:8px;box-shadow:inset 0 0 0 1px var(--scw-film-strong);color:var(--scw-muted);white-space:nowrap}',
-        // Группа исполнителя в радаре: метка кнопкой, раскрытые записи блоком на всю ширину списка под строкой
-        '#sc-wave .scw-group{font-size:11px;line-height:16px;padding:0 6px;color:var(--scw-muted);white-space:nowrap}',
-        '#sc-wave .scw-group:hover,#sc-wave .scw-group[aria-expanded="true"]{color:inherit;box-shadow:inset 0 0 0 1px currentColor}',
+        // Группа исполнителя в радаре: метка кнопкой, раскрытые записи блоком на всю ширину списка под строкой.
+        // Кнопка залита, а не обведена: обводка у простых меток вроде «Уже слышал», и кнопку от них не отличить
+        '#sc-wave .scw-group{font-size:11px;line-height:16px;padding:0 6px;box-shadow:none;background:var(--scw-film-strong);color:rgba(255,255,255,.85);white-space:nowrap;transition:background-color .12s}',
+        '#sc-wave .scw-group:hover,#sc-wave .scw-group[aria-expanded="true"]{background:rgba(255,255,255,.2);color:inherit}',
         '.scw-group-box{grid-column:1/-1;margin:0 0 8px 8px;padding:6px 0 2px 8px;border-left:2px solid var(--scw-film-strong)}',
         '.scw-group-head{display:flex;align-items:center;gap:12px;padding:0 8px 4px}',
         '.scw-group-head b{min-width:0;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}',
@@ -2728,7 +2731,14 @@ export function installWave(config: WaveConfig, createPlayback: typeof installPl
         const query = popQuery.trim().toLowerCase();
         const typed = formatGenres(parseGenres(query));
         const fromLikes = topGenres(profile?.likedTracks ?? [], 8);
-        const list = [...new Set([...recentGenres, ...fromLikes])].filter((item) => !query || item.includes(query));
+        // Написания одного жанра («witch house» из недавних и «witchhouse» из лайков) одной строкой, первое по порядку
+        const seen = new Set<string>();
+        const list = [...recentGenres, ...fromLikes].filter((item) => {
+            const key = genreCanon(normalizeTag(item));
+            if (seen.has(key)) return false;
+            seen.add(key);
+            return true;
+        }).filter((item) => !query || item.includes(query));
         if (typed && !list.includes(typed)) pop.append(option(typed, typed));
         if (list.length) {
             pop.append(el('div', 'scw-pop-label', T.fromLikes));
@@ -3133,7 +3143,11 @@ export function installWave(config: WaveConfig, createPlayback: typeof installPl
                 popOpen = !popOpen;
                 popQuery = '';
                 render();
-                if (popOpen) section.querySelector<HTMLInputElement>('.scw-pop input')?.focus();
+                if (popOpen) {
+                    section.querySelector<HTMLInputElement>('.scw-pop input')?.focus();
+                    // Жанры из лайков берутся из профиля, а после перезапуска с длинной очередью его ещё никто не загрузил
+                    if (!profile) void ensureProfile().then(() => { if (popOpen) render(); }, (error: unknown) => console.warn('Волна: жанры из лайков не загружены', error));
+                }
                 return;
             case 'play':
                 if (active && player) {

@@ -3,7 +3,7 @@ import { tmpdir } from 'os';
 import { join } from 'path';
 import { DatabaseSync } from 'node:sqlite';
 import { afterEach, expect, it, vi } from 'vitest';
-import { COUNTED_MS, HistoryIndex, ftsQuery, genreKey, localClock, waveBinHours } from './historyIndex';
+import { COUNTED_MS, HistoryIndex, ftsQuery, genreKey, localClock, localDayStart, waveBinHours } from './historyIndex';
 import type { SignalSource } from './historyIndex';
 import type { PlaySignal } from '../types';
 
@@ -173,6 +173,22 @@ it('топ артистов по исполнителю, а не по сборн
     expect(view.fresh).toBe(2);
     // Night на канале и у самого Alpha: одна песня с тремя прослушиваниями
     expect(view.tracks.map((track) => [track.name, track.plays])).toEqual([['Alpha - Night', 3], ['Bravo - Day', 1]]);
+});
+
+it('артисты идут по времени прослушивания, которое у них подписано', () => {
+    const journal = new Journal();
+    journal.list = [
+        // У Короткого два прослушивания по минуте, у Длинного одно на пять минут
+        signal({ at: T0, id: 31, artist: 70, v: 2, title: 'раз', artistName: 'Короткий', heard: 60000 }),
+        signal({ at: T0 + HOUR, id: 31, artist: 70, heard: 60000 }),
+        signal({ at: T0 + 2 * HOUR, id: 32, artist: 71, v: 2, title: 'два', artistName: 'Длинный', heard: 300000 }),
+    ];
+    const index = open(journal);
+    index.sync(USER);
+    expect(index.overview(USER, T0 - HOUR, T0 + 23 * HOUR)?.artists.map((artist) => [artist.name, artist.plays, artist.ms])).toEqual([
+        ['Длинный', 1, 300000],
+        ['Короткий', 2, 120000],
+    ]);
 });
 
 it('overview считает засчитанное с 30 секунд, новых артистов и топы', () => {
@@ -423,8 +439,16 @@ it('замер волны: считаются только оценимые ре
         repeats: 1,
         weeks: [{ from: T0 + DAY - 7 * DAY, plays: 4 }],
     });
-    // За всё время отсчёт с первой записи, где известно, кто сменил трек
-    expect(index.waveQuality(USER, null, T0 + DAY)).toMatchObject({ from: T0 - 12 * HOUR, previous: null, wave: { plays: 5, early: 2 } });
+    // По местным суткам: первые начинаются с полуночи дня T0, следующие с полуночи после, в сумме весь период
+    const days = day?.days ?? [];
+    expect(days[0].from).toBe(localDayStart(T0));
+    expect(days.slice(1).every((entry, i) => entry.from === localDayStart(days[i].from + DAY + 12 * HOUR))).toBe(true);
+    expect(days.reduce((sum, entry) => sum + entry.plays, 0)).toBe(4);
+    expect(days.reduce((sum, entry) => sum + entry.early, 0)).toBe(1);
+    // За всё время отсчёт с первой записи, где известно, кто сменил трек; по суткам только короткие периоды
+    expect(index.waveQuality(USER, null, T0 + DAY)).toMatchObject({ from: T0 - 12 * HOUR, previous: null, wave: { plays: 5, early: 2 }, days: [] });
+    expect(index.waveQuality(USER, T0 - 40 * DAY, T0 + DAY)?.days).toEqual([]);
+    expect(index.waveQuality(USER, T0 - 29 * DAY, T0 + DAY)?.days.length).toBeGreaterThanOrEqual(30);
     expect(index.waveQuality(0, T0, T0 + DAY)).toBeNull();
 });
 

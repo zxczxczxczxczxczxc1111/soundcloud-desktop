@@ -55,13 +55,6 @@ it('A21: ошибка и конец очереди не дизлайк, кусо
     // Перемотка вперёд: покрыто меньше слышанного не бывает, берётся меньшее
     expect(playWeights({ heard: 60000, covered: 60000, dur: 200000, end: 'skip', likedNow: false, endedBy: 'user' })).toEqual([-0.2, 0, 0]);
     expect(playWeights({ heard: 170000, covered: 120000, dur: 200000, end: 'done', likedNow: false })).toEqual([0.5, 0.2, 0.1]);
-    // Ошибка в первые секунды не превращается в пропуск и на странице истории
-    const { view } = buildTaste([
-        play({ source: 'wave:similar', heard: 5000, end: 'skip', endedBy: 'auto' }),
-        play({ source: 'wave:similar', heard: 5000, end: 'skip', endedBy: 'user' }),
-        play({ source: 'wave:similar', heard: 50000, end: 'stop' }),
-    ], [], empty, NOW);
-    expect(view.early[29]).toMatchObject({ total: 2, early: 1 });
 });
 
 it('волна ослабляет плюсы, но не минусы; простой системы нейтрален; без уверенности всё вполсилы', () => {
@@ -245,16 +238,4 @@ it('лайки сайта и подписки: дата лайка вместо 
     }).profile;
     expect(weightOf(withMeta.credits, 'realartist')).toBeCloseTo(blended(0.4, HOUR_AGE, false), 2);
     expect(weightOf(withMeta.artists, 90)).toBeCloseTo(blended(0.4 * TASTE_PARAMS.curatorShare, HOUR_AGE, false), 2);
-});
-
-it('ранние пропуски считаются только по трекам волны за 30 местных суток', () => {
-    const { view } = buildTaste([
-        play({ source: 'wave:similar', heard: 5000, end: 'skip' }),
-        play({ source: 'wave:similar' }),
-        play({ source: 'site:single', heard: 5000, end: 'skip' }),
-        play({ source: 'wave:fresh', heard: 5000, end: 'skip', at: NOW - 40 * DAY }),
-    ], [], empty, NOW);
-    expect(view.early).toHaveLength(30);
-    expect(view.early[29]).toMatchObject({ total: 2, early: 1 });
-    expect(view.early.slice(0, 29).every((day) => day.total === 0)).toBe(true);
 });

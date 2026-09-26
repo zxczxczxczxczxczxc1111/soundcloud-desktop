@@ -133,6 +133,8 @@ export interface WaveQuality {
     repeats: number;
     /** По неделям от конца периода, не больше 12 */
     weeks: Array<WaveMeasure & { from: number }>;
+    /** По местным суткам, старые слева; только у периода не длиннее 31 дня, иначе пусто */
+    days: Array<WaveMeasure & { from: number }>;
 }
 export interface ResolvedTrack {
     id: number;
@@ -504,7 +506,8 @@ export class HistoryIndex {
                 if (own && better(row, group.best)) group.best = row;
                 groups.set(key, group);
             }
-            const artists = [...groups].sort((a, b) => b[1].plays - a[1].plays || b[1].ms - a[1].ms).slice(0, 25).map(([key, group]) => {
+            // Артисты по времени: у карточки подписано время, и порядок по числу прослушиваний читался бы вразнобой
+            const artists = [...groups].sort((a, b) => b[1].ms - a[1].ms || b[1].plays - a[1].plays).slice(0, 25).map(([key, group]) => {
                 const best = group.best ?? inRange.find((row) => performerOf(row) === key) ?? {};
                 const account = key.startsWith('u:') && group.best !== null;
                 const name = account ? str(best.artistName) : performerName(best);
@@ -591,6 +594,14 @@ export class HistoryIndex {
                 (db.prepare('select ' + key + ' as key, ' + MEASURE + ' ' + judged(WAVE + ' and ' + range) + ' group by key order by plays desc, key').all(start, to) as Values[])
                     .map((row) => ({ key: str(row.key), ...toMeasure(row) }));
             const weekFrom = Math.max(start, to - 12 * WEEK_MS);
+            // Сутки местные и считаются каждая своей границей: переход на летнее время даёт 23 или 25 часов
+            const days: WaveQuality['days'] = [];
+            if (from !== null && to - start <= 31 * DAY)
+                for (let day = localDayStart(start); day < to;) {
+                    const next = localDayStart(day + DAY + 12 * 3600000);
+                    days.push({ from: day, ...measure(WAVE + ' and ' + range, Math.max(day, start), Math.min(next, to)) });
+                    day = next;
+                }
             return {
                 from: start,
                 to,
@@ -615,6 +626,7 @@ export class HistoryIndex {
                 ),
                 weeks: (db.prepare('select cast((? - p.at) / ? as integer) as week, ' + MEASURE + ' ' + judged(WAVE + ' and ' + range) + ' group by week order by week').all(to, WEEK_MS, weekFrom, to) as Values[])
                     .map((row) => ({ from: to - (num(row.week) + 1) * WEEK_MS, ...toMeasure(row) })),
+                days,
             };
         });
     }

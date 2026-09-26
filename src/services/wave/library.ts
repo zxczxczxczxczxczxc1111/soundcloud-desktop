@@ -439,7 +439,25 @@ export function installLibrary(core: LibraryCore): LibrarySection {
             setTimeout(render, 150);
         } else void startLibrary(id);
     }
-    // Выбор источников: список в две колонки, выбранное подсвечено; точка у источника, из которого играет трек
+    // Та же волна, что у строк истории: отметка источника, из которого играет трек
+    const WAVE_MARK = '<svg viewBox="0 0 14 14" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" aria-hidden="true"><path d="M1 7c1.5-3.5 3-3.5 4 0s2.5 3.5 4 0 2.5-3.5 4 0"/></svg>';
+    // Число лайков: при первой загрузке только по дочитанному списку, иначе оно росло бы на глазах. Обновлённый
+    // профиль несёт лайки прошлого (unconfirmed), его число верное и во время листания
+    function likesCount(): number {
+        const p = core.profile();
+        return p && (!p.likesCursor || p.unconfirmed) ? p.liked.size : 0;
+    }
+    // Выбор источников открыт: лайки дочитываются, чтобы у них появилось число. Перерисовка только при новом числе:
+    // лишняя сняла бы подсказку под мышью
+    function countLikes(): void {
+        const before = likesCount();
+        void ensureProfile()
+            .then((p) => (p.likesCursor ? expandLibrary(p) : undefined))
+            .then(() => {
+                if (likesCount() !== before) render();
+            }, (error: unknown) => console.warn('Моя музыка: лайки не посчитаны', error));
+    }
+    // Выбор источников: список в две колонки, выбранное подсвечено; волна у источника, из которого играет трек
     function sourcesPanel(pick: string[], mine: boolean): HTMLElement {
         const panel = el('div', 'scw-lib-pick');
         panel.setAttribute('role', 'group');
@@ -452,17 +470,18 @@ export function installLibrary(core: LibraryCore): LibrarySection {
             node.dataset.act = 'lib-source';
             node.dataset.source = key;
             node.setAttribute('aria-pressed', String(pick.includes(key)));
-            const name = el('span', 'scw-lib-name', label);
+            node.append(el('span', 'scw-lib-name', label));
             if (key === here) {
-                name.classList.add('scw-lib-here');
-                name.title = T.libraryHere;
+                const mark = el('span', 'scw-lib-here');
+                mark.innerHTML = WAVE_MARK;
+                mark.title = T.libraryHere;
+                node.append(mark);
                 node.setAttribute('aria-description', T.libraryHere);
             }
-            node.append(name);
-            if (count) node.append(el('span', 'scw-chip-n', String(count)));
+            if (count) node.append(el('span', 'scw-lib-n', String(count)));
             panel.append(node);
         };
-        option('likes', T.libraryLikes, core.profile()?.liked.size ?? 0);
+        option('likes', T.libraryLikes, likesCount());
         if (Array.isArray(librarySources)) for (const list of librarySources) option('playlist:' + list.id, list.title, list.count);
         else if (librarySources === 'failed') panel.append(el('span', 'scw-hint', T.libraryFailed), textButton('lib-retry', T.retry));
         else panel.append(el('span', 'scw-hint', T.libraryLoading));
@@ -487,7 +506,12 @@ export function installLibrary(core: LibraryCore): LibrarySection {
         play.disabled = !pick.length && !mine;
         const titles = el('div', 'scw-mix-title');
         const plan = shownPlan();
-        const count = plan ? countText(plan.entries.filter((entry) => libraryKeeps(entry.track)).length, T.tracksCount, T.lang) : '';
+        // Сколько сыграет список и сколько всего в выборе: перемешивание пропускает слышанное за три дня, после
+        // перезапуска и смены выбора в плане только оставшееся. Иначе «11 треков» спорили бы с 34 у плейлиста
+        const planned = plan ? plan.entries.filter((entry) => libraryKeeps(entry.track)).length : 0;
+        const total = plan ? plan.pool.filter((entry) => libraryKeeps(entry.track)).length : 0;
+        const count = !plan ? '' : planned === total ? countText(total, T.tracksCount, T.lang)
+            : fillText(T.libraryOf, { planned: countText(planned, T.tracksCount, T.lang), total: String(total), n: String(planned), all: countText(total, T.tracksCount, T.lang) });
         const now = playing ? T.libraryPlaying : T.libraryPaused;
         const status = el('span', '', rebuilding || libraryPlanPromise ? T.libraryBuilding : mine ? (count ? now + ', ' + count : now) : count);
         status.setAttribute('role', 'status');
@@ -569,6 +593,7 @@ export function installLibrary(core: LibraryCore): LibrarySection {
             }
             case 'lib-sources':
                 librarySourcesOpen = !librarySourcesOpen;
+                if (librarySourcesOpen) countLikes();
                 render();
                 return;
             case 'lib-list':

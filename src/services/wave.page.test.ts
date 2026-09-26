@@ -728,6 +728,17 @@ it('несколько жанров через запятую: подбор по
     expect(section.querySelector('.scw-hint')?.textContent).toBe('Similar to what you play and like, in techno / dark techno');
 });
 
+it('написания одного жанра в выпадающем списке одной строкой', async () => {
+    fakeSite(relatedTracks);
+    localStorage.setItem('scDesktopWave', JSON.stringify({ recentGenres: ['witch house', 'witchhouse', 'wtchhs', 'techno'] }));
+    window.eval(waveScript());
+    await vi.advanceTimersByTimeAsync(100);
+    const section = document.getElementById('sc-wave')!;
+    section.querySelector<HTMLElement>('[data-act="genre"]')!.click();
+    const options = [...section.querySelectorAll<HTMLElement>('.scw-pop [data-genre]')].map((node) => node.dataset.genre);
+    expect(options).toEqual(['', 'witch house', 'techno']);
+});
+
 it('на русском сайте пишет по-русски и помнит режим', async () => {
     fakeSite(relatedTracks);
     Object.assign(window, { __scSiteTranslation: { language: 'ru' } });
@@ -1666,7 +1677,7 @@ it('обновление профиля раз в 30 минут не откат�
     Object.assign(window, { soundcloudAPI: { waveLibrary: libraryBridge() } });
     window.eval(waveScript());
     await vi.advanceTimersByTimeAsync(2000);
-    const count = (): string | undefined => libChip('likes').querySelector('.scw-chip-n')?.textContent ?? undefined;
+    const count = (): string | undefined => libChip('likes').querySelector('.scw-lib-n')?.textContent ?? undefined;
     const toggleList = async (): Promise<void> => {
         document.querySelector<HTMLButtonElement>('#sc-wave [data-act="lib-list"]')!.click();
         await vi.advanceTimersByTimeAsync(2000);
@@ -1686,6 +1697,29 @@ it('обновление профиля раз в 30 минут не откат�
     await vi.advanceTimersByTimeAsync(1000);
     await toggleList();
     expect(count()).toBe('249');
+});
+
+it('«Моя музыка»: число лайков в выборе появляется, когда список дочитан, а не растёт страницами', async () => {
+    const likes = Array.from({ length: 250 }, (_, i) => libTrack(20000 + i));
+    let release: (() => void) | undefined;
+    fakeSite(relatedTracks, (name, _path, query) => {
+        if (name === 'soundLikesIds') {
+            const ids = likes.map((track) => track.id);
+            if (!query.cursor) return { collection: ids.slice(0, 200), next_href: 'https://api-v2.soundcloud.com/me/likes/ids?cursor=next' };
+            return new Promise((resolve) => { release = () => resolve({ collection: ids.slice(200) }); });
+        }
+        if (name === 'trackBatch') return likes.filter((track) => String(query.ids).split(',').includes(String(track.id)));
+        return undefined;
+    });
+    Object.assign(window, { soundcloudAPI: { waveLibrary: libraryBridge() } });
+    window.eval(waveScript());
+    await vi.advanceTimersByTimeAsync(2000);
+    const count = (): string | undefined => libChip('likes').querySelector('.scw-lib-n')?.textContent ?? undefined;
+    expect(count()).toBeUndefined();
+    expect(release).toBeDefined();
+    release!();
+    await vi.advanceTimersByTimeAsync(2000);
+    expect(count()).toBe('250');
 });
 
 it('P3: фоном обходит лайки с датами, подписки и плейлисты в хранилище; 429 оставляет лайки неполными без повторов', async () => {
@@ -2623,8 +2657,8 @@ it('«Моя музыка»: смена режима сразу после пе�
     window.eval(waveScript());
     await vi.advanceTimersByTimeAsync(3000);
     expect(queuedIds(site).slice(0, 3)).toEqual([301, 302, 303]);
-    // Сессия встала на паузе: статус не говорит «Играет»
-    expect(document.querySelector('#sc-wave .scw-lib .scw-mix-title span')?.textContent).toMatch(/^Paused/);
+    // Сессия встала на паузе: статус не говорит «Играет»; впереди хвост сессии, и видно, что это не весь выбор
+    expect(document.querySelector('#sc-wave .scw-lib .scw-mix-title span')?.textContent).toBe('Paused, 3 of 12 tracks');
     libMode('order').click();
     await vi.advanceTimersByTimeAsync(2000);
     // Играет 301: впереди весь несыгранный пул по порядку, а не прежний хвост сессии

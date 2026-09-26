@@ -15,7 +15,6 @@ const HORIZON_DAYS = 365;
 const CACHE_MS = 30 * 60000;
 const LIMITS = { artists: 1000, credits: 1000, families: 1000, tags: 300, markers: 50, tracks: 1000 };
 const VIEW_LIMIT = 25;
-const EARLY_DAYS = 30;
 
 const PARTS: Part[] = ['tracks', 'artists', 'credits', 'families', 'tags', 'markers'];
 export { TASTE_PARAMS } from './tasteParams';
@@ -58,8 +57,6 @@ export interface TasteView {
     artists: Array<{ id: number; name: string; artwork: string; path: string; weight: number }>;
     tags: Array<{ key: string; label: string; weight: number }>;
     removed: { artists: Array<{ id: number; name: string }>; tags: Array<{ key: string; label: string }> };
-    /** Доля ранних пропусков среди треков волны по местным суткам, старые слева */
-    early: Array<{ start: number; total: number; early: number }>;
     counted: number;
 }
 
@@ -322,21 +319,6 @@ export function buildTaste(
 
     const artistPath = (path: string): string => /^\/[^/]+/.exec(path)?.[0] ?? '';
     const liked = (map: Map<string, number>): Array<[string, number]> => [...map].filter(([, weight]) => weight > 0).sort((a, b) => b[1] - a[1]).slice(0, VIEW_LIMIT);
-    const today = localDayStart(now);
-    const early: TasteView['early'] = [];
-    for (let i = EARLY_DAYS - 1; i >= 0; i--) {
-        // Сутки по местному времени: переход на летнее время даёт 23 или 25 часов
-        const start = localDayStart(today - i * DAY + 12 * 3600000);
-        early.push({ start, total: 0, early: 0 });
-    }
-    for (const play of plays) {
-        // Закрытие клиента не пропуск и не прослушивание волны: в долю не входит, как и раньше
-        if (!play.source.startsWith('wave:') || play.end === 'stop' || play.at < early[0].start) continue;
-        const day = early.find((entry, index) => play.at >= entry.start && (index === early.length - 1 || play.at < early[index + 1].start));
-        if (!day) continue;
-        day.total++;
-        if (play.end === 'skip' && play.endedBy !== 'auto' && play.heard < COUNTED_MS) day.early++;
-    }
     const view: TasteView = {
         artists: liked(total.artists).map(([key, weight]) => {
             const id = Number(key);
@@ -348,7 +330,6 @@ export function buildTaste(
             artists: [...droppedArtists].map((id) => ({ id, name: names.get(id)?.name ?? '' })).filter((entry) => entry.name),
             tags: [...droppedTags].map((key) => ({ key, label: labels.get(key) ?? key })),
         },
-        early,
         counted,
     };
     return { profile, view };
