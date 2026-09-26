@@ -1,3 +1,4 @@
+import type { LibraryMode } from './libraryMix';
 // Типы «Моей волны»: трек сайта, причины, фильтр подбора, тексты, профиль вкуса. Только типы, на страницу не уходят
 
 export interface WaveTrack {
@@ -145,3 +146,41 @@ export interface TasteGroup {
     tracks: WaveTrack[];
     weight: number;
 }
+
+// Типы ядра волны, которые нужны и разделам в wave/
+export type WaveState = 'idle' | 'loading' | 'playing' | 'empty' | 'error' | 'unavailable';
+export interface Profile {
+    userId: number;
+    history: WaveTrack[];
+    recent: Set<number>;
+    heard: Set<number>;
+    liked: Set<number>;
+    likedTracks: WaveTrack[];
+    knownArtists: Set<number>;
+    /** Ключи имён исполнителей из истории и лайков: для причины «новый артист» */
+    knownNames: Set<string>;
+    loadedAt: number;
+    likesCursor: Record<string, string | number> | null;
+    /** Лайки прошлого профиля, которых новое листание ещё не подтвердило: в конце листания снятые уходят */
+    unconfirmed?: Set<number>;
+}
+// Волна от трека, артиста или плейлиста из меню по ПКМ: зёрна вместо вкуса, жанр не действует.
+// own это треки самого артиста, они идут в подборку; derived это найденное, от него волна едет дальше.
+// У подборок полки и набора из меню own это сама подборка
+export type SeedKind = WaveLinkKind | 'daily' | 'forgotten' | 'group' | 'tracks' | 'radar' | 'library';
+export interface Seed {
+    kind: SeedKind;
+    title: string;
+    tracks: WaveTrack[];
+    own: WaveTrack[];
+    /** own по порядку впереди найденного (fixed), через один с ним (blend) или три к одному (smart); без order own тасуется с найденным */
+    order?: 'fixed' | 'blend' | 'smart';
+    /** Свой режим подбора у подборки полки, переключатель на неё не действует */
+    mode?: WaveMode;
+    /** Номер карточки полки, от которой идёт волна */
+    card?: number;
+    /** «Моя музыка»: выбранные источники и режим; left это номера оставшихся треков из сессии, пока пул не собран заново */
+    library?: { pick: string[]; mode: LibraryMode; left?: number[] };
+}
+/** Отметка волны из main: «Не нравится», скрытый артист, «Не сейчас» до until */
+export interface Excluded { id: number; title: string; artist: string; url: string; until?: number }
