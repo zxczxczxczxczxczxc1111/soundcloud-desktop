@@ -283,7 +283,14 @@ export function radarSources(follows: number[], profile: TasteProfile | null, na
         sources.push({ ...source, label: check?.label || source.label, checked: check?.checked ?? 0, status: check?.status ?? '' });
     };
     const accounts = new Map<number, number>();
-    for (const id of follows.slice(0, P.follows)) if (!hidden.has(id)) accounts.set(id, 1);
+    // Скрытые не занимают место в пределе. Подписок больше предела: остаются те, что весят во вкусе, а не первые
+    // по номеру аккаунта (дата подписки у сайта неизвестна, хранилище отдаёт их по ключу)
+    const followed = follows.filter((id) => !hidden.has(id));
+    const taste = new Map(profile?.artists ?? []);
+    const kept = followed.length > P.follows
+        ? new Set(followed.map((id, order) => ({ id, order, weight: taste.get(id) ?? 0 })).sort((a, b) => b.weight - a.weight || a.order - b.order).slice(0, P.follows).map((entry) => entry.id))
+        : null;
+    for (const id of followed) if (!kept || kept.has(id)) accounts.set(id, 1);
     const curators = (profile?.artists ?? []).filter(([id, weight]) => weight >= P.curatorWeight && !hidden.has(id)).sort((a, b) => b[1] - a[1] || a[0] - b[0]);
     for (const [id, weight] of curators.slice(0, P.curators)) accounts.set(id, Math.max(accounts.get(id) ?? 0, weight));
     for (const [id, weight] of accounts) add({ key: 'user:' + id, kind: 'user', id, q: '', label: '', weight });

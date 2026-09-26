@@ -263,6 +263,19 @@ it('план обхода: подписки и сильные кураторы �
     ], new Set(['artistname', 'weak', 'nobody']))).toEqual(new Map([['weak', 'Weak'], ['artistname', 'Artist Name']]));
 });
 
+it('подписок больше предела: скрытые место не занимают, остаются весомые во вкусе, а не первые по номеру', () => {
+    const follows = Array.from({ length: RADAR_PARAMS.follows + 2 }, (_, i) => i + 1);
+    const last = follows[follows.length - 1];
+    // Вес ниже порога кураторов: в обход аккаунт попадает только как подписка
+    const profile = { version: 2, artists: [[last, 0.2]] as Array<[number, number]>, credits: [], families: [], tags: [], markers: [], tracks: [], counted: 10 };
+    const ids = radarSources(follows, profile, new Map(), [], new Set([1])).map((source) => source.id);
+    expect(ids).toHaveLength(RADAR_PARAMS.follows);
+    expect(ids).not.toContain(1);
+    expect(ids).toContain(last);
+    expect(ids).toContain(2);
+    expect(ids).not.toContain(last - 1);
+});
+
 it('позиция выпуска из файла проверяется: чужой ключ и мусор отбрасываются', () => {
     expect(cleanRadarItem({ key: 'sc:track:5', id: 5, title: 'T', kind: 'upload', heard: true, reason: { kind: 'follow', name: 'X' } }))
         .toMatchObject({ id: 5, kind: 'upload', heard: true, reason: { kind: 'follow', name: 'X' }, score: 0, direction: '' });
