@@ -58,7 +58,7 @@ it('A10, A11: перезалив идёт в «Новые загрузки», с
     const edition = buildRadar(input([
         upload(1, 'Night Drive', 1, 'Artist'),
         upload(2, 'Artist - Hit', 2, 'Vibes'),
-        upload(3, 'Morning', 1, 'Artist'),
+        upload(3, 'Morning', 3, 'Other'),
         upload(4, 'Random', 99, 'Stranger', { genre: 'country' }),
     ], { heard: new Set([3]) }))!;
     expect(edition.items.map((item) => [item.id, item.kind, item.heard])).toEqual([[1, 'release', false], [3, 'release', true]]);
@@ -68,7 +68,7 @@ it('A10, A11: перезалив идёт в «Новые загрузки», с
     expect(edition.uploads[0].reason).toEqual({ kind: 'artist', name: 'Artist' });
 });
 
-it('A05: подтверждённые и вероятные копии одной версии одной строкой, релиз главнее перезалива; другая версия отдельно', () => {
+it('A05: подтверждённые и вероятные копии одной версии одной строкой, релиз главнее перезалива; другая версия в группе исполнителя', () => {
     const groups = confirmedGroups([{ a: 'sc:track:10', b: 'sc:track:11', same: true, source: 'user', at: 1 }]);
     const edition = buildRadar(input([
         upload(10, 'Artist - Tune', 1, 'Artist'),
@@ -76,7 +76,22 @@ it('A05: подтверждённые и вероятные копии одно�
         upload(12, 'Artist - Tune', 2, 'Vibes', { duration: 181000 }),
         upload(13, 'Artist - Tune (Slowed)', 1, 'Artist'),
     ], { groups }))!;
-    expect([...edition.items, ...edition.uploads].map((item) => item.id).sort((a, b) => a - b)).toEqual([10, 13]);
+    expect([...edition.items, ...edition.uploads].flatMap((item) => item.group ?? [item.id]).sort((a, b) => a - b)).toEqual([10, 13]);
+    expect(edition.items).toHaveLength(1);
+});
+
+it('группы исполнителей (решение владельца 26.09.2026): одна строка на исполнителя, у сборного канала исполнитель из названия, потолок аккаунта считает группы', () => {
+    const own = Array.from({ length: 4 }, (_, i) => upload(41 + i, 'Own ' + i, 1, 'Artist', { createdAt: CUTOFF - (5 - i) * DAY }));
+    const channel = ['Alpha - A', 'Alpha - B', 'Beta - C', 'Gamma - D', 'Delta - E'].map((title, i) => upload(51 + i, title, 2, 'Vibes', { releaseDay: '2026-09-23' }));
+    const edition = buildRadar(input([...own, ...channel]))!;
+    const artist = edition.items.filter((item) => item.id >= 41 && item.id <= 44);
+    expect(artist).toHaveLength(1);
+    // Ведёт лучшая по оценке, в группе все записи по дате
+    expect(artist[0].group).toEqual([41, 42, 43, 44]);
+    const vibes = edition.items.filter((item) => item.id >= 51);
+    expect(vibes).toHaveLength(RADAR_PARAMS.perUploader);
+    expect(vibes.find((item) => item.group)?.group).toEqual([51, 52]);
+    expect(new Set(vibes.map((item) => item.id)).size).toBe(3);
 });
 
 it('A22: пустота при незавершённом обходе не публикуется, при завершённом это честная пустая неделя; неполное с релизами partial', () => {
@@ -110,7 +125,7 @@ it('«Не нравится» с подтверждёнными копиями, 
 });
 
 const candidate = (id: number, base: number, direction: string, extra: Partial<RadarCandidate> = {}): RadarCandidate => ({
-    key: 'sc:track:' + id, id, base, direction, family: 'f' + id, uploader: id, kind: 'release', at: CUTOFF - DAY, heard: false, linked: true, reason: { kind: 'taste' }, ...extra,
+    key: 'sc:track:' + id, id, base, direction, family: 'f' + id, uploader: id, kind: 'release', at: CUTOFF - DAY, heard: false, linked: true, reason: { kind: 'taste' }, performer: 'u:' + id, ...extra,
 });
 
 it('A12: редкий устойчивый вкус получает место при сопоставимом качестве, слабое ради разнообразия не подставляется', () => {
@@ -184,15 +199,21 @@ it('пачка без дат релиза (решение владельца 25.
     const dated = upload(20, 'Single', 1, 'Artist', { releaseDay: '2026-09-24', createdAt: CUTOFF - 2 * DAY });
     const spread = Array.from({ length: 7 }, (_, i) => upload(31 + i, 'Slow ' + i, 3, 'Other', { createdAt: CUTOFF - (1 + i * 3) * DAY }));
     const edition = buildRadar(input([...bulk, dated, ...spread]))!;
-    const byUploader = (list: Array<{ id: number }>, from: number, to: number): number[] => list.map((item) => item.id).filter((id) => id >= from && id <= to);
-    // Два лучших из пачки и релиз с датой; потолок аккаунта 3
-    expect(byUploader(edition.items, 11, 20)).toEqual(expect.arrayContaining([11, 12, 20]));
-    expect(byUploader(edition.items, 11, 20)).toHaveLength(3);
-    expect(byUploader(edition.uploads, 11, 19).sort((a, b) => a - b)).toEqual([13, 14, 15, 16, 17, 18, 19]);
-    expect(edition.uploads.filter((item) => item.id <= 19).every((item) => item.kind === 'upload')).toBe(true);
-    // Семь записей за три недели это не пачка: все релизы, но в основном списке тоже до трёх
-    expect(byUploader(edition.items, 31, 37)).toHaveLength(3);
-    expect(byUploader(edition.uploads, 31, 37)).toHaveLength(0);
+    const rows = (list: Array<{ id: number }>, from: number, to: number) => list.filter((item) => item.id >= from && item.id <= to);
+    const sorted = (ids: number[] | undefined): number[] => (ids ?? []).slice().sort((a, b) => a - b);
+    // Два лучших из пачки и релиз с датой одной строкой исполнителя, остаток пачки строкой в «Новых загрузках»
+    const main = rows(edition.items, 11, 20);
+    expect(main).toHaveLength(1);
+    expect(sorted(edition.items.find((item) => item.id === main[0].id)?.group)).toEqual([11, 12, 20]);
+    const rest = edition.uploads.filter((item) => item.id >= 11 && item.id <= 19);
+    expect(rest).toHaveLength(1);
+    expect(sorted(rest[0].group)).toEqual([13, 14, 15, 16, 17, 18, 19]);
+    expect(rest[0].kind).toBe('upload');
+    // Записи раз в три дня это не пачка: в окне недели три релиза, одной группой по дате
+    const slow = rows(edition.items, 31, 37);
+    expect(slow).toHaveLength(1);
+    expect(edition.items.find((item) => item.id === slow[0].id)?.group).toEqual([33, 32, 31]);
+    expect(rows(edition.uploads, 31, 37)).toHaveLength(0);
 });
 
 it('история выпусков: направление, которого давно не было, получает большую прибавку', () => {
@@ -236,6 +257,10 @@ it('план обхода: подписки и сильные кураторы �
 it('позиция выпуска из файла проверяется: чужой ключ и мусор отбрасываются', () => {
     expect(cleanRadarItem({ key: 'sc:track:5', id: 5, title: 'T', kind: 'upload', heard: true, reason: { kind: 'follow', name: 'X' } }))
         .toMatchObject({ id: 5, kind: 'upload', heard: true, reason: { kind: 'follow', name: 'X' }, score: 0, direction: '' });
+    // Группа: без повторов и мусора; без самой позиции или из одной записи не хранится
+    expect(cleanRadarItem({ key: 'sc:track:5', id: 5, group: [4, 5, 5, 'x', -1, 1.5] })?.group).toEqual([4, 5]);
+    expect(cleanRadarItem({ key: 'sc:track:5', id: 5, group: [4, 6] })?.group).toBeUndefined();
+    expect(cleanRadarItem({ key: 'sc:track:5', id: 5, group: [5] })?.group).toBeUndefined();
     expect(cleanRadarItem({ key: 'sc:track:6', id: 5 })).toBeNull();
     expect(cleanRadarItem({ key: 'sc:track:0', id: 0 })).toBeNull();
     expect(cleanRadarItem('x')).toBeNull();

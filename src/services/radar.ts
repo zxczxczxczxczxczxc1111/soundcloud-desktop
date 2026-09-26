@@ -5,7 +5,7 @@ import type { CatalogCheck, CatalogStatus, EditionSummary, RecommendStore, Store
 import type { HistoryIndex, TastePlay } from './historyIndex';
 import type { TasteProfile, TasteService } from './tasteModel';
 import type { ExclusionEntry, WaveExclusionList } from './waveExclusions';
-import { confirmedCopies, confirmedGroups, copyKeys, familyKey, nameKey, trackCredits, versionKey, type TrackCredit } from './trackIdentity';
+import { confirmedCopies, confirmedGroups, copyKeys, familyKey, nameKey, performerKey, trackCredits, versionKey, type TrackCredit } from './trackIdentity';
 import { tagKeys, tasteMaps, tasteScore, type TasteMaps, type WaveTrack } from './wave';
 import { RADAR_FRESH_MS } from './radarSchedule';
 
@@ -13,7 +13,7 @@ const DAY = 86400000;
 
 /** Параметры радара; version растёт при каждом изменении их смысла и попадает в выпуск */
 export const RADAR_PARAMS = {
-    version: 2,
+    version: 3,
     /** Окно свежести версии, дни до отсечки. Неделя между выпусками (решение владельца 25.09.2026, было 28) */
     windowDays: 7,
     /** Последние дни окна получают небольшую прибавку (приоритет последней неделе внутри разных вкусов) */
@@ -107,6 +107,8 @@ export interface RadarCandidate {
      *  Без неё запись это открытие по жанру */
     linked: boolean;
     reason: RadarReason;
+    /** Исполнитель для группы выпуска (performerKey): свой загрузчик или исполнитель у сборного канала */
+    performer: string;
 }
 export interface RadarPick extends RadarCandidate {
     bonus: number;
@@ -139,8 +141,24 @@ export function scoreUpload(upload: StoredUpload, kind: Freshness, at: number, m
     const linked = followed || score.artist >= RADAR_PARAMS.linkWeight || score.creditBest >= RADAR_PARAMS.linkWeight || score.track > 0 || score.family > 0;
     return {
         key: upload.key, id: upload.id, base, direction: score.tagKey || tagKeys(upload.genre, upload.tags)[0] || '', family: familyKey(track) || upload.key,
-        uploader: upload.uploader, kind, at, heard, linked, reason,
+        uploader: upload.uploader, kind, at, heard, linked, reason, performer: performerKey(upload.uploader, upload.uploaderName, Array.isArray(upload.credits) ? upload.credits : []),
     };
+}
+
+/** Группы выпуска (решение владельца 26.09.2026): записи одного исполнителя одного вида одной строкой, как один трек
+ *  артиста в Release Radar. Ведёт лучшая по оценке, в group все записи группы по дате, при равенстве по id */
+export function performerGroups(candidates: RadarCandidate[]): Array<{ lead: RadarCandidate; group: RadarCandidate[] }> {
+    const byPerformer = new Map<string, RadarCandidate[]>();
+    for (const candidate of candidates) {
+        const key = candidate.kind + '|' + candidate.performer;
+        const list = byPerformer.get(key) ?? [];
+        list.push(candidate);
+        byPerformer.set(key, list);
+    }
+    return [...byPerformer.values()].map((list) => ({
+        lead: list.reduce((best, item) => (item.base > best.base || (item.base === best.base && item.id < best.id) ? item : best)),
+        group: list.slice().sort((a, b) => a.at - b.at || a.id - b.id),
+    }));
 }
 
 /** Отбор с мягким разнообразием (раздел 6.2): на каждом шаге среди записей не ниже лучшей оставшейся на diversityWindow
@@ -343,6 +361,8 @@ export interface RadarItem {
     reason: RadarReason;
     /** Только в «Всех найденных»: найдено или опубликовано после выпуска */
     after?: boolean;
+    /** Все записи группы исполнителя по дате, включая эту; только если записей больше одной */
+    group?: number[];
 }
 export interface RadarEdition {
     period: string;
@@ -369,10 +389,15 @@ export function cleanRadarItem(value: unknown): RadarItem | null {
     const cleanReason: RadarReason = reason.kind === 'artist' || reason.kind === 'follow'
         ? { kind: reason.kind, name: text(reason.name, 200) }
         : reason.kind === 'tag' ? { kind: 'tag', tag: text(reason.tag, 80) } : { kind: 'taste' };
+    // Группа: номера записей без повторов, сама позиция среди них; выпуск версии 2 группы не хранит
+    const group = Array.isArray(item.group)
+        ? [...new Set(item.group.filter((entry): entry is number => typeof entry === 'number' && Number.isSafeInteger(entry) && entry > 0))].slice(0, 200)
+        : [];
     return {
         key: 'sc:track:' + id, id, title: text(item.title, 500), artist: text(item.artist, 200), kind: item.kind === 'upload' ? 'upload' : 'release',
         at: number(item.at), heard: item.heard === true, score: number(item.score), base: number(item.base), bonus: number(item.bonus),
         penalty: number(item.penalty), direction: text(item.direction, 80), reason: cleanReason,
+        ...(group.length > 1 && group.includes(id) ? { group } : {}),
     };
 }
 
@@ -396,9 +421,10 @@ export interface RadarInput {
     coverage: RadarCoverage;
 }
 const round = (value: number): number => Math.round(value * 1000) / 1000;
-const asItem = (pick: RadarPick, upload: StoredUpload): RadarItem => ({
+const asItem = (pick: RadarPick, upload: StoredUpload, group: RadarCandidate[] = []): RadarItem => ({
     key: pick.key, id: pick.id, title: upload.title, artist: upload.uploaderName, kind: pick.kind === 'upload' ? 'upload' : 'release', at: pick.at,
     heard: pick.heard, score: round(pick.score), base: round(pick.base), bonus: round(pick.bonus), penalty: round(pick.penalty), direction: pick.direction, reason: pick.reason,
+    ...(group.length > 1 ? { group: group.map((member) => member.id) } : {}),
 });
 
 /** Кандидаты окна [from, to] после запретов и склейки копий: и для выпуска, и для «Всех найденных» */
@@ -475,9 +501,13 @@ export function buildRadar(input: RadarInput): RadarEdition | null {
     for (const candidate of radarCandidates(input, input.cutoff - P.windowDays * DAY, input.cutoff)) (candidate.kind === 'release' ? releases : fresh).push(candidate);
     const complete = coverageComplete(input.coverage);
     if (!releases.length && !complete) return null;
+    // Отбор идёт по ведущим групп: потолок аккаунта считает группы, остальные записи исполнителя едут в group
+    const releaseGroups = performerGroups(releases);
+    const freshGroups = performerGroups(fresh);
+    const groupOf = new Map([...releaseGroups, ...freshGroups].map((entry) => [entry.lead.key, entry.group]));
     const item = (pick: RadarPick): RadarItem | null => {
         const upload = byKey.get(pick.key);
-        return upload ? asItem(pick, upload) : null;
+        return upload ? asItem(pick, upload, groupOf.get(pick.key)) : null;
     };
     return {
         period: input.period,
@@ -488,8 +518,8 @@ export function buildRadar(input: RadarInput): RadarEdition | null {
         coverage: input.coverage,
         algorithm: P.version,
         taste: input.tasteVersion,
-        items: selectEdition(releases, input.history).map(item).filter((entry): entry is RadarItem => entry !== null),
-        uploads: selectRadar(fresh, [], P.uploadsSize).map(item).filter((entry): entry is RadarItem => entry !== null),
+        items: selectEdition(releaseGroups.map((entry) => entry.lead), input.history).map(item).filter((entry): entry is RadarItem => entry !== null),
+        uploads: selectRadar(freshGroups.map((entry) => entry.lead), [], P.uploadsSize).map(item).filter((entry): entry is RadarItem => entry !== null),
     };
 }
 
@@ -559,17 +589,17 @@ export class RadarService {
         if (!edition) return [];
         const from = edition.cutoff - RADAR_PARAMS.windowDays * DAY;
         const input = { ...this.inputs(userId, from, now, now), period: edition.period, cutoff: now, history: [], coverage: edition.coverage };
-        const shown = new Set([...edition.items, ...edition.uploads].map((item) => item.id));
+        // Показанное в выпуске вместе с группами не повторяется; остальное тоже группами исполнителей
+        const shown = new Set([...edition.items, ...edition.uploads].flatMap((item) => [item.id, ...(item.group ?? [])]));
         const byKey = new Map(input.uploads.map((upload) => [upload.key, upload]));
-        return radarCandidates(input, from, now)
-            .filter((candidate) => !shown.has(candidate.id))
-            .sort((a, b) => b.base - a.base || a.id - b.id)
+        return performerGroups(radarCandidates(input, from, now).filter((candidate) => !shown.has(candidate.id)))
+            .sort((a, b) => b.lead.base - a.lead.base || a.lead.id - b.lead.id)
             .slice(0, RADAR_PARAMS.foundSize)
-            .flatMap((candidate) => {
-                const upload = byKey.get(candidate.key);
+            .flatMap(({ lead, group }) => {
+                const upload = byKey.get(lead.key);
                 if (!upload) return [];
-                const item = asItem({ ...candidate, bonus: 0, penalty: 0, score: candidate.base }, upload);
-                return [candidate.at > edition.cutoff || upload.firstSeen > edition.created ? { ...item, after: true } : item];
+                const item = asItem({ ...lead, bonus: 0, penalty: 0, score: lead.base }, upload, group);
+                return [lead.at > edition.cutoff || upload.firstSeen > edition.created ? { ...item, after: true } : item];
             });
     }
     // Всё, что нужно отбору, кроме истории выпусков и покрытия: окно загрузок, вкус, подписки, «Уже слышал», запреты

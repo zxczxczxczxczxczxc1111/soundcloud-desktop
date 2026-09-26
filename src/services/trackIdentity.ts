@@ -443,6 +443,16 @@ export function trackCredits(track: WaveTrack, parsed: ParsedTitle = parseTrackT
     return list;
 }
 
+// Исполнитель записи для группы радара: свой аккаунт (исполнителя в названии нет, загрузчик среди исполнителей или это
+// его переделка) это сам загрузчик, у сборного канала первый исполнитель из названия или метаданных. То же правило, что
+// у свежести в radar.ts: чужой исполнитель без загрузчика среди участников делает канал сборным
+export function performerKey(uploader: number, uploaderName: string | null | undefined, credits: TrackCredit[]): string {
+    const own = nameKey(uploaderName);
+    const artists = credits.filter((credit) => credit.role === 'artist' && credit.key);
+    const mine = !artists.length || artists.some((credit) => credit.key === own) || credits.some((credit) => credit.role === 'remixer' && credit.key === own);
+    return mine ? 'u:' + uploader : 'a:' + artists[0].key;
+}
+
 // До трёх текстовых запросов по треку: эта версия, другие версии, другие песни участников.
 // Без кавычек и операторов: поиск сайта их не поддерживает (приложение А плана)
 export function searchQueries(track: WaveTrack, parsed: ParsedTitle = parseTrackTitle(track.title)): SearchQuery[] {
@@ -478,5 +488,5 @@ export function searchQueries(track: WaveTrack, parsed: ParsedTitle = parseTrack
 export const identityHelpers = [
     identityText, identityKey, nameKey, splitNames, simpleMarker, stripTailMarkers, classifySegment, parseTrackTitle, uploaderId, uploadKey,
     trackDuration, artistHint, familyKey, versionKey, copyKeys, copyKey, probableCopy, isrcOf, matchLevel, confirmedGroups, confirmedCopies, catalogLinks,
-    trackCredits, searchQueries,
+    trackCredits, searchQueries, performerKey,
 ];

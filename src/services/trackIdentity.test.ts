@@ -3,7 +3,7 @@ import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import type { WaveTrack } from './wave';
 import {
-    catalogLinks, confirmedCopies, confirmedGroups, copyKey, copyKeys, familyKey, identityHelpers, matchLevel, parseTrackTitle, searchQueries, trackCredits,
+    catalogLinks, confirmedCopies, confirmedGroups, copyKey, copyKeys, familyKey, identityHelpers, matchLevel, parseTrackTitle, performerKey, searchQueries, trackCredits,
     versionKey, type RecordingLink,
 } from './trackIdentity';
 
@@ -180,4 +180,16 @@ it('помощники работают текстом на странице т�
     }
     const [a, b] = fixture.tracks;
     expect(page.matchLevel(a, b)).toBe(matchLevel(a, b));
+});
+
+it('исполнитель для группы радара: свой аккаунт с коллабом и своим ремиксом это загрузчик, сборный канал отдаёт исполнителя из названия', () => {
+    const of = (title: string, uploader: string, id = 7): string => {
+        const track: WaveTrack = { id: 1, title, user_id: id, user: { id, username: uploader } };
+        return performerKey(id, uploader, trackCredits(track));
+    };
+    expect(of('Night Drive', 'Alpha')).toBe('u:7');
+    expect(of('Alpha x Beta - Song', 'Alpha')).toBe('u:7');
+    expect(of('Old Star - Classic (Alpha Remix)', 'Alpha')).toBe('u:7');
+    expect(of('Beta - Song', 'Vibes Channel')).toBe('a:beta');
+    expect(of('Beta feat. Alpha - Song', 'Vibes Channel')).toBe('a:beta');
 });

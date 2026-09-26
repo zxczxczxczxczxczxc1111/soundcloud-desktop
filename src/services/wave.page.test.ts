@@ -1585,6 +1585,102 @@ it('P7: радар первым на полке, список с «Already heard
     expect(section.querySelector('[data-act="radar-rebuild"]')).toBeNull();
 });
 
+it('группы радара: строка на исполнителя, метка EP из альбомов аккаунта, раскрытие в порядке альбома, трек группы и «Слушать все»', async () => {
+    const edition = {
+        period: '2026-09-25', revision: 1, created: radarCutoff, cutoff: radarCutoff, status: 'complete', algorithm: 3, taste: 1,
+        coverage: { accounts: 10, checked: 10, failed: 0, searches: 2, searchesDone: 2 },
+        items: [radarItem(8001, { group: [8001, 8004, 8006], reason: { kind: 'artist', name: 'Alpha' } }), radarItem(8002, { group: [8002, 8007] }), radarItem(8003)],
+        uploads: [],
+    };
+    const radar = {
+        view: vi.fn(async () => ({ edition, editions: radarEditions.slice(0, 1) })),
+        found: vi.fn(async () => []),
+        rebuild: vi.fn(async () => ({ published: false, waiting: true, edition: null })),
+        state: vi.fn(async () => ({ phase: 'published', period: '2026-09-25', error: '', updated: 1 })),
+    };
+    Object.assign(window, { soundcloudAPI: { radar } });
+    // 8004 и 8006 того же аккаунта, что 8001; альбом аккаунта ставит свой порядок
+    const tracks: WaveTrack[] = [...radarTracks, ...[8004, 8006, 8007].map((id): WaveTrack => ({
+        id, kind: 'track', title: 'Fresh ' + id, duration: 200000, user_id: id === 8007 ? 8002 : 8001, user: { id: id === 8007 ? 8002 : 8001, username: 'Maker' },
+    }))];
+    const albums: Array<[number, unknown]> = [];
+    const site = fakeSite(relatedTracks, (name, path, query) => {
+        if (name === 'trackBatch') return batchOf(tracks)(query);
+        if (name === 'userAlbums') {
+            albums.push([Number((path as { id?: unknown }).id), query]);
+            return { collection: [{ set_type: 'ep', title: 'Fresh EP', track_count: 4, tracks: [{ id: 8006 }, { id: 8001 }, { id: 9999 }, { id: 8004 }] }] };
+        }
+        return undefined;
+    });
+    window.eval(waveScript());
+    await vi.advanceTimersByTimeAsync(100);
+    const section = document.getElementById('sc-wave')!;
+    section.querySelector<HTMLButtonElement>('[data-act="shelf-open"][data-card="-10"]')!.click();
+    await vi.advanceTimersByTimeAsync(100);
+    const rows = [...section.querySelectorAll<HTMLElement>('.scw-mix-rows > .scw-row[data-track]')];
+    expect(rows.map((row) => row.dataset.track)).toEqual(['8001', '8002', '8003']);
+    // Альбомы спрашиваются только у группы от трёх записей
+    expect(albums).toEqual([[8001, { limit: 50 }]]);
+    const badge = (id: number): HTMLButtonElement | null => section.querySelector<HTMLButtonElement>('.scw-row[data-track="' + id + '"] [data-act="radar-group"]');
+    expect(badge(8001)?.textContent).toBe('EP · 4');
+    expect(badge(8002)?.textContent).toBe('+1 track');
+    expect(badge(8003)).toBeNull();
+
+    // Метка раскрывает группу и трек не включает
+    badge(8001)!.click();
+    await vi.advanceTimersByTimeAsync(100);
+    expect(site.player.replaceQueue).not.toHaveBeenCalled();
+    const box = section.querySelector<HTMLElement>('.scw-group-box')!;
+    expect(box.querySelector('.scw-group-head b')?.textContent).toBe('Fresh EP');
+    expect(box.querySelector('[data-act="radar-group-all"]')?.textContent).toBe('Play all 3');
+    expect([...box.querySelectorAll<HTMLElement>('.scw-row[data-track]')].map((row) => row.dataset.track)).toEqual(['8006', '8001', '8004']);
+    expect(badge(8001)?.getAttribute('aria-expanded')).toBe('true');
+
+    // «Слушать» у выпуска играет по одному треку исполнителя; трек группы играет первым, дальше со следующего исполнителя
+    box.querySelector<HTMLElement>('.scw-row[data-track="8006"] .scw-row-e')!.click();
+    await vi.advanceTimersByTimeAsync(100);
+    const queued = (site.player.replaceQueue.mock.calls[site.player.replaceQueue.mock.calls.length - 1][0] as FakeItem[]).map((item) => item.sound.id);
+    expect(queued.slice(0, 4)).toEqual([8006, 8002, 8003, 8001]);
+
+    // «Слушать все 3» во время игры: следующими встают только те, которых нет впереди
+    section.querySelector<HTMLButtonElement>('[data-act="radar-group-all"]')!.click();
+    await vi.advanceTimersByTimeAsync(100);
+    const after = site.player.getQueue().slice().map((item) => item.sound.id);
+    expect(after.slice(0, 2)).toEqual([8006, 8004]);
+    expect(after.filter((id) => id === 8001)).toHaveLength(1);
+    expect(site.player.getCurrentSound()?.id).toBe(8006);
+    expect(document.querySelector('.scw-toast')?.textContent).toBe('Up next: 1 track');
+});
+
+it('выпуск до групп (алгоритм 2): страница склеивает строки одного исполнителя по загруженным трекам', async () => {
+    const legacy = { ...(radarEditionOf('2026-09-25', 1, radarCutoff) as Record<string, unknown>), items: [radarItem(8001), radarItem(8002), radarItem(8004), radarItem(8003)] };
+    const radar = {
+        view: vi.fn(async () => ({ edition: legacy, editions: radarEditions.slice(0, 1) })),
+        found: vi.fn(async () => []),
+        rebuild: vi.fn(async () => ({ published: false, waiting: true, edition: null })),
+        state: vi.fn(async () => ({ phase: 'published', period: '2026-09-25', error: '', updated: 1 })),
+    };
+    Object.assign(window, { soundcloudAPI: { radar } });
+    const tracks: WaveTrack[] = [...radarTracks, { id: 8004, kind: 'track', title: 'Other', duration: 200000, user_id: 8001, user: { id: 8001, username: 'Maker 8001' }, created_at: '2026-09-20T10:00:00Z' }];
+    const site = fakeSite(relatedTracks, (name, _path, query) => (name === 'trackBatch' ? batchOf(tracks)(query) : undefined));
+    window.eval(waveScript());
+    await vi.advanceTimersByTimeAsync(100);
+    const section = document.getElementById('sc-wave')!;
+    section.querySelector<HTMLButtonElement>('[data-act="shelf-open"][data-card="-10"]')!.click();
+    await vi.advanceTimersByTimeAsync(100);
+    expect([...section.querySelectorAll<HTMLElement>('.scw-mix-rows > .scw-row[data-track]')].map((row) => row.dataset.track)).toEqual(['8001', '8002', '8003']);
+    expect(section.querySelector('.scw-row[data-track="8001"] [data-act="radar-group"]')?.textContent).toBe('+1 track');
+    // Ничего не играет: «Слушать все» сразу включает группу по дате публикации
+    section.querySelector<HTMLButtonElement>('.scw-row[data-track="8001"] [data-act="radar-group"]')!.click();
+    await vi.advanceTimersByTimeAsync(100);
+    expect([...section.querySelectorAll<HTMLElement>('.scw-group-box .scw-row[data-track]')].map((row) => row.dataset.track)).toEqual(['8001', '8004']);
+    section.querySelector<HTMLButtonElement>('[data-act="radar-group-all"]')!.click();
+    await vi.advanceTimersByTimeAsync(100);
+    expect(site.player.getCurrentSound()?.id).toBe(8001);
+    expect(site.player.isPlaying()).toBe(true);
+    expect(site.player.getQueue().slice().map((item) => item.sound.id).slice(0, 2)).toEqual([8001, 8004]);
+});
+
 it('P7: «Все найденные» с фильтрами вида и «Уже слышал», метки «После выпуска» и «Новая загрузка»', async () => {
     const radar = {
         view: vi.fn(async () => ({ edition: radarEditionOf('2026-09-25', 1, radarCutoff), editions: radarEditions.slice(0, 1) })),

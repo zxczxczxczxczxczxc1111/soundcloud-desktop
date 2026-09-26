@@ -15,7 +15,7 @@ import type { RadarReason } from './radar';
 // Разбор версий и сеть подбора живут в своих модулях. Функции страницы зовут их по голому имени: в Node имя
 // берётся отсюда, на странице из объявлений identityHelpers и sourceHelpers в той же обёртке.
 // Именованный импорт превратился бы в trackIdentity_1.copyKey и на странице не нашёлся
-const { confirmedCopies, confirmedGroups, copyKey, copyKeys, familyKey, matchLevel, nameKey, parseTrackTitle, searchQueries, trackCredits, versionKey } = identity;
+const { confirmedCopies, confirmedGroups, copyKey, copyKeys, familyKey, matchLevel, nameKey, parseTrackTitle, performerKey, searchQueries, trackCredits, versionKey } = identity;
 const { classifyFailure, createDispatcher, createSearchCache, likeItems, entityItems, syncSource } = sources;
 
 export interface WaveTrack {
@@ -103,7 +103,8 @@ export type WaveTexts = Record<
     | 'radarRevision' | 'radarFoundEmpty' | 'radarNoMatch' | 'whyRadar' | 'whyRadarArtist' | 'whyRadarFollow' | 'whyRadarTag' | 'whyRadarTaste'
     | 'menuVersions' | 'menuHideFamily' | 'menuShowFamily' | 'toastFamilyHidden' | 'toastFamilyShown' | 'versionsTitle' | 'versionsSame'
     | 'versionsOther' | 'versionsLoading' | 'versionsEmpty' | 'versionsFailed' | 'versionsLink' | 'versionsUnlink' | 'versionsProbable'
-    | 'versionsConfirmed' | 'versionsThis' | 'toastLinked' | 'toastUnlinked' | 'dialogClose' | 'radarPost' | 'rowPlay',
+    | 'versionsConfirmed' | 'versionsThis' | 'toastLinked' | 'toastUnlinked' | 'dialogClose' | 'radarPost' | 'rowPlay'
+    | 'radarAlbum' | 'radarEp' | 'radarSingle' | 'radarCompilation' | 'radarGroupAll' | 'radarGroupQueued',
     string
 >;
 
@@ -163,6 +164,8 @@ export const WAVE_TEXTS: Record<'ru' | 'en', WaveTexts> = {
         versionsEmpty: 'Других версий не нашлось', versionsFailed: 'Поиск не удался: SoundCloud не ответил', versionsLink: 'Та же запись',
         versionsUnlink: 'Другая запись', versionsProbable: 'похоже на копию', versionsConfirmed: 'подтверждено', versionsThis: 'этот трек',
         toastLinked: 'Отмечено: та же запись', toastUnlinked: 'Отмечено: другая запись', dialogClose: 'Закрыть', radarPost: 'Новая загрузка',
+        radarAlbum: 'Альбом · {n}', radarEp: 'EP · {n}', radarSingle: 'Сингл · {n}', radarCompilation: 'Сборник · {n}', radarGroupAll: 'Слушать все {n}',
+        radarGroupQueued: 'Следующими в очереди: {count}',
     },
     en: {
         wave: 'My Wave', similar: 'Similar', fresh: 'New', anyGenre: 'Any genre', genreInput: 'Genres, comma separated', fromLikes: 'From your likes',
@@ -220,6 +223,8 @@ export const WAVE_TEXTS: Record<'ru' | 'en', WaveTexts> = {
         versionsEmpty: 'No other versions found', versionsFailed: 'Search failed: SoundCloud didn’t respond', versionsLink: 'Mark as same',
         versionsUnlink: 'Mark as different', versionsProbable: 'likely a copy', versionsConfirmed: 'confirmed', versionsThis: 'this track',
         toastLinked: 'Marked as the same recording', toastUnlinked: 'Marked as a different recording', dialogClose: 'Close', radarPost: 'New upload',
+        radarAlbum: 'Album · {n}', radarEp: 'EP · {n}', radarSingle: 'Single · {n}', radarCompilation: 'Compilation · {n}', radarGroupAll: 'Play all {n}',
+        radarGroupQueued: 'Up next: {count}',
     },
 };
 
@@ -2641,8 +2646,13 @@ export function installWave(config: WaveConfig, createPlayback: typeof installPl
     const RADAR_CARD = -10;
     const UPLOADS_CARD = -11;
     const isRadarCard = (index: number | null | undefined): boolean => index === RADAR_CARD || index === UPLOADS_CARD;
-    interface RadarRow { id: number; title: string; artist: string; kind: 'release' | 'upload'; heard: boolean; reason: RadarReason; after: boolean }
-    interface RadarEditionView { period: string; revision: number; cutoff: number; status: 'complete' | 'partial'; checked: number; total: number; items: RadarRow[]; uploads: RadarRow[] }
+    // group: все записи группы исполнителя по дате, включая эту; пусто, если запись одна
+    interface RadarRow { id: number; title: string; artist: string; kind: 'release' | 'upload'; heard: boolean; reason: RadarReason; after: boolean; group: number[] }
+    interface RadarEditionView {
+        period: string; revision: number; cutoff: number; status: 'complete' | 'partial'; checked: number; total: number; algorithm: number; items: RadarRow[]; uploads: RadarRow[];
+    }
+    // Релиз аккаунта из userAlbums: вид (album, ep, single, compilation), число треков и их порядок
+    interface RadarAlbum { kind: string; title: string; count: number; ids: number[] }
     interface RadarArchiveEntry { period: string; revision: number; cutoff: number; manual: boolean }
     let radarEdition: RadarEditionView | null = null;
     let radarArchive: RadarArchiveEntry[] = [];
@@ -2663,6 +2673,11 @@ export function installWave(config: WaveConfig, createPlayback: typeof installPl
     const radarTracks = new Map<number, WaveTrack>();
     // Причины позиций играющего радара для строки «почему» у плеера
     const radarReasons = new Map<number, string>();
+    // Раскрытая группа исполнителя в списке радара: номер ведущей записи, 0 если ни одной
+    let radarGroupOpen = 0;
+    // Альбомы аккаунтов для меток групп, по id аккаунта; спрашиваются только у групп от трёх записей
+    const radarAlbums = new Map<number, RadarAlbum[] | 'loading' | 'failed'>();
+    const RADAR_ALBUM_FROM = 3;
 
     // Снимок из main уже проверен там; здесь только форма, чтобы не упасть на чужом
     function asShelf(value: unknown): Shelf | null {
@@ -2922,7 +2937,11 @@ export function installWave(config: WaveConfig, createPlayback: typeof installPl
             const reason: RadarReason = source.kind === 'artist' || source.kind === 'follow'
                 ? { kind: source.kind, name: text(source.name) }
                 : source.kind === 'tag' ? { kind: 'tag', tag: text(source.tag) } : { kind: 'taste' };
-            return [{ id: item.id, title: text(item.title), artist: text(item.artist), kind: item.kind === 'upload' ? 'upload' : 'release', heard: item.heard === true, reason, after: item.after === true }];
+            const group = Array.isArray(item.group) ? item.group.filter(isId) : [];
+            return [{
+                id: item.id, title: text(item.title), artist: text(item.artist), kind: item.kind === 'upload' ? 'upload' : 'release', heard: item.heard === true, reason,
+                after: item.after === true, group: group.length > 1 && group.includes(item.id) ? group : [],
+            }];
         });
     }
     function asRadarState(value: unknown): RadarState | null {
@@ -2943,7 +2962,7 @@ export function installWave(config: WaveConfig, createPlayback: typeof installPl
         const next: RadarEditionView | null = edition && typeof edition.period === 'string' ? {
             period: edition.period, revision: number(edition.revision), cutoff: number(edition.cutoff), status: edition.status === 'complete' ? 'complete' : 'partial',
             checked: number(coverage.checked) + number(coverage.searchesDone), total: number(coverage.accounts) + number(coverage.searches),
-            items: asRadarRows(edition.items), uploads: asRadarRows(edition.uploads),
+            algorithm: number(edition.algorithm), items: asRadarRows(edition.items), uploads: asRadarRows(edition.uploads),
         } : null;
         const same = !!next && !!radarEdition && radarKey(next) === radarKey(radarEdition);
         // Играет прежний выпуск: карточка нового больше не «играющая»
@@ -2961,6 +2980,7 @@ export function installWave(config: WaveConfig, createPlayback: typeof installPl
         mixLists.delete(UPLOADS_CARD);
         radarFound = null;
         radarShowFound = false;
+        radarGroupOpen = 0;
         radarArt.clear();
         void loadRadarArt();
         if (isRadarCard(openCard) && openCard !== null) loadRadarTracks(openCard);
@@ -3029,25 +3049,138 @@ export function installWave(config: WaveConfig, createPlayback: typeof installPl
     function radarRows(index: number): RadarRow[] {
         const edition = radarEdition;
         if (!edition) return [];
-        if (index === UPLOADS_CARD) return edition.uploads;
-        if (!radarShowFound) return edition.items;
+        if (index === UPLOADS_CARD) return legacyGroups(edition, edition.uploads);
+        if (!radarShowFound) return legacyGroups(edition, edition.items);
         const found = radarFound?.key === radarKey(edition) && Array.isArray(radarFound.rows) ? radarFound.rows : [];
         return found.filter((row) => (radarKind === 'all' || row.kind === radarKind) && !(radarHideHeard && row.heard));
     }
+    // Выпуск до групп (алгоритм 2) страница склеивает сама, когда треки загружены: строка на исполнителя, ведёт первая
+    // по порядку выпуска, в группе все записи по дате публикации. «Все найденные» worker всегда отдаёт группами
+    function legacyGroups(edition: RadarEditionView, rows: RadarRow[]): RadarRow[] {
+        if (edition.algorithm >= 3 || !rows.every((row) => radarTracks.has(row.id))) return rows;
+        const heads = new Map<string, RadarRow>();
+        const members = new Map<RadarRow, WaveTrack[]>();
+        for (const row of rows) {
+            const track = radarTracks.get(row.id);
+            if (!track) continue;
+            const key = row.kind + '|' + performerKey(track.user_id ?? 0, track.user?.username, trackCredits(track));
+            const head = heads.get(key);
+            if (head) members.get(head)?.push(track);
+            else {
+                heads.set(key, row);
+                members.set(row, [track]);
+            }
+        }
+        const published = (track: WaveTrack): number => Date.parse(track.display_date || track.created_at || '') || 0;
+        return [...heads.values()].map((row) => {
+            const list = members.get(row) ?? [];
+            return list.length > 1 ? { ...row, group: list.slice().sort((a, b) => published(a) - published(b) || a.id - b.id).map((track) => track.id) } : row;
+        });
+    }
     function loadRadarTracks(index: number): void {
-        const ids = radarRows(index).map((row) => row.id);
+        // Старый выпуск склеивается по загруженным трекам: грузятся все его строки, а не только уже склеенные
+        const edition = radarEdition;
+        const all = edition && index === UPLOADS_CARD ? edition.uploads : edition && !radarShowFound ? edition.items : radarRows(index);
+        const ids = all.map((row) => row.id);
+        const shown = (): WaveTrack[] => radarRows(index).map((row) => radarTracks.get(row.id)).filter((track): track is WaveTrack => !!track && isWaveEligible(track));
         if (ids.every((id) => radarTracks.has(id))) {
-            mixLists.set(index, ids.map((id) => radarTracks.get(id)).filter((track): track is WaveTrack => !!track && isWaveEligible(track)));
+            mixLists.set(index, shown());
+            loadRadarAlbums(radarRows(index));
             return;
         }
         mixLists.set(index, 'loading');
         const key = radarEdition ? radarKey(radarEdition) : '';
-        void radarTracksOf(ids).then((tracks) => {
-            if (radarEdition && radarKey(radarEdition) === key) mixLists.set(index, tracks.filter(isWaveEligible));
+        void radarTracksOf(ids).then(() => {
+            if (!radarEdition || radarKey(radarEdition) !== key) return;
+            mixLists.set(index, shown());
+            loadRadarAlbums(radarRows(index));
         }, (error: unknown) => {
             console.warn('Радар: треки выпуска не загружены', error);
             if (radarEdition && radarKey(radarEdition) === key) mixLists.set(index, 'failed');
         }).finally(render);
+    }
+    // Альбомы аккаунтов, у которых группа от трёх записей: одним запросом userAlbums, треки альбома приходят в нём же по порядку
+    function loadRadarAlbums(rows: RadarRow[]): void {
+        const accounts = new Set<number>();
+        for (const row of rows) {
+            const account = row.group.length >= RADAR_ALBUM_FROM ? radarTracks.get(row.id)?.user_id : undefined;
+            if (account && isId(account) && !radarAlbums.has(account)) accounts.add(account);
+        }
+        for (const account of accounts) {
+            radarAlbums.set(account, 'loading');
+            void call('userAlbums', { id: account }, { limit: 50 }).then((body) => {
+                radarAlbums.set(account, albumsOf(body));
+            }, (error: unknown) => {
+                console.warn('Радар: альбомы аккаунта не загружены', error);
+                radarAlbums.set(account, 'failed');
+            }).finally(render);
+        }
+    }
+    function albumsOf(body: unknown): RadarAlbum[] {
+        const list = body && typeof body === 'object' ? (body as { collection?: unknown }).collection : null;
+        if (!Array.isArray(list)) return [];
+        return list.flatMap((value): RadarAlbum[] => {
+            const album = value && typeof value === 'object' ? (value as Record<string, unknown>) : null;
+            if (!album || !Array.isArray(album.tracks)) return [];
+            const ids = album.tracks.map((track: unknown) => (track && typeof track === 'object' ? (track as { id?: unknown }).id : 0)).filter(isId);
+            return [{
+                kind: typeof album.set_type === 'string' ? album.set_type : '', title: typeof album.title === 'string' ? album.title : '',
+                count: isId(album.track_count) ? album.track_count : ids.length, ids,
+            }];
+        });
+    }
+    // Альбом группы подтверждён сайтом, если в нём ведущая запись и хотя бы ещё одна из группы
+    function radarAlbum(row: RadarRow): RadarAlbum | null {
+        const account = radarTracks.get(row.id)?.user_id;
+        const albums = account ? radarAlbums.get(account) : undefined;
+        if (!Array.isArray(albums)) return null;
+        return albums.find((album) => album.ids.includes(row.id) && row.group.some((id) => id !== row.id && album.ids.includes(id))) ?? null;
+    }
+    function groupLabel(row: RadarRow): string {
+        const album = radarAlbum(row);
+        if (!album) return '+' + countText(row.group.length - 1, T.tracksCount, T.lang);
+        const kind = album.kind === 'ep' ? T.radarEp : album.kind === 'single' ? T.radarSingle : album.kind === 'compilation' ? T.radarCompilation : T.radarAlbum;
+        return fillText(kind, { n: String(album.count) });
+    }
+    // Порядок раскрытой группы: записи альбома в его порядке, остальные по дате
+    function groupOrder(row: RadarRow): number[] {
+        const album = radarAlbum(row);
+        if (!album) return row.group;
+        const inAlbum = album.ids.filter((id) => row.group.includes(id));
+        return [...inAlbum, ...row.group.filter((id) => !inAlbum.includes(id))];
+    }
+    function toggleGroup(id: number): void {
+        radarGroupOpen = radarGroupOpen === id ? 0 : id;
+        const row = openCard !== null ? radarRows(openCard).find((item) => item.id === id) : undefined;
+        if (radarGroupOpen && row && !row.group.every((member) => radarTracks.has(member)))
+            void radarTracksOf(row.group).catch((error: unknown) => console.warn('Радар: треки группы не загружены', error)).finally(render);
+        render();
+    }
+    // «Слушать все N»: треки группы следующими в очередь одной пересборкой; если ничего не играет, группа сразу играет
+    async function queueGroup(id: number): Promise<void> {
+        const row = openCard !== null ? radarRows(openCard).find((item) => item.id === id) : undefined;
+        if (!row || !player) return;
+        try {
+            await ensureExclusions();
+            const tracks = (await radarTracksOf(groupOrder(row))).filter((track) => isWaveEligible(track) && !isExcluded(track));
+            if (disposed) return;
+            const idle = !player.isPlaying();
+            const added = queueControls.addMany(tracks, true);
+            if (!added) {
+                showToast(T.toastEmpty);
+                return;
+            }
+            if (idle) {
+                const next = player.getQueue().slice().find((entry) => entry.sound?.id === tracks[0]?.id && entry.explicit);
+                if (next) {
+                    player.setCurrentItem(next, {});
+                    player.playCurrent({ userInitiated: true });
+                }
+            } else showToast(fillText(T.radarGroupQueued, { count: countText(added, T.tracksCount, T.lang) }));
+        } catch (error) {
+            console.warn('Радар: группа не поставлена в очередь', error);
+            showToast(T.toastFailed);
+        }
     }
     function toggleRadar(index: number): void {
         if (openCard === index) {
@@ -3176,16 +3309,20 @@ export function installWave(config: WaveConfig, createPlayback: typeof installPl
         const request = ++seedRequest;
         try {
             await Promise.all([ensureProfile(), ensureExclusions()]);
-            const tracks = await radarTracksOf(rows.map((row) => row.id));
+            // Трек из раскрытой группы играет первым, дальше выпуск со следующего исполнителя после его группы
+            const lead = fromId ? rows.find((row) => row.id !== fromId && row.group.includes(fromId)) : undefined;
+            const tracks = await radarTracksOf([...rows.map((row) => row.id), ...(lead ? [fromId] : [])]);
             if (request !== seedRequest || disposed) return;
-            let own = tracks.filter((track) => isWaveEligible(track) && !isExcluded(track));
+            const usable = (track: WaveTrack): boolean => isWaveEligible(track) && !isExcluded(track);
+            let own = tracks.filter((track) => usable(track) && track.id !== (lead ? fromId : 0));
             if (!own.length) {
                 showToast(T.toastEmpty);
                 return;
             }
-            const at = fromId ? own.findIndex((track) => track.id === fromId) : -1;
-            const first = at >= 0 ? own[at] : null;
-            if (at >= 0) own = [...own.slice(at + 1), ...own.slice(0, at)];
+            const at = fromId ? own.findIndex((track) => track.id === (lead?.id ?? fromId)) : -1;
+            const member = lead ? radarTracks.get(fromId) : undefined;
+            const first = member && usable(member) ? member : at >= 0 && !lead ? own[at] : null;
+            if (at >= 0) own = lead ? [...own.slice(at + 1), ...own.slice(0, at + 1)] : [...own.slice(at + 1), ...own.slice(0, at)];
             radarReasons.clear();
             for (const row of rows) radarReasons.set(row.id, radarWhy(row));
             const title = index === UPLOADS_CARD ? T.radarUploads : T.radar + ', ' + radarDate(edition.cutoff);
@@ -3785,7 +3922,7 @@ export function installWave(config: WaveConfig, createPlayback: typeof installPl
         '.scw-mix-title b{display:block;font-size:16px;line-height:22px;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}',
         '.scw-mix-title span{color:var(--scw-muted)}',
         '.scw-mix .scw-hint{padding:8px 0 12px}',
-        '.scw-mix-rows{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));column-gap:16px;max-height:432px;overflow-y:auto;margin:0 -8px;padding-bottom:8px;scrollbar-width:thin;scrollbar-color:rgba(255,255,255,.2) transparent}',
+        '.scw-mix-rows{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));grid-auto-flow:row dense;column-gap:16px;max-height:432px;overflow-y:auto;margin:0 -8px;padding-bottom:8px;scrollbar-width:thin;scrollbar-color:rgba(255,255,255,.2) transparent}',
         '#sc-wave .scw-row{display:grid;grid-template-columns:40px minmax(0,1fr) auto;align-items:center;gap:12px;height:48px;padding:4px 8px;border-radius:4px;text-align:left;min-width:0;cursor:pointer;box-sizing:border-box}',
         '#sc-wave .scw-row:hover{background:var(--scw-film)}',
         '.scw-row .scw-art{width:40px;height:40px;margin:0}',
@@ -3813,6 +3950,13 @@ export function installWave(config: WaveConfig, createPlayback: typeof installPl
         '.scw-select{height:32px;max-width:220px;padding:0 8px;border-radius:4px;border:0;background:var(--scw-surface);color:inherit;font:inherit;cursor:pointer}',
         '.scw-row-e{display:flex;align-items:center;gap:6px;min-width:0}',
         '.scw-badge{font-size:11px;line-height:16px;padding:0 6px;border-radius:8px;box-shadow:inset 0 0 0 1px var(--scw-film-strong);color:var(--scw-muted);white-space:nowrap}',
+        // Группа исполнителя в радаре: метка кнопкой, раскрытые записи блоком на всю ширину списка под строкой
+        '#sc-wave .scw-group{font-size:11px;line-height:16px;padding:0 6px;color:var(--scw-muted);white-space:nowrap}',
+        '#sc-wave .scw-group:hover,#sc-wave .scw-group[aria-expanded="true"]{color:inherit;box-shadow:inset 0 0 0 1px currentColor}',
+        '.scw-group-box{grid-column:1/-1;margin:0 0 8px 8px;padding:6px 0 2px 8px;border-left:2px solid var(--scw-film-strong)}',
+        '.scw-group-head{display:flex;align-items:center;gap:12px;padding:0 8px 4px}',
+        '.scw-group-head b{min-width:0;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}',
+        '.scw-group-rows{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));column-gap:16px}',
         // Выпуска ещё нет: большой значок в углу, сверху название, как у остальных карточек
         '.scw-art.scw-radar-art{display:grid;place-items:end;background:radial-gradient(ellipse at 70% 20%,#ff550016,transparent 65%),#191919;color:#f50}',
         '.scw-radar-art>svg{width:40%;height:40%;margin:0 9cqi 9cqi 0}',
@@ -4340,14 +4484,47 @@ export function installWave(config: WaveConfig, createPlayback: typeof installPl
         const byId = new Map(rows.map((row) => [row.id, row]));
         const list = el('div', 'scw-mix-rows');
         const now = active ? player?.getCurrentSound()?.id ?? 0 : 0;
+        const duration = (track: WaveTrack): HTMLElement => el('span', 'scw-row-d', formatTime(track.full_duration || track.duration || 0));
         for (const track of tracks) {
             const item = byId.get(track.id);
             const { row, end } = trackRow(track, now);
             if (item?.after) end.append(el('span', 'scw-badge', T.radarAfter));
             if (item?.kind === 'upload' && !uploads) end.append(el('span', 'scw-badge', T.radarPost));
             if (item?.heard) end.append(el('span', 'scw-badge', T.radarHeard));
-            end.append(el('span', 'scw-row-d', formatTime(track.full_duration || track.duration || 0)));
+            // Группа исполнителя: метка альбома или «+N» раскрывает остальные записи под строкой
+            const open = !!item && item.group.length > 1 && radarGroupOpen === item.id;
+            if (item && item.group.length > 1) {
+                const toggle = el('button', 'scw-badge scw-group', groupLabel(item));
+                toggle.type = 'button';
+                toggle.dataset.act = 'radar-group';
+                toggle.dataset.track = String(item.id);
+                toggle.setAttribute('aria-expanded', String(open));
+                end.append(toggle);
+            }
+            end.append(duration(track));
             list.append(row);
+            if (!open || !item) continue;
+            const group = el('div', 'scw-group-box');
+            group.setAttribute('role', 'group');
+            const album = radarAlbum(item);
+            const head = el('div', 'scw-group-head');
+            const all = textButton('radar-group-all', fillText(T.radarGroupAll, { n: String(item.group.length) }));
+            all.dataset.track = String(item.id);
+            head.append(el('b', '', album?.title || artistName(track)), all);
+            group.append(head);
+            const members = groupOrder(item).map((id) => radarTracks.get(id));
+            if (members.some((member) => !member)) group.append(hint(T.mixLoading));
+            else {
+                const inner = el('div', 'scw-group-rows');
+                for (const member of members) {
+                    if (!member || !isWaveEligible(member) || isExcluded(member)) continue;
+                    const line = trackRow(member, now);
+                    line.end.append(duration(member));
+                    inner.append(line.row);
+                }
+                group.append(inner);
+            }
+            list.append(group);
         }
         box.append(list);
         return box;
@@ -4643,8 +4820,9 @@ export function installWave(config: WaveConfig, createPlayback: typeof installPl
             }
             return;
         }
-        // Трек раскрытой подборки: уже в очереди этой подборки, значит переход к нему; иначе подборка с него
-        const row = target.closest<HTMLElement>('.scw-row[data-track]');
+        // Трек раскрытой подборки: уже в очереди этой подборки, значит переход к нему; иначе подборка с него.
+        // Кнопки внутри строки (метка группы радара) идут своими действиями ниже
+        const row = target.closest('[data-act]') ? null : target.closest<HTMLElement>('.scw-row[data-track]');
         if (row && openCard !== null) {
             const id = Number(row.dataset.track);
             const item = active && player && seed?.card === openCard ? player.getQueue().slice().find((entry) => ours.has(entry) && entry.sound?.id === id) : undefined;
@@ -4687,6 +4865,12 @@ export function installWave(config: WaveConfig, createPlayback: typeof installPl
             }
             case 'radar-found':
                 toggleFound();
+                return;
+            case 'radar-group':
+                toggleGroup(Number(control.dataset.track));
+                return;
+            case 'radar-group-all':
+                void queueGroup(Number(control.dataset.track));
                 return;
             case 'radar-rebuild':
                 void rebuildRadar();

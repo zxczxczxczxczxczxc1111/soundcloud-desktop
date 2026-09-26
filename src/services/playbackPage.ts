@@ -15,6 +15,8 @@ export interface PlaybackPageHost {
 export interface PlaybackPage {
     ready(): Promise<boolean>;
     add(track: WaveTrack, next: boolean): void;
+    /** Пакет одной пересборкой очереди; возвращает, сколько поставлено */
+    addMany(tracks: WaveTrack[], next: boolean): number;
     toggle(): void;
     save(): Promise<void>;
     tick(): void;
@@ -306,6 +308,28 @@ export function installPlaybackPage(host: PlaybackPageHost): PlaybackPage {
         else current.player.setCurrentItem(item, { pause: true });
         changed();
     }
+    // Пакет («Слушать все N» у группы радара): порядок сохраняется, играющий трек и уже стоящие впереди не дублируются
+    function addMany(tracks: WaveTrack[], next: boolean): number {
+        const current = queue();
+        if (!current) { fail(new Error('Очередь недоступна')); return 0; }
+        const ahead = new Set(current.items.slice(Math.max(0, current.index)).map((item) => item.sound?.id));
+        const items: SiteQueueItem[] = [];
+        for (const track of tracks) {
+            if (ahead.has(track.id)) continue;
+            const item = host.create(track);
+            if (!item) continue;
+            ahead.add(track.id);
+            item.explicit = true;
+            items.push(item);
+        }
+        if (!items.length) return 0;
+        const playing = current.player.getCurrentQueueItem();
+        const at = next ? Math.max(0, current.index + 1) : current.items.length;
+        current.items.splice(at, 0, ...items); current.player.getQueue().reset(current.items);
+        current.player.setCurrentItem(playing ?? items[0], { pause: true });
+        changed();
+        return items.length;
+    }
     function tick(): void {
         if (disposed) return;
         if (!restored && !restoring && Date.now() >= restoreRetryAt) void ready().catch((error: unknown) => console.warn('Сессия пока не восстановлена', error));
@@ -318,5 +342,5 @@ export function installPlaybackPage(host: PlaybackPageHost): PlaybackPage {
         }
     }
     function dispose(): void { disposed = true; revision++; dialog?.remove(); style.remove(); }
-    return { ready, add, toggle, save, tick, dispose };
+    return { ready, add, addMany, toggle, save, tick, dispose };
 }
