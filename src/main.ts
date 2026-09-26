@@ -1,7 +1,6 @@
 import { DiagnosticJournal, LOOP_RESOLUTION_MS, loopDelayStats, metricsDue } from './services/diagnosticJournal';
 import { monitorEventLoopDelay } from 'perf_hooks';
 import { installRendererRecovery } from './services/rendererRecovery';
-import { mediaControlsScript } from './services/mediaControls';
 import { protectContent, sitePagePath } from './contentPolicy';
 import { DISCORD_TEXT_KEYS, validateSettingChange, type SettingChange } from './settings/validateSetting';
 import { applyPreferenceMigrations } from './settings/preferenceMigrations';
@@ -33,13 +32,13 @@ import { OPEN_PROTOCOL, parseOpenLink } from './services/openLink';
 import { getSiteDictionary } from './services/siteDictionary';
 import { guardGpuStartup, isGpuCompatibilityMode, shouldRunGpuInProcess, type GpuRuntimeState } from './services/gpuProcessMode';
 import { detectNvidiaAdapter } from './services/gpuDetection';
-import { cleanSiteState, siteBroken } from './services/siteModules';
 import { TimeoutError, withTimeout } from './utils/withTimeout';
 import { tintIcon } from './services/devIcon';
 import { revealWindow } from './services/revealWindow';
 import { watchHiddenPage } from './services/hiddenPageWatchdog';
 import { registerWindowIpc } from './ipc/windowIpc';
 import { registerUpdateIpc } from './ipc/updateIpc';
+import { registerPageIpc, type PlaybackState } from './ipc/pageIpc';
 import {
     app,
     BrowserWindow,
@@ -71,8 +70,6 @@ import { UpdateScreen } from './update/updateScreen';
 import { autoUpdater } from 'electron-updater';
 import { ShortcutService } from './services/shortcutService';
 import { audioMonitorScript } from './services/audioMonitorService';
-import type { SiteDictionary, TrackInfo } from './types';
-import { validateTrackMeta, validateTrackUpdatePayload } from './validation';
 import path from 'path';
 import { randomUUID } from 'crypto';
 import { platform, release } from 'os';
@@ -290,10 +287,6 @@ let autoBackupTimer: ReturnType<typeof setTimeout> | undefined;
 // Шаг 100 мс: при 20 мс замер будил главный процесс 50 раз в секунду всю жизнь клиента
 const loopDelay = monitorEventLoopDelay({ resolution: LOOP_RESOLUTION_MS });
 let lastMetricsAt = 0;
-let trackUpdates = 0;
-let trackChanges = 0;
-let lastUpdateAt = Date.now();
-let lastProgressAt = Date.now();
 
 // extend app w custom property
 Object.defineProperty(app, 'isQuitting', {
@@ -468,7 +461,7 @@ function buildTrayMenu(): Menu {
 // Карточка Discord для предпросмотра в F1: трек и то, что из него собрала presenceService
 function sendPresencePreview(): void {
     if (!presenceService) return;
-    settingsManager?.getView()?.webContents.send('presence-preview-update', { track: lastTrackInfo, ...presenceService.preview() });
+    settingsManager?.getView()?.webContents.send('presence-preview-update', { track: playback.info, ...presenceService.preview() });
 }
 
 // Инкогнито прячет только карточку Discord: журнал и обучение волны работают как обычно
@@ -517,21 +510,25 @@ function createBrowserWindow(windowState: ReturnType<typeof windowStateManager>)
     return window;
 }
 
-// Track info polling
-let lastTrackInfo: TrackInfo = {
-    title: '',
-    author: '',
-    artwork: '',
-    elapsed: '',
-    duration: '',
-    isPlaying: false,
-    isLiked: false,
-    url: '',
-    artistUrl: '',
+// Последний трек со страницы, «музыка в этом запуске уже звучала» и счётчики журнала: пишет обработчик страницы
+const playback: PlaybackState = {
+    info: {
+        title: '',
+        author: '',
+        artwork: '',
+        elapsed: '',
+        duration: '',
+        isPlaying: false,
+        isLiked: false,
+        url: '',
+        artistUrl: '',
+    },
+    playedThisRun: false,
+    updates: 0,
+    changes: 0,
+    lastUpdateAt: Date.now(),
+    lastProgressAt: Date.now(),
 };
-// Музыка в этом запуске уже звучала: после падения или перезагрузки страницы сессия играет дальше,
-// а сразу после запуска клиента встаёт на паузу
-let playedThisRun = false;
 
 function isTrustedSoundCloudSender(event: Pick<IpcMainEvent, 'sender' | 'senderFrame'>): boolean {
     if (!contentView || event.sender.id !== contentView.webContents.id || event.senderFrame !== event.sender.mainFrame) return false;
@@ -623,7 +620,7 @@ function handleUpdateStatus(status: UpdateStatus): void {
     if (status.key !== 'downloading' && status.key !== 'progress' && status.key !== 'downloaded') return;
     if (!updateScreen) {
         // Позже первых секунд или под играющую музыку экран не открывается: версия поставится при выходе
-        if (updateScreenDismissed || Date.now() - launchedAt > UPDATE_SCREEN_WINDOW_MS || lastTrackInfo.isPlaying) return;
+        if (updateScreenDismissed || Date.now() - launchedAt > UPDATE_SCREEN_WINDOW_MS || playback.info.isPlaying) return;
         if (!mainWindow || mainWindow.isDestroyed()) return;
         updateScreen = new UpdateScreen(mainWindow, HEADER_HEIGHT);
     }
@@ -651,7 +648,7 @@ async function init() {
     }
     diagnosticTimer = setInterval(() => {
         const shown = !!mainWindow && !mainWindow.isDestroyed() && mainWindow.isVisible() && !mainWindow.isMinimized();
-        if (!metricsDue(Date.now(), lastMetricsAt, !lastTrackInfo.isPlaying && !shown)) return;
+        if (!metricsDue(Date.now(), lastMetricsAt, !playback.info.isPlaying && !shown)) return;
         lastMetricsAt = Date.now();
         const metrics = app.getAppMetrics();
         diagnostics.record('performance', {
@@ -660,9 +657,9 @@ async function init() {
             workingSetMiB: metrics.reduce((sum, item) => sum + item.memory.workingSetSize, 0) / 1024,
             privateMiB: metrics.reduce((sum, item) => sum + (item.memory.privateBytes ?? 0), 0) / 1024,
             ...loopDelayStats(loopDelay),
-            updates: trackUpdates, trackChanges, sinceUpdateMs: Date.now() - lastUpdateAt,
-            sinceProgressMs: Date.now() - lastProgressAt, playing: lastTrackInfo.isPlaying,
-            hasTrack: !!lastTrackInfo.title, windowVisible: !!mainWindow && !mainWindow.isDestroyed() && mainWindow.isVisible(),
+            updates: playback.updates, trackChanges: playback.changes, sinceUpdateMs: Date.now() - playback.lastUpdateAt,
+            sinceProgressMs: Date.now() - playback.lastProgressAt, playing: playback.info.isPlaying,
+            hasTrack: !!playback.info.title, windowVisible: !!mainWindow && !mainWindow.isDestroyed() && mainWindow.isVisible(),
             windowMinimized: !!mainWindow && !mainWindow.isDestroyed() && mainWindow.isMinimized(), settingsOpen: !!settingsManager?.getView(),
             adblock: store.get('adBlocker') === true, proxy: store.get('proxyEnabled') === true,
             discord: store.get('discordRichPresence') === true, githubBadge: store.get('displayGithubLink', true) === true,
@@ -791,7 +788,7 @@ async function init() {
         }
         event.preventDefault();
         softNavigation = { url, at: Date.now() };
-        diagnostics.record('page.soft-navigation', { playing: lastTrackInfo.isPlaying });
+        diagnostics.record('page.soft-navigation', { playing: playback.info.isPlaying });
         const fullLoad = (): void => {
             if (!contents.isDestroyed()) contents.loadURL(url).catch((error: unknown) => console.warn('Страница сайта не открыта:', error));
         };
@@ -851,28 +848,24 @@ async function init() {
     shortcutService.attachToWebContents(contentView.webContents);
     shortcutService.attachToWebContents(headerView.webContents);
     playbackController = new PlaybackController(contentView.webContents);
-    ipcMain.on('soundcloud:playback', (event, command: unknown) => {
-        if (!isTrustedSoundCloudSender(event)) return;
-        if (command !== 'play' && command !== 'pause' && command !== 'next' && command !== 'previous') return;
-        void playbackController.execute(command).catch(console.error);
-    });
-    // Словарь перевода сайта для preload. Запрос синхронный: ответ уходит при первом же присваивании
-    // returnValue, поэтому оно одно и стоит на любом пути, иначе страница встанет
-    ipcMain.on('soundcloud:site-translation', (event) => {
-        let dictionary: SiteDictionary | null = null;
-        try {
-            if (isTrustedSoundCloudSender(event) && store.get('siteLanguage', 'ru') === 'ru') dictionary = getSiteDictionary();
-        } catch (error) {
-            console.error('Словарь перевода сайта не загружен:', error);
-        }
-        event.returnValue = dictionary;
-    });
-    ipcMain.removeAllListeners('soundcloud:early-blocks');
-    ipcMain.on('soundcloud:early-blocks', (event) => {
-        let css = '';
-        try { if (isTrustedSoundCloudSender(event)) css = hiddenBlocksCSS(); }
-        catch (error) { console.warn('Правила скрытия не прочитаны', error); }
-        event.returnValue = css;
+    registerPageIpc(ipcMain, {
+        trustedSite: isTrustedSoundCloudSender,
+        store,
+        diagnostics,
+        playback,
+        devMode,
+        page: () => contentView.webContents,
+        controller: () => playbackController,
+        siteDictionary: getSiteDictionary,
+        hiddenBlocksCss: hiddenBlocksCSS,
+        settings: () => settingsManager,
+        history: () => historyManager,
+        presence: () => presenceService,
+        webhooks: () => webhookService,
+        previewPresence: sendPresencePreview,
+        updateThumbar: (playing, liked) => {
+            if (thumbarService) thumbarService.updateThumbarButtons(mainWindow, playing, liked);
+        },
     });
     waveJournal?.flush();
     waveJournal = new WaveJournal(path.join(app.getPath('userData'), 'wave'));
@@ -895,34 +888,6 @@ async function init() {
         const value = counts as Record<string, unknown>;
         const count = (input: unknown): number => (typeof input === 'number' && Number.isSafeInteger(input) && input >= 0 ? Math.min(input, 10000) : 0);
         diagnostics.record('wave.empty', { waveSeen: count(value.seen), waveArtistTracks: count(value.artistTracks), waveMoodTags: count(value.moodTags) });
-    });
-    // Сайт поменялся: чего страница не нашла. Событие в журнал и строка в F1; сообщение после находки снимает строку
-    ipcMain.removeAllListeners('soundcloud:site-state');
-    ipcMain.on('soundcloud:site-state', (event, value: unknown) => {
-        const state = isTrustedSoundCloudSender(event) ? cleanSiteState(value) : null;
-        if (!state) return;
-        const broken = siteBroken(state);
-        if (broken) diagnostics.record('site.modules-missing', { sitePlayer: state.player, siteApi: state.api, siteSound: state.sound, siteTranslation: state.translation });
-        settingsManager?.setSiteState(broken ? state : null);
-    });
-    // Место плеера сайта: окно истории не накрывает громкость и очередь
-    ipcMain.removeAllListeners('soundcloud:player-area');
-    ipcMain.on('soundcloud:player-area', (event, height: unknown, viewport: unknown) => {
-        if (isTrustedSoundCloudSender(event)) historyManager?.setPlayerArea(height, viewport);
-    });
-    ipcMain.removeAllListeners('soundcloud:open-history');
-    ipcMain.on('soundcloud:open-history', (event) => {
-        if (isTrustedSoundCloudSender(event)) historyManager?.show();
-    });
-    // Жанр, счётчики и волна текущего трека для карточки Discord
-    ipcMain.removeAllListeners('soundcloud:track-meta');
-    ipcMain.on('soundcloud:track-meta', (event, payload: unknown) => {
-        if (!isTrustedSoundCloudSender(event)) return;
-        const meta = validateTrackMeta(payload);
-        if (!meta) return;
-        historyManager?.setNowPlaying(meta.id);
-        presenceService.updateMeta(meta);
-        sendPresencePreview();
     });
     // Отметки волны («Не нравится», скрытые артисты, «Не сейчас», «Больше такого»): ставит страница, снимает и F1
     const exclusions = new WaveExclusions(path.join(app.getPath('userData'), 'wave'));
@@ -1457,13 +1422,12 @@ async function init() {
         return backupState();
     });
     setupTranslationHandlers();
-    setupAudioHandler();
 
     // Provide current track info to settings preview on demand
     ipcMain.handle('get-current-track', (event) => {
             if (!isTrustedLocalSender(event)) throw new Error('Недопустимый отправитель IPC');
 
-        return { track: lastTrackInfo, ...presenceService.preview() };
+        return { track: playback.info, ...presenceService.preview() };
     });
 
     // Configure session
@@ -1519,7 +1483,7 @@ async function init() {
         isQuitting: () => isQuitting,
         onCrash: () => {
             presenceService.clearActivity();
-            lastTrackInfo = { title: '', author: '', artwork: '', elapsed: '', duration: '', isPlaying: false, isLiked: false, url: '', artistUrl: '' };
+            playback.info = { title: '', author: '', artwork: '', elapsed: '', duration: '', isPlaying: false, isLiked: false, url: '', artistUrl: '' };
         },
         onRepeatedCrash: () => queueToastNotification(translationService.translate('playerCrashed')),
         online: () => net.isOnline(),
@@ -1579,11 +1543,11 @@ async function init() {
             // Плавность раньше волны: волна берёт у неё цвета обложек
             await contentView.webContents.executeJavaScript(pageMotionScript(store.get('reduceMotion', false) === true));
             await contentView.webContents.executeJavaScript(homePageScript());
-            await contentView.webContents.executeJavaScript(waveScript(playedThisRun));
+            await contentView.webContents.executeJavaScript(waveScript(playback.playedThisRun));
             await contentView.webContents.executeJavaScript(playerAreaScript());
 
             if (presenceService) {
-                await presenceService.updatePresence(lastTrackInfo);
+                await presenceService.updatePresence(playback.info);
             }
         } catch (error) {
             console.error('Failed to reinitialize after page load:', error);
@@ -1625,7 +1589,7 @@ async function init() {
             presenceService.updateDisplaySettings(displaySCSmallIcon, data.value);
         } else if (key === 'discordRichPresence') {
             // Статус включается и гаснет сразу, без кнопки применения
-            if (data.value === true) void presenceService.updatePresence(lastTrackInfo).catch(console.error);
+            if (data.value === true) void presenceService.updatePresence(playback.info).catch(console.error);
             else presenceService.clearActivity();
         } else if (key === 'autoUpdateEnabled') {
             updateService?.setEnabled(data.value);
@@ -1740,7 +1704,7 @@ async function init() {
                 pageReloadNeeded = false;
                 contentView.webContents.reload();
             }
-            if (store.get('discordRichPresence')) await presenceService.updatePresence(lastTrackInfo);
+            if (store.get('discordRichPresence')) await presenceService.updatePresence(playback.info);
             else presenceService.clearActivity();
         } catch (error) { queueToastNotification(String(error)); }
     });
@@ -2032,47 +1996,5 @@ function setupTranslationHandlers() {
             hideEventsNearYou: translationService.translate('hideEventsNearYou'),
             hideArtistUpsells: translationService.translate('hideArtistUpsells'),
         };
-    });
-}
-
-// setup audio event handler for track updates
-function setupAudioHandler() {
-    ipcMain.on('soundcloud:track-update', async (event, payload: unknown) => {
-        if (!isTrustedSoundCloudSender(event)) {
-            console.warn('Rejected track update from untrusted sender');
-            return;
-        }
-
-        const update = validateTrackUpdatePayload(payload);
-        if (!update) {
-            console.warn('Rejected invalid track update payload');
-            return;
-        }
-
-        const { data: result, reason } = update;
-        if (result.isPlaying) playedThisRun = true;
-        trackUpdates++;
-        lastUpdateAt = Date.now();
-        if (reason === 'track-change') trackChanges++;
-        if (result.elapsed !== lastTrackInfo.elapsed || reason === 'track-change') lastProgressAt = Date.now();
-
-        if (devMode) {
-            console.debug(`Track update received: ${reason}`);
-        }
-
-        if (result.title && (reason === 'track-change' || !lastTrackInfo.title)) {
-            void contentView.webContents.executeJavaScript(mediaControlsScript).catch(console.error);
-        }
-        lastTrackInfo = result;
-
-        void webhookService.updateTrackInfo(result, result.isPlaying, reason).catch(console.error);
-        void presenceService.updatePresence(result).catch(console.error);
-
-        // update rich presence preview in settings
-        sendPresencePreview();
-
-        if (thumbarService) {
-            thumbarService.updateThumbarButtons(mainWindow, result.isPlaying, result.isLiked);
-        }
     });
 }
