@@ -3,7 +3,7 @@ import {
     WAVE_TEXTS, acceptCandidate, artworkUrl, canonicalUrl, classifyLink, formatGenres, genreKeys, genreKeysFor, isWaveEligible,
     moodTags, normalizeTag, trackPath, parseGenres, pickSpaced, reasonText, shapeSamples, topGenres, trackMatchesGenre,
     applyTasteReasons, tagKeys, tasteMaps, tasteOrder, tasteReason, tasteScore, type TasteMaps, type WaveCandidate, type WaveFilter, type WaveTrack,
-    countText, forgottenPicks, localDay, pickFinds, tasteGroups, shelfGenres, artistNames, isNewArtist, spreadBy,
+    countText, forgottenPicks, localDay, pickFinds, tasteGroups, artistNames, isNewArtist, spreadBy, genreCanon, genreParts, genreMain,
 } from './wave';
 import { copyKeys, familyKey, versionKey } from './trackIdentity';
 
@@ -277,17 +277,52 @@ describe('подборки', () => {
         expect(tasteGroups([], 4, 1)).toEqual([]);
     });
 
-    it('жанры полки добираются до полного ряда: лишние самые лёгкие прячутся, один ряд показывается целиком', () => {
-        // Радар, находки, давно не слушал и четыре жанра: седьмая карточка одна во втором ряду не встаёт
-        expect(shelfGenres(3, 4, 6)).toBe(3);
-        expect(shelfGenres(3, 9, 6)).toBe(9);
-        expect(shelfGenres(3, 6, 6)).toBe(3);
-        expect(shelfGenres(3, 4, 4)).toBe(1);
-        expect(shelfGenres(4, 8, 4)).toBe(8);
-        // Всё в один ряд или добрать нечем: показываются все
-        expect(shelfGenres(2, 3, 6)).toBe(3);
-        expect(shelfGenres(7, 2, 6)).toBe(2);
-        expect(shelfGenres(0, 0, 6)).toBe(0);
+    it('написания жанра склеиваются, составной жанр сайта режется на части, но не по &', () => {
+        expect(genreCanon('hiphopandrap')).toBe('hiphop');
+        expect(genreCanon('rap')).toBe('hiphop');
+        expect(genreCanon('techno')).toBe('techno');
+        expect(genreParts('Hip Hop/Rap - Trap')).toEqual(['hiphop', 'trap']);
+        expect(genreParts('Hip-hop & Rap')).toEqual(['hiphop']);
+        expect(genreParts('Hip-hop/Rap')).toEqual(['hiphop']);
+        expect(genreParts('Drum & Bass')).toEqual(['drumandbass']);
+        expect(genreParts('R&B & Soul')).toEqual(['rnb']);
+        expect(genreParts('Phonk/Fonk')).toEqual(['phonk']);
+        expect(genreParts('')).toEqual([]);
+        expect(genreMain('hip hop/rap - trap')).toEqual({ key: 'trap', label: 'trap' });
+        expect(genreMain('Hip-hop & Rap')).toEqual({ key: 'hiphop', label: 'Hip-hop & Rap' });
+        expect(genreMain('Phonk/Fonk')).toEqual({ key: 'phonk', label: 'Phonk' });
+        expect(genreMain('  ')).toEqual({ key: '', label: '' });
+    });
+
+    it('большая группа отдаёт поджанр, который стоит у треков жанром; тег без жанра группу не делит', () => {
+        const items = [
+            ...Array.from({ length: 30 }, (_, i) => track(500 + i, { user: { id: 500 + i, username: 'Rapper ' + i }, genre: 'Hip-hop & Rap' })),
+            ...Array.from({ length: 12 }, (_, i) => track(600 + i, { user: { id: 600 + i, username: 'Trapper ' + i }, genre: 'Hip Hop/Rap - Trap' })),
+            ...Array.from({ length: 9 }, (_, i) => track(700 + i, { user: { id: 700 + i, username: 'Sadboy ' + i }, genre: 'Hip-hop & Rap', tag_list: 'sad' })),
+        ].map((entry) => ({ track: entry, weight: 1 }));
+        const groups = tasteGroups(items, 8, 8);
+        const trap = groups.find((group) => group.labels[0] === 'Trap');
+        const rest = groups.find((group) => group.keys.includes('hiphop'));
+        expect(trap?.tracks).toHaveLength(12);
+        expect(rest?.tracks).toHaveLength(39);
+        expect(rest?.keys).not.toContain('trap');
+        expect(groups.some((group) => group.labels[0] === 'sad')).toBe(false);
+    });
+
+    it('поджанр, который уже есть отдельной группой, вливается в неё; подпись берётся из поля жанра, а не из тегов', () => {
+        const user = (id: number) => ({ user: { id, username: 'User ' + id } });
+        const items = [
+            ...Array.from({ length: 51 }, (_, i) => track(1000 + i, { ...user(1000 + i), genre: 'Alternative' })),
+            ...Array.from({ length: 45 }, (_, i) => track(2000 + i, { ...user(2000 + i), genre: 'Alternative Rock', tag_list: i < 9 ? 'grunge alternative' : 'grunge' })),
+            ...Array.from({ length: 20 }, (_, i) => track(3000 + i, { ...user(3000 + i), genre: 'Hip-hop & Rap', tag_list: 'rap' })),
+            ...Array.from({ length: 10 }, (_, i) => track(3100 + i, { ...user(3100 + i), tag_list: 'rap' })),
+        ].map((entry) => ({ track: entry, weight: 1 }));
+        const groups = tasteGroups(items, 8, 8);
+        const alternative = groups.filter((group) => group.keys[0] === 'alternative');
+        expect(alternative).toHaveLength(1);
+        expect(alternative[0].tracks).toHaveLength(60);
+        expect(groups.find((group) => group.keys[0] === 'alternativerock')?.tracks).toHaveLength(36);
+        expect(groups.find((group) => group.keys[0] === 'hiphop')?.labels[0]).toBe('Hip-hop & Rap');
     });
 
     it('сборный канал не раздаёт свой жанр чужим песням без тегов, своя песня артиста наследует', () => {

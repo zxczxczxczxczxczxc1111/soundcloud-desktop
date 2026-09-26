@@ -899,7 +899,7 @@ const batchOf = (list: WaveTrack[]) => (query: Record<string, unknown>): WaveTra
 
 it('ошибка подборок видна, повтор восстанавливает полку без перезагрузки страницы', async () => {
     fakeSite(relatedTracks);
-    const snapshot = { day: localDay(Date.now()), cards: [{ kind: 'group', title: 'Techno', sub: '', ids: [51], seeds: [], keys: ['techno'], art: [] }] };
+    const snapshot = { day: localDay(Date.now()), v: 2, cards: [{ kind: 'group', title: 'Techno', sub: '', ids: [51], seeds: [], keys: ['techno'], art: [] }] };
     const load = vi.fn().mockRejectedValueOnce(new Error('Offline')).mockResolvedValue({ snapshot, recent: [] });
     Object.assign(window, { soundcloudAPI: { waveShelf: { load, save: vi.fn(async () => true) } } });
     window.eval(waveScript()); await vi.advanceTimersByTimeAsync(100);
@@ -909,12 +909,12 @@ it('ошибка подборок видна, повтор восстанавл�
     expect(document.querySelector('.scw-card .scw-t1')?.textContent).toBe('Techno');
 });
 
-it('полка добирает жанры до полного ряда отдельно для 6 и 4 колонок: лишние самые лёгкие помечены и спрятаны', async () => {
+it('полка показывает все жанры одной сеткой, неполный ряд не прячется', async () => {
     fakeSite(relatedTracks);
     const art = ['https://i1.sndcdn.com/artworks-0-t300x300.jpg'];
     const group = (i: number) => ({ kind: 'group', title: 'Genre ' + i, sub: '', ids: [5200 + i], seeds: [], keys: ['g' + i], art });
     const snapshot = {
-        day: localDay(Date.now()),
+        day: localDay(Date.now()), v: 2,
         cards: [
             { kind: 'daily', title: '', sub: '', ids: [5101], seeds: [], keys: [], art },
             { kind: 'forgotten', title: '', sub: '', ids: [5102], seeds: [], keys: [], art },
@@ -927,12 +927,10 @@ it('полка добирает жанры до полного ряда отде
     await vi.advanceTimersByTimeAsync(100);
     const cards = [...document.querySelectorAll<HTMLElement>('#sc-wave .scw-shelf > .scw-card[data-card]')];
     expect(cards).toHaveLength(7);
-    // 6 колонок: две постоянные и четыре жанра; 4 колонки: две и два
-    expect(cards.map((card) => card.classList.contains('scw-over6'))).toEqual([false, false, false, false, false, false, true]);
-    expect(cards.map((card) => card.classList.contains('scw-over4'))).toEqual([false, false, false, false, true, true, true]);
-    const css = document.getElementById('sc-wave-style')?.textContent ?? '';
-    expect(css).toContain('@media(width>1200px){#sc-wave .scw-shelf>.scw-over6{display:none}}');
-    expect(css).toContain('@media(max-width:1200px){#sc-wave .scw-shelf>.scw-over4{display:none}}');
+    expect(cards.map((card) => card.querySelector('.scw-t1')?.textContent).slice(2)).toEqual(['Genre 0', 'Genre 1', 'Genre 2', 'Genre 3', 'Genre 4']);
+    expect(document.querySelector('[class*="scw-over"]')).toBeNull();
+    expect(document.getElementById('sc-wave-style')?.textContent ?? '').not.toContain('scw-over');
+    expect(shelf.save).not.toHaveBeenCalled();
 });
 
 it('полка из снимка дня: находки играют первыми по порядку, карточка отмечена, режим скрыт', async () => {
@@ -940,7 +938,7 @@ it('полка из снимка дня: находки играют первы�
     const site = fakeSite(relatedTracks, (name, _path, query) => (name === 'trackBatch' ? batchOf(finds)(query) : undefined));
     const art = [0, 1, 2, 3].map((i) => 'https://i1.sndcdn.com/artworks-' + i + '-t300x300.jpg');
     const snapshot = {
-        day: localDay(Date.now()),
+        day: localDay(Date.now()), v: 2,
         cards: [
             { kind: 'daily', title: '', sub: '', ids: finds.map((track) => track.id), seeds: [1], keys: [], art },
             { kind: 'group', title: 'Techno and Industrial', sub: 'A, B', ids: [5101, 5102], seeds: [], keys: ['techno'], art: art.slice(0, 1) },
@@ -957,7 +955,8 @@ it('полка из снимка дня: находки играют первы�
     expect(cards).toHaveLength(2);
     expect(cards[0].querySelector('.scw-t1')?.textContent).toBe('Daily finds');
     expect(cards[0].querySelector('.scw-t2')?.textContent).toBe('12 tracks');
-    expect(cards[0].querySelector('.scw-art')?.classList.contains('scw-face-mix')).toBe(true);
+    expect(cards[0].querySelector('.scw-art')?.classList.contains('scw-tone-personal')).toBe(true);
+    expect(cards[1].querySelector('.scw-art')?.classList.contains('scw-tone-genre')).toBe(true);
     expect(cards[1].querySelector('.scw-face b')?.textContent).toBe('Techno and Industrial');
     // На лице только название, без значков
     expect(section.querySelectorAll('.scw-face svg')).toHaveLength(0);
@@ -992,7 +991,7 @@ it('раскрытая подборка: треки списком, трек и�
         id: 5001 + i, kind: 'track', user_id: 600 + i, duration: 200000, title: 'Find ' + i, user: { id: 600 + i, username: 'Artist ' + i },
     }));
     const site = fakeSite(relatedTracks, (name, _path, query) => (name === 'trackBatch' ? batchOf(finds)(query) : undefined));
-    const snapshot = { day: localDay(Date.now()), cards: [{ kind: 'daily', title: '', sub: '', ids: finds.map((track) => track.id), seeds: [1], keys: [], art: [] }] };
+    const snapshot = { day: localDay(Date.now()), v: 2, cards: [{ kind: 'daily', title: '', sub: '', ids: finds.map((track) => track.id), seeds: [1], keys: [], art: [] }] };
     Object.assign(window, { soundcloudAPI: { waveShelf: { load: vi.fn(async () => ({ snapshot, recent: [] })), save: vi.fn(async () => true) } } });
     window.eval(waveScript());
     await vi.advanceTimersByTimeAsync(100);
@@ -1024,7 +1023,7 @@ it('раскрытая подборка: треки списком, трек и�
     expect(document.activeElement?.getAttribute('data-act')).toBe('shelf-open');
 });
 
-it('без снимка собирает полку из лайков: находки, давно не слушал, два вкуса, и сохраняет её', async () => {
+it('снимок дня старого формата пересобирается из лайков: находки, давно не слушал, два вкуса, и сохраняется', async () => {
     const liked = Array.from({ length: 30 }, (_, i): WaveTrack => ({
         id: 2001 + i, kind: 'track', duration: 200000, title: 'Like ' + i,
         ...(i < 15 ? { user_id: 500 + (i % 5), genre: 'Techno', tag_list: 'industrial' } : { user_id: 510 + (i % 5), genre: 'Lo-Fi', tag_list: 'chill' }),
@@ -1035,14 +1034,16 @@ it('без снимка собирает полку из лайков: нахо�
         if (name === 'trackBatch') return batchOf(liked)(query);
         return undefined;
     });
-    const shelf = { load: vi.fn(async () => ({ snapshot: null, recent: [2001] })), save: vi.fn(async () => true) };
+    const stale = { day: localDay(Date.now()), v: 1, cards: [{ kind: 'group', title: 'Old', sub: '', ids: [51], seeds: [], keys: ['old'], art: [] }] };
+    const shelf = { load: vi.fn(async () => ({ snapshot: stale, recent: [2001] })), save: vi.fn(async () => true) };
     Object.assign(window, { soundcloudAPI: { waveShelf: shelf } });
     window.eval(waveScript());
     await vi.advanceTimersByTimeAsync(100);
     expect(shelf.save).toHaveBeenCalledOnce();
-    const [userId, saved] = shelf.save.mock.calls[0] as unknown as [number, { day: string; cards: Array<{ kind: string; title: string; ids: number[] }> }];
+    const [userId, saved] = shelf.save.mock.calls[0] as unknown as [number, { day: string; v: number; cards: Array<{ kind: string; title: string; ids: number[] }> }];
     expect(userId).toBe(77);
     expect(saved.day).toBe(localDay(Date.now()));
+    expect(saved.v).toBe(2);
     expect(saved.cards.map((card) => card.kind)).toEqual(['daily', 'forgotten', 'group', 'group']);
     expect(saved.cards[0].ids).toHaveLength(30);
     expect(saved.cards[0].ids.every((id) => id > 2000000)).toBe(true);
@@ -1455,7 +1456,7 @@ it('P7: радар первым на полке, список с «Already heard
     // Дата выпуска на обложке, подпись начинается с числа треков; лицо обложки повторяет название и скрыто от чтения
     expect(cards[0].querySelector('.scw-t2')?.textContent).toBe('3 tracks · incomplete');
     expect(cards[0].querySelector('.scw-stamp')?.textContent).toBe(radarStamp(radarCutoff));
-    expect(cards[0].querySelector('.scw-art')?.classList.contains('scw-face-radar')).toBe(true);
+    expect(cards[0].querySelector('.scw-art')?.classList.contains('scw-tone-release')).toBe(true);
     expect(cards[0].querySelector('.scw-face')?.getAttribute('aria-hidden')).toBe('true');
     expect(cards[0].querySelector('.scw-face b')?.textContent).toBe('Release Radar');
     expect(cards[1].querySelector('.scw-t2')?.textContent).toBe('1 track');

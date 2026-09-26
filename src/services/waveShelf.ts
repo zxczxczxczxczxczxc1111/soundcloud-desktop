@@ -20,8 +20,12 @@ export interface ShelfCard {
 /** Подборки на местные сутки: собираются один раз, до полуночи одни и те же */
 export interface ShelfSnapshot {
     day: string;
+    /** Формат сборки: снимок другого формата страница собирает заново сразу, не дожидаясь полуночи */
+    v: number;
     cards: ShelfCard[];
 }
+/** Находки дня, «Давно не слушал» и до восьми жанров (решение владельца 26.09.2026) */
+export const SHELF_CARDS = 10;
 
 const KINDS = new Set<ShelfCard['kind']>(['daily', 'forgotten', 'group']);
 const isId = (value: unknown): value is number => typeof value === 'number' && Number.isSafeInteger(value) && value > 0;
@@ -59,10 +63,12 @@ function cleanCard(value: unknown): ShelfCard | null {
 /** Снимок со страницы или из файла; всё, что не проходит проверку, отбрасывается */
 export function cleanShelf(value: unknown): ShelfSnapshot | null {
     if (!value || typeof value !== 'object') return null;
-    const source = value as { day?: unknown; cards?: unknown };
+    const source = value as { day?: unknown; v?: unknown; cards?: unknown };
     if (typeof source.day !== 'string' || !/^\d{4}-\d{2}-\d{2}$/.test(source.day)) return null;
-    const cards = Array.isArray(source.cards) ? source.cards.map(cleanCard).filter((card): card is ShelfCard => !!card).slice(0, 6) : [];
-    return { day: source.day, cards };
+    const cards = Array.isArray(source.cards) ? source.cards.map(cleanCard).filter((card): card is ShelfCard => !!card).slice(0, SHELF_CARDS) : [];
+    // Снимок до номера формата это формат 1
+    const v = typeof source.v === 'number' && Number.isSafeInteger(source.v) && source.v > 0 ? source.v : 1;
+    return { day: source.day, v, cards };
 }
 
 // Подборки дня «Моей волны»: файл на пользователя SoundCloud рядом с отметками

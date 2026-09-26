@@ -22,10 +22,18 @@ const card = (fields: Record<string, unknown> = {}): Record<string, unknown> => 
 
 it('хранит подборки дня и переживает перезапуск', () => {
     const directory = dir();
-    expect(new WaveShelf(directory).save(42, { day: '2026-09-24', cards: [card({ kind: 'daily', title: '' })] })).toBe(true);
+    expect(new WaveShelf(directory).save(42, { day: '2026-09-24', v: 2, cards: [card({ kind: 'daily', title: '' })] })).toBe(true);
     expect(existsSync(join(directory, 'shelf-42.json.tmp'))).toBe(false);
-    expect(new WaveShelf(directory).load(42)).toEqual({ day: '2026-09-24', cards: [{ ...card({ kind: 'daily', title: '' }) }] });
+    expect(new WaveShelf(directory).load(42)).toEqual({ day: '2026-09-24', v: 2, cards: [{ ...card({ kind: 'daily', title: '' }) }] });
     expect(new WaveShelf(directory).load(43)).toBeNull();
+});
+
+it('держит находки, «Давно не слушал» и восемь жанров; снимок без номера формата это формат 1', () => {
+    const cards = [card({ kind: 'daily', title: '' }), card({ kind: 'forgotten', title: '' }), ...Array.from({ length: 9 }, (_, i) => card({ title: 'Жанр ' + i }))];
+    const cleaned = cleanShelf({ day: '2026-09-26', cards });
+    expect(cleaned?.v).toBe(1);
+    expect(cleaned?.cards).toHaveLength(10);
+    expect(cleaned?.cards[9].title).toBe('Жанр 7');
 });
 
 it('отбрасывает чужое и неверное со страницы', () => {

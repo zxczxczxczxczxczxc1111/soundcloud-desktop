@@ -1164,13 +1164,21 @@ async function init() {
     ipcMain.handle('soundcloud:wave-shelf:load', async (event, userId: unknown) => {
         if (!isTrustedSoundCloudSender(event)) return null;
         let recent: number[] = [];
+        // Прослушанное от 30 секунд за 90 дней с жанром и тегами: из него тоже строятся жанры полки
+        const heard = new Map<number, { id: number; artist: number; title: string; artistName: string; genre: string; tags: string; path: string; artwork: string; dur: number }>();
         try {
-            if (typeof userId === 'number' && Number.isSafeInteger(userId) && userId > 0)
-                recent = [...new Set((await library.request('tastePlays', userId, Date.now() - 30 * 86400000)).map((play) => play.id))].slice(-5000);
+            if (typeof userId === 'number' && Number.isSafeInteger(userId) && userId > 0) {
+                const since = Date.now() - 30 * 86400000;
+                const plays = await library.request('tastePlays', userId, Date.now() - 90 * 86400000);
+                recent = [...new Set(plays.filter((play) => play.at >= since).map((play) => play.id))].slice(-5000);
+                for (const play of plays)
+                    if (play.heard >= 30000 && !heard.has(play.id))
+                        heard.set(play.id, { id: play.id, artist: play.artist, title: play.title, artistName: play.artistName, genre: play.genre, tags: play.tags, path: play.path, artwork: play.artwork, dur: play.dur });
+            }
         } catch (error) {
             console.warn('Недавние прослушивания для подборок не прочитаны:', error);
         }
-        return { snapshot: shelf.load(userId), recent };
+        return { snapshot: shelf.load(userId), recent, heard: [...heard.values()].slice(-3000) };
     });
     ipcMain.handle('soundcloud:wave-shelf:save', (event, userId: unknown, snapshot: unknown) =>
         isTrustedSoundCloudSender(event) ? shelf.save(userId, snapshot) : false,
