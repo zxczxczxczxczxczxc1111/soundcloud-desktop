@@ -68,6 +68,7 @@ export const WAVE_TEXTS: Record<'ru' | 'en', WaveTexts> = {
         libraryPlay: 'Слушать мою музыку', libraryPick: 'Выбери лайки или плейлисты', libraryLoading: 'Загружаю плейлисты…',
         libraryFailed: 'Плейлисты не загрузились', libraryBuilding: 'Собираю треки…', libraryEmpty: 'В выбранном нечего играть',
         libraryList: 'Список треков', libraryMore: 'Показать ещё', libraryModes: 'Порядок',
+        librarySources: 'Источники', libraryPlaying: 'Играет', libraryPaused: 'На паузе', libraryPlaylists: 'плейлист|плейлиста|плейлистов', libraryHere: 'Сейчас играет отсюда',
         whyLibrary: 'Из плейлиста {name}', whyLibraryLikes: 'Из твоих лайков', seedLibrary: 'Моя музыка: {seed}',
     },
     en: {
@@ -135,6 +136,7 @@ export const WAVE_TEXTS: Record<'ru' | 'en', WaveTexts> = {
         libraryPlay: 'Play my music', libraryPick: 'Pick likes or playlists', libraryLoading: 'Loading playlists…',
         libraryFailed: 'Couldn’t load playlists', libraryBuilding: 'Collecting tracks…', libraryEmpty: 'Nothing to play in your picks',
         libraryList: 'Track list', libraryMore: 'Show more', libraryModes: 'Order',
+        librarySources: 'Sources', libraryPlaying: 'Playing', libraryPaused: 'Paused', libraryPlaylists: 'playlist|playlists|playlists', libraryHere: 'Playing from here',
         whyLibrary: 'From playlist {name}', whyLibraryLikes: 'From your likes', seedLibrary: 'My music: {seed}',
     },
 };

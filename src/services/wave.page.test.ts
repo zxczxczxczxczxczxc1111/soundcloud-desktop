@@ -2313,7 +2313,11 @@ function sessionStore() {
     };
 }
 const queuedIds = (site: ReturnType<typeof fakeSite>): number[] => site.player.getQueue().slice().map((item) => item.sound.id);
-const libChip = (key: string): HTMLButtonElement => document.querySelector<HTMLButtonElement>('#sc-wave [data-act="lib-source"][data-source="' + key + '"]')!;
+// Источники за кнопкой «Источники»: закрытый выбор она открывает
+const libChip = (key: string): HTMLButtonElement => {
+    if (!document.querySelector('#sc-wave [data-act="lib-source"]')) document.querySelector<HTMLButtonElement>('#sc-wave [data-act="lib-sources"]')!.click();
+    return document.querySelector<HTMLButtonElement>('#sc-wave [data-act="lib-source"][data-source="' + key + '"]')!;
+};
 const libMode = (mode: string): HTMLButtonElement => document.querySelector<HTMLButtonElement>('#sc-wave [data-act="lib-mode"][data-lmode="' + mode + '"]')!;
 
 it('Э7: раздел над подборками, выбор источников и режим в настройках, «По порядку» играет лайки от новых, плейлист по порядку и миксы', async () => {
@@ -2322,9 +2326,16 @@ it('Э7: раздел над подборками, выбор источнико
     Object.assign(window, { soundcloudAPI: { waveLibrary: bridge } });
     window.eval(waveScript());
     await vi.advanceTimersByTimeAsync(2000);
-    const box = document.querySelector('#sc-wave .scw-lib')!;
-    expect(box.previousElementSibling?.textContent).toBe('My music');
-    expect([...box.querySelectorAll<HTMLElement>('[data-act="lib-source"]')].map((node) => [node.dataset.source, node.textContent, node.getAttribute('aria-pressed')])).toEqual([
+    const box = (): Element => document.querySelector('#sc-wave .scw-lib')!;
+    expect(box().previousElementSibling?.textContent).toBe('My music');
+    // Блок одной строкой: источники раскрываются кнопкой, без галочек, выбранное отмечено нажатым
+    expect(box().querySelector('[data-act="lib-source"]')).toBeNull();
+    const sources = box().querySelector<HTMLButtonElement>('[data-act="lib-sources"]')!;
+    expect(sources.getAttribute('aria-expanded')).toBe('false');
+    sources.click();
+    expect(box().querySelector('[data-act="lib-sources"]')?.getAttribute('aria-expanded')).toBe('true');
+    expect(box().querySelector('.scw-lib-pick input')).toBeNull();
+    expect([...box().querySelectorAll<HTMLElement>('[data-act="lib-source"]')].map((node) => [node.dataset.source, node.textContent, node.getAttribute('aria-pressed')])).toEqual([
         ['likes', 'Likes12', 'true'], ['playlist:8', 'Mine3', 'false'], ['playlist:9', 'Saved2', 'false'],
     ]);
     expect(libMode('shuffle').getAttribute('aria-checked')).toBe('true');
@@ -2346,7 +2357,7 @@ it('Э7: раздел над подборками, выбор источнико
     expect(ids.slice(10, 14)).toEqual([311, 312, 351, 352]);
     expect(ids.slice(14).every((id) => id > 1000)).toBe(true);
     expect(new Set(ids).size).toBe(ids.length);
-    expect(document.querySelector('#sc-wave .scw-hint')?.textContent).toBe('My music: Likes, Mine');
+    expect(document.querySelector('#sc-wave .scw-hint')?.textContent).toBe('My music: Likes and Mine');
     site.setItems(site.player.getQueue().slice(), 12);
     await vi.advanceTimersByTimeAsync(1100);
     expect(document.querySelector('#sc-wave .scw-why')?.textContent).toBe('From playlist Mine');
@@ -2532,33 +2543,91 @@ it('Э8: сыгранное волной раньше не выпадает из
     expect(queuedIds(site).slice(0, 5)).toEqual([351, 352, 301, 302, 303]);
 });
 
-// Случай владельца 26.09.2026: играли лайки, выбор сменили на альбом, а кнопка снимала с паузы прежний пул
-it('«Моя музыка»: после смены выбора кнопка и строка списка включают выбранное, а не продолжают прежний пул', async () => {
+// Случай владельца 26.09.2026: играли лайки, выбор сменили на альбом, а играющее не менялось без нового запуска.
+// Теперь выбор меняет играющее на ходу: трек доигрывает, поставленное вручную остаётся, впереди новый выбор
+it('«Моя музыка»: смена выбора во время игры меняет только то, что впереди; играющий и поставленный вручную трек остаются', async () => {
+    const site = fakeSite(relatedTracks, libraryExtra());
+    const store = sessionStore();
+    Object.assign(window, { soundcloudAPI: { library: store, waveLibrary: libraryBridge({ mode: 'order', pick: { 77: ['likes'] } }) } });
+    window.eval(waveScript());
+    await vi.advanceTimersByTimeAsync(2000);
+    const play = (): HTMLButtonElement => document.querySelector<HTMLButtonElement>('#sc-wave [data-act="lib-play"]')!;
+    const title = (): string => document.querySelector('#sc-wave .scw-lib .scw-mix-title b')?.textContent ?? '';
+    const here = (): string[] => [...document.querySelectorAll<HTMLElement>('#sc-wave .scw-lib-here')].map((node) => node.closest<HTMLElement>('[data-source]')?.dataset.source ?? '');
+    play().click();
+    await vi.advanceTimersByTimeAsync(2000);
+    expect(queuedIds(site).slice(0, 3)).toEqual([301, 302, 303]);
+    // Играет 302, следующим вручную поставлен чужой трек
+    const queue = site.player.getQueue().slice();
+    site.setItems([...queue.slice(0, 2), { sound: { id: 999 }, explicit: true }, ...queue.slice(2)], 1);
+    await vi.advanceTimersByTimeAsync(1100);
+    libChip('playlist:8').click();
+    expect(here()).toEqual(['likes']);
+    // Пересборка не сразу: несколько щелчков подряд дают одну
+    expect(queuedIds(site).slice(0, 4)).toEqual([301, 302, 999, 303]);
+    await vi.advanceTimersByTimeAsync(2000);
+    expect(queuedIds(site).slice(0, 13)).toEqual([301, 302, 999, 303, 304, 305, 306, 307, 308, 309, 310, 311, 312]);
+    expect(site.player.getCurrentSound()?.id).toBe(302);
+    expect(site.player.isPlaying()).toBe(true);
+    expect(title()).toBe('Likes and Mine');
+    expect(play().getAttribute('aria-label')).toBe('Pause');
+    // Сняли источник играющего трека: 302 доигрывает, впереди только Mine без уже сыгранного 302
+    libChip('likes').click();
+    await vi.advanceTimersByTimeAsync(2000);
+    expect(queuedIds(site).slice(0, 5)).toEqual([301, 302, 999, 351, 352]);
+    expect(title()).toBe('Mine');
+    expect(here()).toEqual(['playlist:8']);
+    expect(document.querySelector('#sc-wave .scw-hint')?.textContent).toBe('My music: Mine');
+    // Сняли всё: очередь не трогается, пока не выбран новый источник
+    libChip('playlist:8').click();
+    await vi.advanceTimersByTimeAsync(2000);
+    expect(queuedIds(site).slice(0, 5)).toEqual([301, 302, 999, 351, 352]);
+    expect(title()).toBe('Mine');
+    libChip('playlist:9').click();
+    await vi.advanceTimersByTimeAsync(2000);
+    expect(queuedIds(site).slice(0, 5)).toEqual([301, 302, 999, 361, 362]);
+    expect(site.player.getCurrentSound()?.id).toBe(302);
+    await (window as WaveWindow).__scSaveSession?.();
+    const saved = store.saveSession.mock.calls[store.saveSession.mock.calls.length - 1][1] as PlaybackSnapshot;
+    expect(saved.seed).toMatchObject({ kind: 'library', title: 'Saved', library: { pick: ['playlist:9'], mode: 'order' } });
+});
+
+it('«Моя музыка»: режим после смены выбора перемешивает уже новый выбор', async () => {
     const site = fakeSite(relatedTracks, libraryExtra());
     Object.assign(window, { soundcloudAPI: { waveLibrary: libraryBridge({ mode: 'order', pick: { 77: ['likes'] } }) } });
     window.eval(waveScript());
     await vi.advanceTimersByTimeAsync(2000);
-    const play = (): HTMLButtonElement => document.querySelector<HTMLButtonElement>('#sc-wave [data-act="lib-play"]')!;
-    play().click();
+    document.querySelector<HTMLButtonElement>('#sc-wave [data-act="lib-play"]')!.click();
     await vi.advanceTimersByTimeAsync(2000);
-    expect(queuedIds(site).slice(0, 3)).toEqual([301, 302, 303]);
-    // Вместо лайков плейлист Mine, в нём тоже есть 302: строка 302 включает Mine, а не прыгает в очередь лайков
-    libChip('likes').click();
-    libChip('playlist:8').click();
-    document.querySelector<HTMLButtonElement>('#sc-wave [data-act="lib-list"]')!.click();
-    await vi.advanceTimersByTimeAsync(2000);
-    expect([...document.querySelectorAll<HTMLElement>('#sc-wave .scw-lib .scw-row')].map((row) => Number(row.dataset.track))).toEqual([302, 351, 352]);
-    document.querySelector<HTMLElement>('#sc-wave .scw-lib .scw-row[data-track="302"]')!.click();
-    await vi.advanceTimersByTimeAsync(2000);
-    expect(queuedIds(site).slice(0, 3)).toEqual([302, 351, 352]);
-    expect(document.querySelector('#sc-wave .scw-hint')?.textContent).toBe('My music: Mine');
-    // Играет Mine, выбран Saved: кнопка предлагает включить выбранное и включает его
-    libChip('playlist:8').click();
     libChip('playlist:9').click();
+    libChip('likes').click();
     await vi.advanceTimersByTimeAsync(2000);
-    expect(play().getAttribute('aria-label')).toBe('Play my music');
-    play().click();
+    expect(queuedIds(site).slice(0, 3)).toEqual([301, 361, 362]);
+    libMode('shuffle').click();
     await vi.advanceTimersByTimeAsync(2000);
-    expect(queuedIds(site).slice(0, 2)).toEqual([361, 362]);
-    expect(document.querySelector('#sc-wave .scw-hint')?.textContent).toBe('My music: Saved');
+    const ids = queuedIds(site);
+    expect(ids[0]).toBe(301);
+    expect([...ids.slice(1, 3)].sort((a, b) => a - b)).toEqual([361, 362]);
+});
+
+it('«Моя музыка»: смена режима сразу после перезапуска пересобирает очередь, даже если настройка разошлась с сессией', async () => {
+    const site = fakeSite(relatedTracks, libraryExtra());
+    const store = sessionStore();
+    // В сессии «По порядку», в настройке «Перемешать»: раньше плана для такой сессии не было, и смена режима молчала
+    store.loadSession.mockResolvedValue({
+        version: 1, at: Date.now(), index: 0, position: 1000, paused: true, active: true, mode: 'similar', genre: null, fallback: true,
+        items: [libTrack(301), libTrack(302), libTrack(303)].map((track) => ({ track, wave: true, explicit: false, reason: { kind: 'library', name: '' } })),
+        seed: { kind: 'library', title: 'Likes', tracks: [], own: [], order: 'fixed', mode: 'similar', library: { pick: ['likes'], mode: 'order', left: [304, 305, 306] } },
+    });
+    Object.assign(window, { soundcloudAPI: { library: store, waveLibrary: libraryBridge({ mode: 'shuffle', pick: { 77: ['likes'] } }) } });
+    window.eval(waveScript());
+    await vi.advanceTimersByTimeAsync(3000);
+    expect(queuedIds(site).slice(0, 3)).toEqual([301, 302, 303]);
+    // Сессия встала на паузе: статус не говорит «Играет»
+    expect(document.querySelector('#sc-wave .scw-lib .scw-mix-title span')?.textContent).toMatch(/^Paused/);
+    libMode('order').click();
+    await vi.advanceTimersByTimeAsync(2000);
+    // Играет 301: впереди весь несыгранный пул по порядку, а не прежний хвост сессии
+    expect(queuedIds(site).slice(0, 11)).toEqual([301, 302, 303, 304, 305, 306, 307, 308, 309, 310, 311]);
+    expect(site.player.isPlaying()).toBe(false);
 });

@@ -2416,18 +2416,21 @@ export function installWave(config: WaveConfig, createPlayback: typeof installPl
         '.scw-mix-title span{color:var(--scw-muted)}',
         '.scw-mix .scw-hint{padding:8px 0 12px}',
         '.scw-mix-rows,.scw-lib-rows{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));grid-auto-flow:row dense;column-gap:16px;max-height:432px;overflow-y:auto;margin:0 -8px;padding-bottom:8px;scrollbar-width:thin;scrollbar-color:rgba(255,255,255,.2) transparent}',
-        // «Моя музыка»: плашка того же вида, что раскрытая подборка; источники чипами, режимы переключателем волны
+        // «Моя музыка»: плашка того же вида, что раскрытая подборка, одной строкой; режимы переключателем волны
         '.scw-lib{padding:16px 16px 8px;border-radius:6px;background:var(--scw-film)}',
-        '.scw-lib-src{margin-bottom:12px}',
-        '#sc-wave .scw-lib .scw-chip{max-width:280px;overflow:hidden;text-overflow:ellipsis}',
-        // Выбранное тёмной заливкой с оранжевой точкой, а не белым: десяток белых плашек на тёмной полке режет глаз
-        '#sc-wave .scw-lib .scw-chip{background:transparent;box-shadow:inset 0 0 0 1px rgba(255,255,255,.14)}',
-        '#sc-wave .scw-lib .scw-chip[aria-pressed="true"]{background:rgba(255,255,255,.14);box-shadow:none;color:#fff}',
-        '#sc-wave .scw-lib .scw-chip[aria-pressed="true"]:hover{background:rgba(255,255,255,.2)}',
-        '#sc-wave .scw-lib .scw-chip[aria-pressed="true"]::before{content:"";display:inline-block;width:6px;height:6px;margin-right:8px;border-radius:50%;background:#ff5500;vertical-align:1px}',
         '#sc-wave .scw-lib .scw-seg button[aria-checked="true"]{background:rgba(255,255,255,.14);color:#fff}',
+        '#sc-wave .scw-lib .scw-btn[aria-expanded="true"]{box-shadow:inset 0 0 0 32px var(--scw-film-strong)}',
         '.scw-chip-n{margin-left:6px;font-weight:400;opacity:.7}',
         '.scw-lib .scw-mix-head{flex-wrap:wrap}',
+        // Выбор источников: без галочек, выбранное светлой плёнкой и белым текстом, остальное приглушено
+        '.scw-lib-pick{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:2px 16px;margin:4px -8px 8px;padding-top:8px;border-top:1px solid var(--scw-film-strong)}',
+        '#sc-wave .scw-lib-opt{display:flex;align-items:center;min-width:0;height:36px;padding:0 8px;border-radius:4px;text-align:left;color:var(--scw-muted);transition:background-color .12s,color .12s}',
+        '#sc-wave .scw-lib-opt:hover{background:var(--scw-film);color:#fff}',
+        '#sc-wave .scw-lib-opt[aria-pressed="true"]{background:rgba(255,255,255,.14);color:#fff;font-weight:600}',
+        '.scw-lib-name{flex:1;min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}',
+        // Источник, из которого играет трек: оранжевая точка перед названием
+        '.scw-lib-here::before{content:"";display:inline-block;width:6px;height:6px;margin-right:8px;border-radius:50%;background:#ff5500;vertical-align:1px}',
+        '.scw-lib-pick .scw-hint{grid-column:1/-1;padding:4px 8px}',
         '#sc-wave .scw-lib-more{grid-column:1/-1;justify-self:center;margin:8px 0}',
         '#sc-wave .scw-row{display:grid;grid-template-columns:40px minmax(0,1fr) auto;align-items:center;gap:12px;height:48px;padding:4px 8px;border-radius:4px;text-align:left;min-width:0;cursor:pointer;box-sizing:border-box}',
         '#sc-wave .scw-row:hover{background:var(--scw-film)}',
@@ -3079,6 +3082,7 @@ export function installWave(config: WaveConfig, createPlayback: typeof installPl
             case 'lib-source':
             case 'lib-mode':
             case 'lib-play':
+            case 'lib-sources':
             case 'lib-list':
             case 'lib-more':
             case 'lib-retry':
