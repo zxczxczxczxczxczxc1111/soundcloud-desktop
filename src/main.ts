@@ -24,7 +24,7 @@ import {
     AUTO_BACKUP_DELAY, AUTO_BACKUP_KEEP, BACKUP_EXTENSION, BACKUP_MIGRATION_MARKS, BACKUP_REASONS, BACKUP_SETTING_KEYS, autoBackupDue, backupFileName, isInside,
     type BackupReason,
 } from './services/backupPolicy';
-import { DEFAULT_RADAR_SCHEDULE, RadarScheduler, cleanCollectResult, cleanSchedule, radarPeriod } from './services/radarSchedule';
+import { DEFAULT_RADAR_SCHEDULE, type RadarScheduler } from './services/radarSchedule';
 import { HistoryManager } from './history/historyManager';
 import { AwayTracker } from './services/awayTracker';
 import { OPEN_PROTOCOL, parseOpenLink } from './services/openLink';
@@ -39,6 +39,8 @@ import { registerWindowIpc } from './ipc/windowIpc';
 import { registerUpdateIpc } from './ipc/updateIpc';
 import { registerPageIpc, type PlaybackState } from './ipc/pageIpc';
 import { registerWaveIpc } from './ipc/waveIpc';
+import { createRadarScheduler, registerRadarIpc } from './ipc/radarIpc';
+import { registerLibraryIpc } from './ipc/libraryIpc';
 import {
     app,
     BrowserWindow,
@@ -903,99 +905,10 @@ async function init() {
     radarScheduler?.stop();
     const radarPage = async (script: string): Promise<unknown> =>
         contentView && !contentView.webContents.isDestroyed() ? contentView.webContents.executeJavaScript(script) as Promise<unknown> : null;
-    radarScheduler = new RadarScheduler({
-        now: () => Date.now(),
-        schedule: () => cleanSchedule(store.get('radarDay'), store.get('radarTime'), store.get('radarZone')),
-        online: () => net.isOnline(),
-        user: async () => {
-            const id = await radarPage('window.__scWhoAmI ? window.__scWhoAmI() : 0');
-            return typeof id === 'number' && Number.isSafeInteger(id) && id > 0 ? id : 0;
-        },
-        status: (user, period, at) => library.request('radarStatus', user, period, at),
-        task: async (user, period, at, zone) => {
-            const task = await library.request('radarTask', user, period, at, zone);
-            if (!task) throw new Error('Задача радара не создана');
-            return task;
-        },
-        collect: async (_user, budgetMs, staleBefore) =>
-            cleanCollectResult(await radarPage('window.__scRadarCollect ? window.__scRadarCollect(' + Math.round(budgetMs) + ', ' + Math.round(staleBefore) + ') : null')),
-        build: async (user, period, at, force) => {
-            const outcome = await library.request('radarBuild', user, period, at, force, false);
-            return { published: outcome.published, waiting: outcome.waiting };
-        },
-        changed: (state) => {
-            if (state.error) console.warn('Радар: ' + state.phase + ' ' + state.period + ' ' + state.error);
-            // Страница сама решает, перечитывать ли выпуск: по смене периода или публикации
-            void radarPage('window.__scRadarChanged?.(' + JSON.stringify(state) + ')').catch((error: unknown) => console.warn('Радар: страница не узнала о выпуске', error));
-        },
-    });
+    radarScheduler = createRadarScheduler({ store, library, online: () => net.isOnline(), page: radarPage });
     radarScheduler.start();
-    // Радар для страницы: выпуск с архивом, «Все найденные», пересборка и состояние сбора
-    const radarUser = (event: Pick<IpcMainEvent, 'sender' | 'senderFrame'>, userId: unknown): number => {
-        if (!isTrustedSoundCloudSender(event)) throw new Error('Недопустимый отправитель радара');
-        if (typeof userId !== 'number' || !Number.isSafeInteger(userId) || userId <= 0) throw new Error('Пользователь не определён');
-        return userId;
-    };
-    for (const channel of ['soundcloud:radar:view', 'soundcloud:radar:found', 'soundcloud:radar:rebuild', 'soundcloud:radar:state']) ipcMain.removeHandler(channel);
-    ipcMain.handle('soundcloud:radar:view', (event, userId: unknown, period: unknown, revision: unknown) => library.request('radarView', radarUser(event, userId), period, revision));
-    ipcMain.handle('soundcloud:radar:found', (event, userId: unknown, period: unknown, revision: unknown) => library.request('radarFound', radarUser(event, userId), period, revision));
-    ipcMain.handle('soundcloud:radar:rebuild', async (event, userId: unknown) => {
-        const user = radarUser(event, userId);
-        const period = radarPeriod(Date.now(), cleanSchedule(store.get('radarDay'), store.get('radarTime'), store.get('radarZone')));
-        // Недели ещё нет: это просто сборка сейчас, а не ревизия; иначе новая ревизия, прежняя остаётся в архиве
-        const manual = (await library.request('radarStatus', user, period.key, period.at)).published;
-        return library.request('radarBuild', user, period.key, period.at, true, manual);
-    });
-    ipcMain.handle('soundcloud:radar:state', (event) => {
-        if (!isTrustedSoundCloudSender(event)) throw new Error('Недопустимый отправитель радара');
-        return radarScheduler?.getState() ?? null;
-    });
-    const playbackChannels = ['loadSession', 'saveSession', 'loadCatalog', 'saveCatalog', 'listMixes', 'saveMix', 'removeMix'] as const;
-    for (const method of playbackChannels) {
-        const channel = 'soundcloud:library:' + method;
-        ipcMain.removeHandler(channel);
-        ipcMain.handle(channel, (event, userId: unknown, value: unknown, tracks: unknown) => {
-            if (!isTrustedSoundCloudSender(event)) throw new Error('Недопустимый отправитель библиотеки');
-            if (typeof userId !== 'number' || !Number.isSafeInteger(userId) || userId <= 0) throw new Error('Пользователь не определён');
-            switch (method) {
-                case 'loadSession': return library.request(method, userId);
-                case 'saveSession': return library.request(method, userId, value);
-                case 'loadCatalog': return library.request(method, userId);
-                case 'saveCatalog': return library.request(method, userId, value);
-                case 'listMixes': return library.request(method, userId);
-                case 'saveMix': return library.request(method, userId, value, tracks);
-                case 'removeMix': return library.request(method, userId, value);
-            }
-        });
-    }
-    // Хранилище рекомендаций: загрузки с версиями, связи записей и обход источников. Ввод проверяет worker,
-    // аккаунт задаёт файл, ответ прошлого прогона обхода отклоняется по номеру прогона
-    const recommendChannels = [
-        'recordUploads', 'uploads', 'recordingLinks', 'setRecordingLink', 'syncStart', 'syncPage', 'syncFinish', 'syncState', 'libraryMembers', 'radarPlan', 'catalogChecked',
-    ] as const;
-    for (const method of recommendChannels) {
-        const channel = 'soundcloud:recommend:' + method;
-        ipcMain.removeHandler(channel);
-        ipcMain.handle(channel, (event, userId: unknown, ...args: unknown[]) => {
-            if (!isTrustedSoundCloudSender(event)) throw new Error('Недопустимый отправитель рекомендаций');
-            if (typeof userId !== 'number' || !Number.isSafeInteger(userId) || userId <= 0) throw new Error('Пользователь не определён');
-            // Время операций ставит worker: страница передаёт только данные
-            const [a, b, c, d, e] = args;
-            switch (method) {
-                case 'recordUploads': return library.request(method, userId, a);
-                case 'uploads': return library.request(method, userId, a);
-                case 'recordingLinks': return library.request(method, userId);
-                case 'setRecordingLink': return library.request(method, userId, a, b, c);
-                case 'syncStart': return library.request(method, userId, a, b);
-                case 'syncPage': return library.request(method, userId, a, b, c, d);
-                case 'syncFinish': return library.request(method, userId, a, b, c, d);
-                case 'syncState': return library.request(method, userId);
-                case 'libraryMembers': return library.request(method, userId, a);
-                case 'radarPlan': return library.request(method, userId);
-                case 'catalogChecked': return library.request(method, userId, a, b, c, d, e);
-            }
-        });
-    }
+    registerRadarIpc(ipcMain, { trustedSite: isTrustedSoundCloudSender, store, library, scheduler: () => radarScheduler });
+    registerLibraryIpc(ipcMain, { trustedSite: isTrustedSoundCloudSender, library });
     historyManager = new HistoryManager(mainWindow, library, {
         site: () => (contentView.webContents.isDestroyed() ? null : contentView.webContents),
         fallbackUser: () => waveExclusions?.currentUser() ?? 0,
