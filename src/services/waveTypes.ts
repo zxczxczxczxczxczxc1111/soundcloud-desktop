@@ -182,5 +182,7 @@ export interface Seed {
     /** «Моя музыка»: выбранные источники и режим; left это номера оставшихся треков из сессии, пока пул не собран заново */
     library?: { pick: string[]; mode: LibraryMode; left?: number[] };
 }
+/** Вид отметки из меню и блока: «Не нравится», скрытый артист, «Не сейчас» у трека и артиста, «Больше такого» */
+export type MarkKind = 'track' | 'artist' | 'later-track' | 'later-artist' | 'more';
 /** Отметка волны из main: «Не нравится», скрытый артист, «Не сейчас» до until */
 export interface Excluded { id: number; title: string; artist: string; url: string; until?: number }

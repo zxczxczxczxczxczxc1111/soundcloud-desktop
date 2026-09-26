@@ -13,7 +13,7 @@ import type { RadarCollectResult } from './radarSchedule';
 import * as libraryMix from './libraryMix';
 import * as siteModules from './siteModules';
 import type { SiteState, WebpackRequire } from './siteModules';
-import type { WaveTrack, WaveMode, OpenTrackResult, WaveReason, WaveCandidate, WaveFilter, WaveLinkKind, WaveTexts, TasteMaps, MenuTarget, Excluded, Profile, Seed, WaveState as State } from './waveTypes';
+import type { WaveTrack, WaveMode, OpenTrackResult, WaveReason, WaveCandidate, WaveFilter, WaveTexts, TasteMaps, MenuTarget, Excluded, MarkKind, Profile, Seed, WaveState as State } from './waveTypes';
 import { WAVE_TEXTS } from './waveTexts';
 import * as waveTexts from './waveTexts';
 import * as waveGenres from './waveGenres';
@@ -24,6 +24,7 @@ import * as versionsSection from './wave/versions';
 import * as librarySectionModule from './wave/library';
 import * as radarSectionModule from './wave/radar';
 import * as shelfSectionModule from './wave/shelf';
+import * as menuSectionModule from './wave/menu';
 
 // Разбор версий, сеть подбора и пул «Моей музыки» живут в своих модулях. Функции страницы зовут их по голому имени: в Node имя
 // берётся отсюда, на странице из объявлений identityHelpers и sourceHelpers в той же обёртке.
@@ -42,6 +43,7 @@ const { installVersions } = versionsSection;
 const { installLibrary } = librarySectionModule;
 const { installRadar } = radarSectionModule;
 const { installShelf } = shelfSectionModule;
+const { installMenu } = menuSectionModule;
 // Прежние импорты из wave.ts остаются рабочими
 export type { WaveTrack, WaveMode, OpenTrackResult, WaveReason, WaveCandidate, WaveFilter, WaveLinkKind, WaveTexts, TasteMaps, TasteScore, TasteGroup } from './waveTypes';
 export { WAVE_TEXTS, fillText, reasonText, localDay, countText, formatTime, shapeSamples } from './waveTexts';
@@ -246,7 +248,6 @@ export function installWave(config: WaveConfig, createPlayback: typeof installPl
     // Копия отметок из main: «Не нравится» и скрытые артисты навсегда, «Не сейчас» до until,
     // «Больше такого» это локальный лайк: трек становится зерном, модель вкуса учится на нём
     interface MoreEntry extends Excluded { artistId: number; genre: string; tags: string }
-    type MarkKind = 'track' | 'artist' | 'later-track' | 'later-artist' | 'more';
     const excludedTracks = new Map<number, Excluded>();
     const excludedArtists = new Map<number, Excluded>();
     const laterTracks = new Map<number, Excluded>();
@@ -470,6 +471,46 @@ export function installWave(config: WaveConfig, createPlayback: typeof installPl
         button,
         textButton,
         trackRow,
+    });
+    // Меню по правому клику и волна от трека, артиста, плейлиста: раздел в wave/menu.ts
+    const menuSection = installMenu({
+        texts: T,
+        state: () => state,
+        disposed: () => disposed,
+        player: () => player,
+        api: () => !!api,
+        seedRequest: () => seedRequest,
+        nextSeedRequest: () => ++seedRequest,
+        known,
+        preview: () => preview,
+        sectionTrack: (id) => shelfSection.track(id) ?? radarSection.track(id) ?? librarySection.poolTrack(id),
+        currentCandidate,
+        fromTrack,
+        excludedTracks,
+        excludedArtists,
+        laterTracks,
+        laterArtists,
+        moreTracks,
+        marked: (map, id) => marked(map, id),
+        familyHidden,
+        setExcluded,
+        setFamily,
+        addTrack: (track, next) => queueControls.add(track, next),
+        pickedIndex: shelfSection.pickedIndex,
+        pick: shelfSection.pick,
+        openVersions: versions.open,
+        trackOf,
+        artistOf,
+        artistOwnTracks,
+        playlistTracks,
+        resolveUrl,
+        beginSeed,
+        ensureProfile,
+        ensureExclusions,
+        ensureStyle,
+        showToast,
+        onScroll: () => onScroll(),
+        el,
     });
 
     const wait = (ms: number): Promise<void> => new Promise((resolve) => setTimeout(resolve, ms));
@@ -1889,7 +1930,7 @@ export function installWave(config: WaveConfig, createPlayback: typeof installPl
         return (!!current && ours.has(current)) || items.slice(Math.max(0, index)).some((item) => ours.has(item));
     }
 
-    // ===== Волна от трека, артиста и плейлиста, отметки «Не нравится» =====
+    // ===== Разбор ссылок, старт подборки, переход по ссылке, отметки «Не нравится» =====
     /** Что под курсором при ПКМ: ссылка, артист трека (если виден) и сам трек, если он уже известен волне */
     interface Artist { id: number; username: string; url: string }
 
@@ -1950,39 +1991,6 @@ export function installWave(config: WaveConfig, createPlayback: typeof installPl
         let list = tracksOf(await call('userToptracks', { id }, { limit: 20 }));
         if (list.length < 5) list = list.concat(tracksOf(await call('userTracks', { id }, { limit: 30 })));
         return uniqueTracks(list).filter(isWaveEligible);
-    }
-    // Зёрна: сам трек; топ артиста (он же идёт в подборку); треки плейлиста
-    async function loadSeed(kind: WaveLinkKind, target: MenuTarget): Promise<{ seed: Seed; first: WaveTrack | null } | null> {
-        if (kind === 'track') {
-            const track = await trackOf(target);
-            return track ? { seed: { kind, title: (track.title ?? '').trim() || '…', tracks: [track], own: [] }, first: track } : null;
-        }
-        if (kind === 'artist') {
-            const artist = await artistOf(target);
-            if (!artist) return null;
-            const own = await artistOwnTracks(artist.id);
-            return { seed: { kind, title: artist.username || '…', tracks: shuffleInPlace(own.slice()), own }, first: null };
-        }
-        const body = (await resolveUrl(target.url)) as { title?: unknown } | null;
-        const tracks = await playlistTracks(body);
-        return { seed: { kind, title: (typeof body?.title === 'string' ? body.title.trim() : '') || '…', tracks: shuffleInPlace(tracks), own: [] }, first: null };
-    }
-    async function startSeed(kind: WaveLinkKind, target: MenuTarget): Promise<void> {
-        const request = ++seedRequest;
-        try {
-            await Promise.all([ensureProfile(), ensureExclusions()]);
-            const loaded = await loadSeed(kind, target);
-            if (request !== seedRequest || disposed) return;
-            if (!loaded?.seed.tracks.length) {
-                showToast(T.toastEmpty);
-                return;
-            }
-            await beginSeed(request, loaded);
-        } catch (error) {
-            if (request !== seedRequest) return;
-            console.warn('Волна: не удалось начать волну', error);
-            showToast(T.toastFailed);
-        }
     }
     // Новая волна от зёрен: прошлая подборка сбрасывается, волна сразу играет. Не вышло: тост и обычная волна
     async function beginSeed(request: number, loaded: { seed: Seed; first: WaveTrack | null }): Promise<void> {
@@ -2465,19 +2473,6 @@ export function installWave(config: WaveConfig, createPlayback: typeof installPl
         // «Меньше анимаций» в F1: без масштаба меню, растворения остаются
         'html.scm-reduce .scw-menu{animation:none}',
     ].join('\n');
-    const MENU_ICON: Record<string, string> = {
-        wave: '<svg viewBox="0 0 16 16" aria-hidden="true"><path d="M1 6.5h1.5v3H1zM4 4.5h1.5v7H4zM7 2h1.5v12H7zM10 5h1.5v6H10zM13 7h1.5v2H13z"/></svg>',
-        artist: '<svg viewBox="0 0 16 16" aria-hidden="true"><path d="M8 1.5a3.25 3.25 0 1 1 0 6.5 3.25 3.25 0 0 1 0-6.5zM2 14.5c0-3 2.7-5 6-5s6 2 6 5z"/></svg>',
-        block: '<svg viewBox="0 0 16 16" aria-hidden="true"><path fill-rule="evenodd" d="M8 1a7 7 0 1 1 0 14A7 7 0 0 1 8 1zm4.3 10.2A5.5 5.5 0 0 0 4.8 3.7zM3.7 4.8a5.5 5.5 0 0 0 7.5 7.5z"/></svg>',
-        hide: '<svg viewBox="0 0 16 16" aria-hidden="true"><path d="M6.5 1.5a3.25 3.25 0 1 1 0 6.5 3.25 3.25 0 0 1 0-6.5zM.5 14.5c0-3 2.7-5 6-5 1.1 0 2.2.2 3 .7v4.3zM10.5 11h5v1.5h-5z"/></svg>',
-        undo: '<svg viewBox="0 0 16 16" aria-hidden="true"><path d="M4.6 3.4 5.7 4.5 4.1 6H10a4.5 4.5 0 0 1 0 9H6v-1.5h4a3 3 0 0 0 0-6H4.1l1.6 1.5-1.1 1.1L1.2 6.75z"/></svg>',
-        more: '<svg viewBox="0 0 16 16" aria-hidden="true"><path d="M7.25 2h1.5v5.25H14v1.5H8.75V14h-1.5V8.75H2v-1.5h5.25z"/></svg>',
-        later: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12.34 2.02C6.59 1.82 2 6.42 2 12c0 5.52 4.48 10 10 10 3.71 0 6.93-2.02 8.66-5.02-7.51-.25-12.09-8.43-8.32-14.96z"/></svg>',
-        // Стопка слоёв: версии одной песни
-        versions: '<svg viewBox="0 0 16 16" aria-hidden="true"><path d="M8 1.2 15 5 8 8.8 1 5zM2.7 7.4 8 10.3l5.3-2.9L15 8.3 8 12.1 1 8.3zm0 3.3L8 13.6l5.3-2.9 1.7.9L8 15.4 1 11.6z"/></svg>',
-        // Список с плюсом: трек в набор
-        pick:'<svg viewBox="0 0 16 16" aria-hidden="true"><path d="M1 2.5h10V4H1zM1 6.25h10v1.5H1zM1 10h6v1.5H1zM11.25 9h1.5v2.25H15v1.5h-2.25V15h-1.5v-2.25H9v-1.5h2.25z"/></svg>',
-    };
     function ensureStyle(): void {
         if (document.getElementById('sc-wave-style')) return;
         const style = el('style', '', CSS);
@@ -3173,7 +3168,7 @@ export function installWave(config: WaveConfig, createPlayback: typeof installPl
         paint();
     }
 
-    // ===== Меню по ПКМ и плашка с итогом =====
+    // ===== Плашка с итогом, встраивание блока, слушатели и снятие волны =====
     const toastBox = el('div', 'scw-toast');
     toastBox.setAttribute('role', 'status');
     let toastTimer: ReturnType<typeof setTimeout> | undefined;
@@ -3186,299 +3181,9 @@ export function installWave(config: WaveConfig, createPlayback: typeof installPl
         toastTimer = setTimeout(() => toastBox.classList.remove('on'), 3500);
     }
 
-    // Элементы списков сайта и их главные ссылки: проверено на ленте, лайках, истории, поиске, плейлисте, главной
-    const ITEM_SELECTOR = '.soundList__item, .searchItem__trackItem, .historicalPlays__item, .userStreamItem, .trackItem, .compactTrackList__item, .playableTile, .soundBadge, .playbackSoundBadge, .userBadgeListItem, .userBadge, .sound';
-    const PRIMARY_SELECTOR = 'a.soundTitle__title, a.trackItem__trackTitle, a.playbackSoundBadge__titleLink, a.playableTile__mainHeading, a.playableTile__heading, a.sound__coverArt, a.playableTile__artworkLink, a.userBadge__usernameLink, a.userBadgeListItem__heading';
-    const USER_SELECTOR = 'a.soundTitle__username, a.trackItem__username, a.playbackSoundBadge__lightLink, a.playableTile__usernameHeading, .playableTile a.sc-link-secondary';
-    const HERO_SELECTOR = '.fullHero, .listenHero, .profileHeader, .systemPlaylistHero, .l-listen-hero';
+    // Цель меню из трека волны: пункты меню и кнопки «Не сейчас», «Больше такого» в блоке
     function fromTrack(track: WaveTrack): MenuTarget {
         return { kind: 'track', url: track.permalink_url ?? '', artistUrl: track.user?.permalink_url ?? '', track };
-    }
-    function menuTarget(node: Element): MenuTarget | null {
-        if (node.closest('input, textarea, select, [contenteditable="true"], [contenteditable=""]')) return null;
-        const inWave = node.closest('#sc-wave');
-        if (inWave) {
-            const tile = node.closest<HTMLElement>('.scw-tile[data-track], .scw-row[data-track]');
-            const id = tile ? Number(tile.dataset.track) : 0;
-            const track = id
-                ? known.get(id)?.track ?? preview.find((item) => item.track.id === id)?.track ?? shelfSection.track(id) ?? radarSection.track(id)
-                    ?? librarySection.poolTrack(id)
-                : node.closest('.scw-body') ? currentCandidate()?.track : undefined;
-            return track ? fromTrack(track) : null;
-        }
-        const item = node.closest(ITEM_SELECTOR);
-        const anchor = node.closest<HTMLAnchorElement>('a[href]');
-        let link = anchor ? classifyLink(anchor.getAttribute('href') ?? '', location.href) : null;
-        if (!link && item) {
-            const primary = item.querySelector<HTMLAnchorElement>(PRIMARY_SELECTOR);
-            link = primary ? classifyLink(primary.getAttribute('href') ?? '', location.href) : null;
-        }
-        // Незнакомая разметка строки: первая ссылка на трек или плейлист внутри
-        if (!link && item)
-            for (const other of item.querySelectorAll<HTMLAnchorElement>('a[href]')) {
-                const found = classifyLink(other.getAttribute('href') ?? '', location.href);
-                if (found && found.kind !== 'artist') { link = found; break; }
-            }
-        if (!link && !item && node.closest(HERO_SELECTOR)) link = classifyLink(location.pathname, location.href);
-        if (!link) return null;
-        const target = link;
-        const user = target.kind === 'track' && item ? item.querySelector<HTMLAnchorElement>(USER_SELECTOR) : null;
-        const artist = user ? classifyLink(user.getAttribute('href') ?? '', location.href) : null;
-        const knownTrack = [...known.values()].find((candidate) => canonicalUrl(candidate.track.permalink_url) === canonicalUrl(target.url));
-        return { kind: target.kind, url: target.url, artistUrl: artist?.kind === 'artist' ? artist.url : '', track: knownTrack?.track };
-    }
-    // Новая вёрстка SoundCloud (страница трека и не только) живёт в iframe того же сайта по адресу /n/...
-    // Классы там от MUI и меняются от сборки к сборке, поэтому опора на ссылки и заголовок h1.
-    // Строка списка это самый широкий предок, где ссылка на трек или плейлист ровно одна
-    function frameMenuTarget(node: Element): MenuTarget | null {
-        if (node.closest('input, textarea, select, [contenteditable="true"], [contenteditable=""]')) return null;
-        const doc = node.ownerDocument;
-        const path = doc.location.pathname.replace(/^\/n(?=\/)/, '');
-        const base = location.origin + path;
-        const linkOf = (anchor: Element): { kind: WaveLinkKind; url: string } | null => classifyLink(anchor.getAttribute('href') ?? '', base);
-        const artistIn = (root: Element | null): string => {
-            for (const anchor of root ? root.querySelectorAll('a[href]') : []) {
-                const found = linkOf(anchor);
-                if (found?.kind === 'artist') return found.url;
-            }
-            return '';
-        };
-        const rowOf = (from: Element): { link: { kind: WaveLinkKind; url: string }; row: Element } | null => {
-            let best: { link: { kind: WaveLinkKind; url: string }; row: Element } | null = null;
-            for (let row: Element | null = from, depth = 0; row && depth < 12 && row !== doc.body && row.tagName !== 'MAIN'; row = row.parentElement, depth++) {
-                const urls = new Map<string, { kind: WaveLinkKind; url: string }>();
-                for (const anchor of row.querySelectorAll('a[href]')) {
-                    const found = linkOf(anchor);
-                    if (found && found.kind !== 'artist') urls.set(found.url, found);
-                }
-                if (urls.size > 1) break;
-                if (urls.size === 1) best = { link: [...urls.values()][0], row };
-            }
-            return best;
-        };
-        const anchor = node.closest('a[href]');
-        let link: { kind: WaveLinkKind; url: string } | null = null;
-        let artistUrl = '';
-        if (anchor) {
-            // Ссылка не на трек, артиста или плейлист (теги, подписчики): меню сайта
-            link = linkOf(anchor);
-            if (!link) return null;
-            if (link.kind === 'track') artistUrl = artistIn(rowOf(anchor)?.row ?? null);
-        } else {
-            const hero = node.closest('section');
-            if (node.closest('h1') || hero?.querySelector('h1')) {
-                // Шапка страницы: заголовок без ссылки, это сама страница
-                link = classifyLink(path, location.origin + '/');
-                if (link?.kind === 'track') artistUrl = artistIn(hero);
-            } else {
-                const row = rowOf(node);
-                if (row) {
-                    link = row.link;
-                    if (link.kind === 'track') artistUrl = artistIn(row.row);
-                }
-            }
-        }
-        if (!link) return null;
-        const target = link;
-        const knownTrack = [...known.values()].find((candidate) => canonicalUrl(candidate.track.permalink_url) === canonicalUrl(target.url));
-        return { kind: target.kind, url: target.url, artistUrl, track: knownTrack?.track };
-    }
-    // Отметка у цели меню: по id, если трек известен, иначе по ссылке; истёкшее «Не сейчас» не считается
-    function trackMarked(map: Map<number, Excluded>, target: MenuTarget): boolean {
-        if (target.track) return marked(map, target.track.id);
-        const key = canonicalUrl(target.url);
-        return !!key && [...map.values()].some((entry) => entry.url === key && marked(map, entry.id));
-    }
-    function artistMarked(map: Map<number, Excluded>, target: MenuTarget): boolean {
-        const id = target.kind !== 'artist' && target.track ? trackArtist(target.track) : 0;
-        if (id) return marked(map, id);
-        const key = canonicalUrl(target.kind === 'artist' ? target.url : target.artistUrl);
-        return !!key && [...map.values()].some((entry) => entry.url === key && marked(map, entry.id));
-    }
-    const trackExcluded = (target: MenuTarget): boolean => trackMarked(excludedTracks, target);
-    const artistExcluded = (target: MenuTarget): boolean => artistMarked(excludedArtists, target);
-    function menuItems(target: MenuTarget): Array<[string, string, string]> {
-        const items: Array<[string, string, string]> = [];
-        const hasArtist = target.kind === 'artist' || !!target.artistUrl || !!target.track;
-        if (target.kind === 'track') items.push(['wave-track', T.menuWaveTrack, 'wave']);
-        if (target.kind === 'playlist') items.push(['wave-playlist', T.menuWavePlaylist, 'wave']);
-        if (hasArtist) items.push(['wave-artist', T.menuWaveArtist, target.kind === 'artist' ? 'wave' : 'artist']);
-        if (target.kind === 'track') {
-            items.push(['queue-next', T.lang === 'ru' ? 'Слушать следующим' : 'Play next', 'pick']);
-            items.push(['queue-last', T.lang === 'ru' ? 'В конец очереди' : 'Add to queue', 'pick']);
-            items.push(shelfSection.pickedIndex(target) >= 0 ? ['unpick', T.menuUnpick, 'undo'] : ['pick', T.menuPick, 'pick']);
-            items.push(trackMarked(moreTracks, target) ? ['unmore', T.menuUnmore, 'undo'] : ['more', T.more, 'more']);
-            items.push(trackMarked(laterTracks, target) ? ['unlater', T.menuUnlater, 'undo'] : ['later', T.later, 'later']);
-            items.push(trackExcluded(target) ? ['undislike', T.menuUndislike, 'undo'] : ['dislike', T.menuDislike, 'block']);
-            items.push(['versions', T.menuVersions, 'versions']);
-            items.push(familyHidden(target) ? ['show-family', T.menuShowFamily, 'undo'] : ['hide-family', T.menuHideFamily, 'block']);
-        }
-        if (target.kind === 'artist') items.push(artistMarked(laterArtists, target) ? ['unlater-artist', T.menuUnlater, 'undo'] : ['later-artist', T.later, 'later']);
-        if (hasArtist) items.push(artistExcluded(target) ? ['show-artist', T.menuShowArtist, 'undo'] : ['hide-artist', T.menuHideArtist, 'hide']);
-        return items;
-    }
-    function runMenu(act: string, target: MenuTarget): void {
-        switch (act) {
-            case 'queue-next':
-            case 'queue-last':
-                void trackOf(target).then((track) => { if (track && !disposed) queueControls.add(track, act === 'queue-next'); }).catch((error: unknown) => { console.warn('Очередь: трек не добавлен', error); showToast(T.toastFailed); });
-                return;
-            case 'wave-track': void startSeed('track', target); return;
-            case 'wave-artist': void startSeed('artist', target); return;
-            case 'wave-playlist': void startSeed('playlist', target); return;
-            case 'pick':
-            case 'unpick': void shelfSection.pick(target, act === 'pick'); return;
-            case 'dislike':
-            case 'undislike': void setExcluded('track', target, act === 'dislike'); return;
-            case 'hide-artist':
-            case 'show-artist': void setExcluded('artist', target, act === 'hide-artist'); return;
-            case 'more':
-            case 'unmore': void setExcluded('more', target, act === 'more'); return;
-            case 'later':
-            case 'unlater': void setExcluded('later-track', target, act === 'later'); return;
-            case 'later-artist':
-            case 'unlater-artist': void setExcluded('later-artist', target, act === 'later-artist'); return;
-            case 'versions': void versions.open(target); return;
-            case 'hide-family':
-            case 'show-family': void setFamily(target, act === 'hide-family'); return;
-        }
-    }
-
-    let menu: HTMLElement | null = null;
-    let menuFor: MenuTarget | null = null;
-    function closeMenu(): void {
-        menu?.remove();
-        menu = null;
-        menuFor = null;
-    }
-    function openMenu(target: MenuTarget, x: number, y: number, byKeyboard: boolean): void {
-        closeMenu();
-        ensureStyle();
-        const root = el('div', 'dropdownMenu g-z-index-overlay scw-menu');
-        root.setAttribute('role', 'menu');
-        root.tabIndex = -1;
-        root.style.position = 'fixed';
-        const list = el('div', 'moreActions sc-list-nostyle sc-border-box sc-pt-1x sc-pb-1x');
-        const group = el('div', 'moreActions__group');
-        for (const [act, label, icon] of menuItems(target)) {
-            const item = el('button', 'sc-button moreActions__button sc-button-medium sc-button-tertiary scw-mi');
-            item.type = 'button';
-            item.setAttribute('role', 'menuitem');
-            item.dataset.menu = act;
-            const glyph = el('div', '');
-            glyph.insertAdjacentHTML('beforeend', MENU_ICON[icon]);
-            item.append(glyph, el('span', '', label));
-            group.append(item);
-        }
-        list.append(group);
-        root.append(list);
-        root.addEventListener('click', (event) => {
-            const item = event.target instanceof Element ? event.target.closest<HTMLElement>('[data-menu]') : null;
-            const chosen = menuFor;
-            closeMenu();
-            if (item?.dataset.menu && chosen) runMenu(item.dataset.menu, chosen);
-        });
-        root.addEventListener('keydown', (event) => {
-            const buttons = [...root.querySelectorAll<HTMLElement>('[data-menu]')];
-            const at = buttons.indexOf(document.activeElement as HTMLElement);
-            if (event.key === 'ArrowDown' || event.key === 'ArrowUp') {
-                event.preventDefault();
-                const down = event.key === 'ArrowDown';
-                // Открыто мышью: фокус на самом меню, первая стрелка встаёт на крайний пункт
-                const next = at < 0 ? (down ? 0 : buttons.length - 1) : (at + (down ? 1 : -1) + buttons.length) % buttons.length;
-                buttons[next]?.focus();
-            } else if (event.key === 'Escape' || event.key === 'Tab') {
-                event.preventDefault();
-                closeMenu();
-            }
-        });
-        document.body.append(root);
-        const left = Math.max(8, Math.min(x, window.innerWidth - root.offsetWidth - 8));
-        const above = y + root.offsetHeight > window.innerHeight - 8;
-        root.style.left = left + 'px';
-        root.style.top = Math.max(8, above ? y - root.offsetHeight : y) + 'px';
-        // Раскрывается из точки клика
-        root.style.transformOrigin = Math.max(0, x - left) + 'px ' + (above ? 'bottom' : 'top');
-        menu = root;
-        menuFor = target;
-        // Фокус на пункте после ПКМ Chrome считает видимым, и сайт рисует ему синюю рамку
-        if (byKeyboard) root.querySelector<HTMLElement>('[data-menu]')?.focus();
-        else root.focus({ preventScroll: true });
-    }
-    // Узел из iframe принадлежит другому окну, и instanceof Element для него ложен
-    const asElement = (value: unknown): Element | null =>
-        value && typeof value === 'object' && (value as Node).nodeType === 1 ? (value as Element) : null;
-    function onContextMenu(event: MouseEvent, frame?: HTMLIFrameElement): void {
-        closeMenu();
-        if (!player || !api || disposed || state === 'unavailable') return;
-        const node = asElement(event.target);
-        const target = node ? (frame ? frameMenuTarget(node) : menuTarget(node)) : null;
-        if (!node || !target) return;
-        event.preventDefault();
-        let { clientX: x, clientY: y } = event;
-        // С клавиатуры (Shift+F10) координат нет: меню встаёт под элементом
-        const byKeyboard = !x && !y;
-        if (byKeyboard) {
-            const rect = node.getBoundingClientRect();
-            x = rect.left;
-            y = rect.bottom;
-        }
-        // Координаты iframe отсчитываются от его угла, меню живёт в странице
-        if (frame) {
-            const box = frame.getBoundingClientRect();
-            x += box.left;
-            y += box.top;
-        }
-        openMenu(target, x, y, byKeyboard);
-        void ensureExclusions();
-        // Ссылку распознаём заранее, пока выбирают пункт
-        if (!target.track && target.url) void resolveUrl(target.url).catch((error: unknown) => console.debug('Волна: ссылка не распознана', error));
-    }
-    const onOutside = (event: Event): void => {
-        if (menu && !(event.target instanceof Node && menu.contains(event.target))) closeMenu();
-    };
-    const onDocumentKey = (event: KeyboardEvent): void => {
-        if (event.key === 'Escape' && menu) closeMenu();
-    };
-    const onPageMenu = (event: MouseEvent): void => onContextMenu(event);
-
-    // Документы iframe того же сайта: в каждый ставятся те же слушатели, что и в страницу.
-    // После перехода внутри iframe документ новый, его подхватывает событие load
-    const frameCleanups = new Map<Document, () => void>();
-    const watchedFrames = new WeakSet<HTMLIFrameElement>();
-    function frameDocument(frame: HTMLIFrameElement): Document | null {
-        try {
-            const doc = frame.contentDocument;
-            return doc && doc.defaultView && doc.location.origin === location.origin ? doc : null;
-        } catch {
-            return null;
-        }
-    }
-    function attachFrame(frame: HTMLIFrameElement): void {
-        if (!watchedFrames.has(frame)) {
-            watchedFrames.add(frame);
-            frame.addEventListener('load', () => {
-                if (!disposed) attachFrame(frame);
-            });
-        }
-        const doc = frameDocument(frame);
-        if (!doc || frameCleanups.has(doc)) return;
-        const onMenu = (event: MouseEvent): void => onContextMenu(event, frame);
-        doc.addEventListener('contextmenu', onMenu);
-        doc.addEventListener('mousedown', onOutside, true);
-        doc.addEventListener('keydown', onDocumentKey);
-        doc.addEventListener('scroll', onScroll, true);
-        frameCleanups.set(doc, () => {
-            doc.removeEventListener('contextmenu', onMenu);
-            doc.removeEventListener('mousedown', onOutside, true);
-            doc.removeEventListener('keydown', onDocumentKey);
-            doc.removeEventListener('scroll', onScroll, true);
-        });
-    }
-    function watchFrames(): void {
-        for (const frame of document.querySelectorAll('iframe')) attachFrame(frame);
-        // Ушедшие документы iframe: слушатели снимать уже не с кого, запись только занимает память
-        for (const doc of [...frameCleanups.keys()]) if (!doc.defaultView) frameCleanups.delete(doc);
     }
 
     // Сайт ставит главную наверх уже после того, как блок встал, а ленту под ним дорисовывает частями:
@@ -3547,12 +3252,12 @@ export function installWave(config: WaveConfig, createPlayback: typeof installPl
         if (disposed || document.hidden || paintFrame) return;
         paintFrame = requestAnimationFrame(() => { paintFrame = 0; paint(); });
     };
-    const onResize = (): void => { closeMenu(); repaint(); };
+    const onResize = (): void => { menuSection.closeMenu(); repaint(); };
     const observer = new MutationObserver(() => {
         if (!frame) frame = requestAnimationFrame(() => {
             frame = 0;
             try {
-                watchFrames();
+                menuSection.watchFrames();
                 mount();
             } catch (error) {
                 console.error('Волна: блок не встал', error);
@@ -3608,7 +3313,7 @@ export function installWave(config: WaveConfig, createPlayback: typeof installPl
 
     const onScroll = (): void => {
         hideTip();
-        closeMenu();
+        menuSection.closeMenu();
     };
     const dispose = (): void => {
         void queueControls.save().catch((error: unknown) => console.warn('Сессия при переходе не сохранена', error));
@@ -3621,20 +3326,19 @@ export function installWave(config: WaveConfig, createPlayback: typeof installPl
         generation++;
         seedRequest++;
         observer.disconnect();
-        for (const cleanup of frameCleanups.values()) cleanup();
-        frameCleanups.clear();
-        document.removeEventListener('contextmenu', onPageMenu);
-        document.removeEventListener('mousedown', onOutside, true);
-        document.removeEventListener('keydown', onDocumentKey);
+        menuSection.dispose();
+        document.removeEventListener('contextmenu', menuSection.onPageMenu);
+        document.removeEventListener('mousedown', menuSection.onOutside, true);
+        document.removeEventListener('keydown', menuSection.onDocumentKey);
         document.removeEventListener('click', onUserInput, true);
         document.removeEventListener('keydown', onUserInput, true);
-        window.removeEventListener('blur', closeMenu);
+        window.removeEventListener('blur', menuSection.closeMenu);
         window.removeEventListener('resize', onResize);
         window.removeEventListener('popstate', onPop);
         document.removeEventListener('visibilitychange', repaint);
         document.removeEventListener('visibilitychange', onShown);
         cancelAnimationFrame(paintFrame);
-        closeMenu();
+        menuSection.closeMenu();
         if (toastTimer !== undefined) clearTimeout(toastTimer);
         toastBox.remove();
         delete host.__scWaveExclusionsChanged;
@@ -3687,19 +3391,19 @@ export function installWave(config: WaveConfig, createPlayback: typeof installPl
     window.addEventListener('pagehide', dispose, { once: true });
     window.addEventListener('online', onOnline);
     document.addEventListener('scroll', onScroll, true);
-    document.addEventListener('contextmenu', onPageMenu);
-    document.addEventListener('mousedown', onOutside, true);
-    document.addEventListener('keydown', onDocumentKey);
+    document.addEventListener('contextmenu', menuSection.onPageMenu);
+    document.addEventListener('mousedown', menuSection.onOutside, true);
+    document.addEventListener('keydown', menuSection.onDocumentKey);
     document.addEventListener('click', onUserInput, true);
     document.addEventListener('keydown', onUserInput, true);
-    window.addEventListener('blur', closeMenu);
+    window.addEventListener('blur', menuSection.closeMenu);
     window.addEventListener('resize', onResize);
     window.addEventListener('popstate', onPop);
     document.addEventListener('visibilitychange', repaint);
     document.addEventListener('visibilitychange', onShown);
     observer.observe(document.documentElement, { childList: true, subtree: true });
     state = 'loading';
-    watchFrames();
+    menuSection.watchFrames();
     mount();
     attach();
 }
@@ -3710,7 +3414,7 @@ const pageHelpers = [
     isWaveEligible, acceptCandidate, pickSpaced, tasteMaps, tasteScore, tasteOrder, tasteReason, applyTasteReasons, shuffleInPlace, topGenres, fillText, reasonText, shapeSamples,
     artworkUrl, coversOf, formatTime, playEnd, siteSource, moodTags, trackPath, localDay, countText, tasteGroups, capPerArtist, forgottenPicks, artistNames, isNewArtist, spreadBy, pickFinds,
     ...identity.identityHelpers, ...sources.sourceHelpers, ...libraryMix.libraryHelpers, siteRequires, installPlaybackPage, installPlaybackRecovery,
-    installVersions, installLibrary, installRadar, installShelf,
+    installVersions, installLibrary, installRadar, installShelf, installMenu,
 ];
 
 export function waveScript(resume = false): string {
