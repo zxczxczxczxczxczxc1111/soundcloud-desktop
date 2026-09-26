@@ -37,6 +37,7 @@ export interface LibraryOperations {
     syncFinish: Operation<RecommendStore['syncFinish']>;
     syncState: Operation<RecommendStore['syncState']>;
     libraryMembers: Operation<RecommendStore['libraryMembers']>;
+    playlistTracks: Operation<RecommendStore['playlistTracks']>;
     catalogChecked: Operation<RecommendStore['catalogChecked']>;
     radarPlan: Operation<RadarService['plan']>;
     radarStatus: Operation<RecommendStore['radarStatus']>;

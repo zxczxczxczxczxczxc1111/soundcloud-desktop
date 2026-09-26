@@ -1361,6 +1361,44 @@ it('P3: фоном обходит лайки с датами, подписки �
     expect(likePages).toBe(2);
 });
 
+it('Э6: треки своих и сохранённых плейлистов обходятся источником playlist:<id>, заготовки добираются, в хранилище полные треки по порядку', async () => {
+    const calls: unknown[][] = [];
+    let run = 0;
+    const fresh = Date.now();
+    const done = (source: string) => ({ source, status: 'complete', completed: fresh, updated: fresh });
+    const recommend = {
+        syncState: vi.fn(async () => ['followings', 'likes', 'playlists', 'playlist-likes'].map(done)),
+        libraryMembers: vi.fn(async (_user: number, source: string) => (source === 'playlists' ? [{ key: 'sc:playlist:8' }] : [{ key: 'sc:playlist:9' }, { key: 'sc:playlist:8' }])),
+        syncStart: vi.fn(async (_user: number, source: string) => { calls.push(['start', source]); return { run: ++run, cursor: null }; }),
+        syncPage: vi.fn(async (_user: number, source: string, _run: number, items: unknown, cursor: unknown) => { calls.push(['page', source, items, cursor]); return true; }),
+        syncFinish: vi.fn(async (_user: number, source: string, _run: number, status: string, error: string) => { calls.push(['finish', source, status, error]); return {}; }),
+        recordUploads: vi.fn(async () => 1),
+    };
+    Object.assign(window, { soundcloudAPI: { recommend } });
+    const batches: string[] = [];
+    fakeSite(relatedTracks, (name, path, query) => {
+        const id = Number((path as { id?: unknown }).id);
+        if (name === 'playlist' && id === 8) return { id: 8, tracks: [{ id: 101, kind: 'track', title: 'A' }, { id: 102, kind: 'track', policy: 'ALLOW' }, { id: 103, kind: 'track' }] };
+        if (name === 'playlist' && id === 9) return Promise.reject({ status: 404, headers: {} });
+        if (name === 'trackBatch') {
+            batches.push(String(query.ids));
+            return [{ id: 102, kind: 'track', title: 'B' }];
+        }
+        return undefined;
+    });
+    window.eval(waveScript());
+    await vi.advanceTimersByTimeAsync(60000);
+    const own = calls.filter((call) => String(call[1]).startsWith('playlist:'));
+    expect(own).toEqual([
+        ['start', 'playlist:8'], ['page', 'playlist:8', [{ key: 'sc:track:101', added: 0 }, { key: 'sc:track:102', added: 0 }], null], ['finish', 'playlist:8', 'complete', ''],
+        ['start', 'playlist:9'], ['finish', 'playlist:9', 'failed', 'missing 404'],
+    ]);
+    expect(batches).toContain('102,103');
+    expect(recommend.recordUploads).toHaveBeenCalledWith(77, [{ id: 101, kind: 'track', title: 'A' }, { id: 102, kind: 'track', title: 'B' }]);
+    // Списки плейлистов пройдены недавно: заново не обходятся
+    expect(calls.some((call) => call[1] === 'playlists' || call[1] === 'likes')).toBe(false);
+});
+
 it('P3: текстовый поиск находит другие версии зерна у любых аккаунтов, версия идёт со своей причиной', async () => {
     const site = fakeSite(() => [], (name, _path, query) => {
         if (name !== 'searchCategory' || typeof query.q !== 'string' || !query.q.startsWith('Seed ')) return undefined;

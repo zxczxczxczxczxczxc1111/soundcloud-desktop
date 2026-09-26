@@ -113,6 +113,8 @@ export interface TasteLibrary {
     likes: Array<{ id: number; added: number; upload: TasteUpload | null }>;
     /** Подписки: id аккаунтов */
     follows: number[];
+    /** Треки своих (own) и сохранённых плейлистов из текущих списков библиотеки, без повторов; свой главнее сохранённого */
+    playlists: Array<{ id: number; own: boolean; upload: TasteUpload | null }>;
     /** Разбор сыгранных загрузок, которые есть в хранилище: кредиты из метаданных издателя */
     uploads: TasteUpload[];
 }
@@ -239,6 +241,32 @@ function toTasteUpload(row: Values): TasteUpload {
     };
 }
 const TASTE_UPLOAD = 'u.id, u.uploader, u.uploader_name, u.title, u.duration, u.genre, u.tags, u.credits';
+// Треки своих и сохранённых плейлистов без повторов, свой главнее сохранённого. Плейлисты читаются только те, что сейчас
+// в библиотеке: источник убранного плейлиста в выборку не идёт
+function playlistRows(db: DatabaseSync): TasteLibrary['playlists'] {
+    const listIds = (source: string): Set<number> => new Set(
+        (db.prepare('select key from members where source = ? and removed = 0').all(source) as Values[])
+            .map((row) => Number(str(row.key).slice('sc:playlist:'.length)))
+            .filter(isId),
+    );
+    const own = listIds('playlists');
+    const saved = listIds('playlist-likes');
+    const tracks = new Map<number, { id: number; own: boolean; upload: TasteUpload | null }>();
+    const rows = db.prepare(
+        'select m.key as member, m.source as list, ' + TASTE_UPLOAD + " from members m left join uploads u on u.key = m.key where m.source like 'playlist:%' " +
+            'and m.removed = 0 order by m.source, m.key limit 20000',
+    ).all() as Values[];
+    for (const row of rows) {
+        const list = Number(str(row.list).slice('playlist:'.length));
+        const id = Number(str(row.member).slice('sc:track:'.length));
+        if (!isId(id) || !isId(list) || (!own.has(list) && !saved.has(list))) continue;
+        const mine = own.has(list);
+        const known = tracks.get(id);
+        if (known && (known.own || !mine)) continue;
+        tracks.set(id, { id, own: mine, upload: row.id === null || row.id === undefined ? null : toTasteUpload(row) });
+    }
+    return [...tracks.values()];
+}
 function toEdition(row: Values): RadarEdition {
     const list = (value: unknown): RadarItem[] => {
         const parsed = parseJson(str(value));
@@ -523,7 +551,7 @@ export class RecommendStore {
     }
     /** Для модели вкуса: лайки с датой и разбором, подписки и разбор сыгранных загрузок played */
     public tasteLibrary(userId: unknown, played: unknown): TasteLibrary {
-        if (!isId(userId)) return { likes: [], follows: [], uploads: [] };
+        if (!isId(userId)) return { likes: [], follows: [], playlists: [], uploads: [] };
         const ids = Array.isArray(played) ? [...new Set(played.filter(isId))].slice(0, 20000) : [];
         return this.guarded(userId, (db) => {
             const likes = (db.prepare(
@@ -543,8 +571,12 @@ export class RecommendStore {
                 const row = select.get('sc:track:' + id) as Values | undefined;
                 if (row) uploads.push(toTasteUpload(row));
             }
-            return { likes, follows, uploads };
+            return { likes, follows, playlists: playlistRows(db), uploads };
         });
+    }
+    /** Треки плейлистов для вкуса и жанров полки: только плейлисты из текущих списков библиотеки */
+    public playlistTracks(userId: unknown): TasteLibrary['playlists'] {
+        return isId(userId) ? this.guarded(userId, playlistRows) : [];
     }
     /** Источники радара с последней проверкой */
     public catalogState(userId: unknown): CatalogCheck[] {

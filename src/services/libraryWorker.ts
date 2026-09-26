@@ -49,6 +49,7 @@ function run(request: LibraryRequest): unknown {
         case 'syncFinish': return recommend.syncFinish(...request.args);
         case 'syncState': return recommend.syncState(...request.args);
         case 'libraryMembers': return recommend.libraryMembers(...request.args);
+        case 'playlistTracks': return recommend.playlistTracks(...request.args);
         case 'catalogChecked': return recommend.catalogChecked(...request.args);
         case 'radarPlan': return radar.plan(...request.args);
         case 'radarStatus': return recommend.radarStatus(...request.args);

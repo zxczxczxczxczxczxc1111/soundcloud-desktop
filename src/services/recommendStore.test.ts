@@ -106,7 +106,27 @@ it('для вкуса: лайки с датой и разбором загруз
     store.syncPage(77, 'likes', 2, [{ key: 'sc:track:2' }], null, 210);
     store.syncFinish(77, 'likes', 2, 'complete', '', 220);
     expect(store.tasteLibrary(77, []).likes.map((like) => like.id)).toEqual([2]);
-    expect(store.tasteLibrary(0, [5])).toEqual({ likes: [], follows: [], uploads: [] });
+    expect(store.tasteLibrary(0, [5])).toEqual({ likes: [], follows: [], playlists: [], uploads: [] });
+});
+
+it('для вкуса: треки плейлистов из текущих списков, свой главнее сохранённого, убранный плейлист не идёт', () => {
+    const store = open(folder());
+    store.recordUploads(77, [track(1, 'One', 9, { genre: 'House' }), track(3, 'Three', 8)], 10);
+    const sync = (source: string, keys: string[], run: number): void => {
+        store.syncStart(77, source, false, 100 * run);
+        store.syncPage(77, source, run, keys.map((key) => ({ key })), null, 100 * run + 10);
+        store.syncFinish(77, source, run, 'complete', '', 100 * run + 20);
+    };
+    sync('playlists', ['sc:playlist:10'], 1);
+    sync('playlist-likes', ['sc:playlist:20', 'sc:playlist:30'], 1);
+    sync('playlist:10', ['sc:track:1', 'sc:track:2'], 1);
+    sync('playlist:20', ['sc:track:1', 'sc:track:3'], 1);
+    sync('playlist:40', ['sc:track:4'], 1);
+    const tracks = store.tasteLibrary(77, []).playlists.sort((a, b) => a.id - b.id);
+    expect(tracks.map((entry) => [entry.id, entry.own, entry.upload?.genre ?? null])).toEqual([[1, true, 'House'], [2, true, null], [3, false, '']]);
+    // Сохранённый плейлист убрали из библиотеки: его треки во вкус больше не идут
+    sync('playlist-likes', ['sc:playlist:30'], 2);
+    expect(store.tasteLibrary(77, []).playlists.map((entry) => entry.id).sort((a, b) => a - b)).toEqual([1, 2]);
 });
 
 it('A15: ответ прошлого прогона и чужого аккаунта не принимается', () => {

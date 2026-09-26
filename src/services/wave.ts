@@ -1033,6 +1033,7 @@ export interface WaveWindow extends Window {
         // Хранилище рекомендаций в worker: обход библиотеки и загрузки с разбором версий
         recommend?: SyncBridge & {
             syncState(user: number): Promise<unknown>;
+            libraryMembers?(user: number, source: string): Promise<unknown>;
             recordingLinks?(user: number): Promise<unknown>;
             radarPlan?(user: number): Promise<unknown>;
             catalogChecked?(user: number, key: string, label: string, status: string, error: string, found: number): Promise<unknown>;
@@ -1526,10 +1527,45 @@ export function installWave(config: WaveConfig, createPlayback: typeof installPl
                 });
                 if (result.status !== 'complete') console.warn('Библиотека: обход ' + plan.source + ' ' + result.status + (result.error ? ': ' + result.error : ''));
                 // Вход пропал или аккаунт сменился: остальные источники тоже не ответят этому аккаунту
-                if (result.error.startsWith('auth') || result.error === 'account-changed') break;
+                if (result.error.startsWith('auth') || result.error === 'account-changed') return;
+            }
+            // Треки своих и сохранённых плейлистов (Э6): источник playlist:<id> одной страницей, треки целиком уходят
+            // в хранилище загрузок, иначе вкус и жанры полки не увидят жанр. Убранный из библиотеки плейлист не обходится,
+            // и вкус его не читает (tasteLibrary берёт только плейлисты из текущих списков)
+            if (disposed || !bridge.libraryMembers) return;
+            const lists = await Promise.all(['playlists', 'playlist-likes'].map((source) => bridge.libraryMembers?.(user, source)));
+            const playlists = [...new Set(lists.flatMap((list) => (Array.isArray(list) ? list : [])
+                .map((member: unknown) => Number(String((member as { key?: unknown } | null)?.key ?? '').slice('sc:playlist:'.length)))
+                .filter(isId)))];
+            for (const id of playlists) {
+                const source = 'playlist:' + id;
+                if (disposed || !due(source)) continue;
+                const result = await syncSource({
+                    user, bridge, nextQuery: () => null, maxPages: 1, now: () => Date.now(), stopped: () => disposed,
+                    stillOwner: async () => ((await backgroundCall('me', {}, {})) as { id?: unknown } | null)?.id === user,
+                    plan: {
+                        source, first: {}, fetch: () => libraryPlaylist(id),
+                        items: (body) => tracksOf(body).map((track) => ({ key: 'sc:track:' + track.id, added: 0, track: track as object })),
+                    },
+                });
+                if (result.status !== 'complete') console.warn('Библиотека: обход ' + source + ' ' + result.status + (result.error ? ': ' + result.error : ''));
+                if (result.error.startsWith('auth') || result.error === 'account-changed') return;
             }
         })().catch((error: unknown) => console.warn('Библиотека: обход не завершён', error)).finally(() => { librarySync = null; });
         return librarySync;
+    }
+    // Плейлист целиком: сайт отдаёт все номера одним ответом (до 500), первые треки целиком, остальные заготовками
+    // {id, kind, policy}; заготовки добираются trackBatch по 50. Порядок плейлиста сохраняется, трек, которого сайт
+    // не отдал (удалён или закрыт), в состав не входит
+    async function libraryPlaylist(id: number): Promise<{ collection: WaveTrack[] }> {
+        const body = (await backgroundCall('playlist', { id }, {})) as { tracks?: unknown } | null;
+        const listed = Array.isArray(body?.tracks) ? body.tracks.map(asTrack).filter((track): track is WaveTrack => !!track) : null;
+        if (!listed) throw new Error('Плейлист ' + id + ' пришёл без списка треков');
+        const full = new Map(listed.filter((track) => typeof track.title === 'string').map((track) => [track.id, track]));
+        const missing = listed.filter((track) => !full.has(track.id)).map((track) => track.id);
+        for (let i = 0; i < missing.length; i += 50)
+            for (const track of tracksOf(await backgroundCall('trackBatch', {}, { ids: missing.slice(i, i + 50).join(',') }))) full.set(track.id, track);
+        return { collection: listed.map((track) => full.get(track.id)).filter((track): track is WaveTrack => !!track) };
     }
 
     // Сбор каталога для радара (раздел 8 плана): main зовёт по расписанию с бюджетом времени. Какие источники смотреть,
@@ -2732,7 +2768,7 @@ export function installWave(config: WaveConfig, createPlayback: typeof installPl
     }
     // Подборки на сутки: все лайки из каталога, вкус из main, похожие на любимое.
     // recentMain это прослушанное за 30 дней по журналу клиента, история сайта помнит только последние 200;
-    // heardMain это прослушанное от 30 секунд за 90 дней с жанром и тегами для жанров полки
+    // heardMain это прослушанное от 30 секунд за 90 дней и треки плейлистов с жанром и тегами для жанров полки
     async function buildShelf(day: string, recentMain: number[], heardMain: HeardTrack[]): Promise<Shelf> {
         const p = await ensureProfile();
         await expandLibrary(p);
@@ -2763,7 +2799,7 @@ export function installWave(config: WaveConfig, createPlayback: typeof installPl
         if (forgotten.length >= 8) cards.push({ kind: 'forgotten', title: '', sub: '', ids: forgotten.map((track) => track.id), seeds: [], keys: [], art: coversOf(forgotten) });
 
         // До 8 жанров, все видны (решение владельца 26.09.2026). Лайк весит 1 плюс вкус, прослушанное без лайка только
-        // своим положительным весом во вкусе: пропущенное туда не попадает
+        // своим положительным весом во вкусе (трек плейлиста его получает из плейлиста): пропущенное туда не попадает
         const likedSet = new Set(liked.map((track) => track.id));
         const listened = heardMain.flatMap((entry) => {
             const weight = weights?.get(entry.id) ?? 0;
@@ -2808,14 +2844,16 @@ export function installWave(config: WaveConfig, createPlayback: typeof installPl
         shelfPromise = (async () => {
             const id = await ensureUser();
             if (!id) throw new Error('Пользователь не определён');
-            const loaded = (await bridge.load(id)) as { snapshot?: unknown; recent?: unknown; heard?: unknown } | null;
+            const loaded = (await bridge.load(id)) as { snapshot?: unknown; recent?: unknown; heard?: unknown; playlists?: unknown } | null;
             const saved = asShelf(loaded?.snapshot);
             if (saved && saved.day === day && saved.v === SHELF_FORMAT) {
                 replace(saved);
                 return;
             }
             const recent = Array.isArray(loaded?.recent) ? loaded.recent.filter(isId) : [];
-            const built = await buildShelf(day, recent, asHeard(loaded?.heard));
+            // Прослушанное и треки плейлистов одним списком без повторов: и то и другое идёт в жанры своим весом во вкусе
+            const extra = new Map([...asHeard(loaded?.heard), ...asHeard(loaded?.playlists)].map((entry) => [entry.id, entry]));
+            const built = await buildShelf(day, recent, [...extra.values()]);
             if (disposed) return;
             replace(built);
             // Пустую полку не хранит: лайки могли не загрузиться, следующий запуск соберёт заново

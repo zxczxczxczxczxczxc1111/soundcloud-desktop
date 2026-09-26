@@ -1164,8 +1164,9 @@ async function init() {
     ipcMain.handle('soundcloud:wave-shelf:load', async (event, userId: unknown) => {
         if (!isTrustedSoundCloudSender(event)) return null;
         let recent: number[] = [];
+        type ShelfTrack = { id: number; artist: number; title: string; artistName: string; genre: string; tags: string; path: string; artwork: string; dur: number };
         // Прослушанное от 30 секунд за 90 дней с жанром и тегами: из него тоже строятся жанры полки
-        const heard = new Map<number, { id: number; artist: number; title: string; artistName: string; genre: string; tags: string; path: string; artwork: string; dur: number }>();
+        const heard = new Map<number, ShelfTrack>();
         try {
             if (typeof userId === 'number' && Number.isSafeInteger(userId) && userId > 0) {
                 const since = Date.now() - 30 * 86400000;
@@ -1178,7 +1179,19 @@ async function init() {
         } catch (error) {
             console.warn('Недавние прослушивания для подборок не прочитаны:', error);
         }
-        return { snapshot: shelf.load(userId), recent, heard: [...heard.values()].slice(-3000) };
+        // Треки своих и сохранённых плейлистов из хранилища рекомендаций: жанры полки берут и их (Э6).
+        // Пути и обложки там нет: обложки карточки берутся у лайков, треки при раскрытии перечитывает trackBatch
+        let playlists: ShelfTrack[] = [];
+        try {
+            if (typeof userId === 'number' && Number.isSafeInteger(userId) && userId > 0)
+                playlists = (await library.request('playlistTracks', userId)).flatMap((entry) => (entry.upload ? [{
+                    id: entry.id, artist: entry.upload.uploader, title: entry.upload.title, artistName: entry.upload.uploaderName, genre: entry.upload.genre,
+                    tags: entry.upload.tags, path: '', artwork: '', dur: entry.upload.duration,
+                }] : [])).slice(0, 5000);
+        } catch (error) {
+            console.warn('Треки плейлистов для подборок не прочитаны:', error);
+        }
+        return { snapshot: shelf.load(userId), recent, heard: [...heard.values()].slice(-3000), playlists };
     });
     ipcMain.handle('soundcloud:wave-shelf:save', (event, userId: unknown, snapshot: unknown) =>
         isTrustedSoundCloudSender(event) ? shelf.save(userId, snapshot) : false,

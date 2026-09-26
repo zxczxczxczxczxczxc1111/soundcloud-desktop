@@ -185,6 +185,23 @@ it('A14: куратор, участники из названия, семья и
     expect(weightOf(skipped.families, 'tune|artistz')).toBeUndefined();
 });
 
+it('треки плейлистов (решение владельца 26.09.2026): свой 0.6 лайка без даты, сохранённый 0.3, лайкнутый второй раз не идёт', () => {
+    const upload = (id: number) => ({ id, uploader: 70, uploaderName: 'Label', title: 'Label - T' + id, duration: 200000, genre: 'trap', tags: '', credits: [] });
+    const library: TasteLibrary = {
+        likes: [{ id: 73, added: 0, upload: upload(73) }],
+        follows: [],
+        playlists: [{ id: 71, own: true, upload: upload(71) }, { id: 72, own: false, upload: upload(72) }, { id: 73, own: true, upload: upload(73) }, { id: 74, own: false, upload: null }],
+        uploads: [],
+    };
+    const { profile } = buildTaste(confident, [], empty, NOW, library);
+    const undated = 2 * TASTE_PARAMS.undatedLike * TASTE_PARAMS.blend.long;
+    expect(weightOf(profile.tracks, 71)).toBeCloseTo(undated * TASTE_PARAMS.playlistOwn, 2);
+    expect(weightOf(profile.tracks, 72)).toBeCloseTo(undated * TASTE_PARAMS.playlistSaved, 2);
+    expect(weightOf(profile.tracks, 73)).toBeCloseTo(undated, 2);
+    expect(weightOf(profile.tracks, 74)).toBeCloseTo(undated * TASTE_PARAMS.playlistSaved, 2);
+    expect(weightOf(profile.tags, 'trap')).toBeGreaterThan(0);
+});
+
 it('лайки сайта и подписки: дата лайка вместо даты обхода, без даты только в устойчивой части, двойного счёта нет', () => {
     const upload = (id: number, uploader: number, title: string) => ({ id, uploader, uploaderName: 'Label', title, duration: 200000, genre: 'house', tags: '', credits: [] });
     const library: TasteLibrary = {
@@ -196,6 +213,7 @@ it('лайки сайта и подписки: дата лайка вместо 
             { id: 1, added: NOW, upload: null },
         ],
         follows: [80],
+        playlists: [],
         uploads: [],
     };
     const { profile } = buildTaste([...confident, play({ id: 1, likedNow: true })], [], empty, NOW, library);
@@ -207,7 +225,7 @@ it('лайки сайта и подписки: дата лайка вместо 
     expect(weightOf(profile.tags, 'house')).toBeGreaterThan(0);
     // Кредиты из хранилища (метаданные издателя) важнее разбора названия у сыгранного трека
     const withMeta = buildTaste([...confident, play({ id: 61, artist: 90, artistName: 'Label', title: 'One' })], [], empty, NOW, {
-        likes: [], follows: [], uploads: [{ ...upload(61, 90, 'One'), credits: [{ name: 'Real Artist', key: 'realartist', role: 'artist', source: 'metadata' }] }],
+        likes: [], follows: [], playlists: [], uploads: [{ ...upload(61, 90, 'One'), credits: [{ name: 'Real Artist', key: 'realartist', role: 'artist', source: 'metadata' }] }],
     }).profile;
     expect(weightOf(withMeta.credits, 'realartist')).toBeCloseTo(blended(0.4, HOUR_AGE, false), 2);
     expect(weightOf(withMeta.artists, 90)).toBeCloseTo(blended(0.4 * TASTE_PARAMS.curatorShare, HOUR_AGE, false), 2);

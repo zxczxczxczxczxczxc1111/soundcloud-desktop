@@ -21,7 +21,7 @@ const PARTS: Part[] = ['tracks', 'artists', 'credits', 'families', 'tags', 'mark
 
 /** Параметры модели в одном месте; version растёт при каждом изменении их смысла */
 export const TASTE_PARAMS = {
-    version: 2,
+    version: 3,
     /** Полураспад устойчивой части, дни */
     halfLifeDays: 180,
     /** Смешивание: устойчивая часть, 30 дней, неделя */
@@ -45,6 +45,9 @@ export const TASTE_PARAMS = {
     follow: 0.5,
     /** Лайк без даты (массовый импорт) идёт только в устойчивую часть с этим множителем, а не датой обхода */
     undatedLike: 0.5,
+    /** Трек плейлиста как доля лайка без даты (решение владельца 26.09.2026): свой почти лайк, сохранённый слабее */
+    playlistOwn: 0.6,
+    playlistSaved: 0.3,
     /** Сумма одного ключа из прослушиваний за местные сутки [не ниже, не выше]: хит на повторе не даёт десятков голосов */
     daily: {
         tracks: [-1, 2], artists: [-0.6, 1.2], credits: [-0.6, 1.2], families: [-0.6, 1.2], tags: [-0.3, 0.6], markers: [-0.3, 0.6],
@@ -308,6 +311,16 @@ export function buildTaste(
         if (upload) tagLabels(upload.genre, upload.tags, labels);
         const item = upload ? directionsOf(fromUpload(upload)) : directionsOf({ id: like.id, uploader: 0, uploaderName: '', title: '', duration: 0, genre: '', tags: '', credits: null });
         apply(LIKE, like.id, upload?.uploader ?? 0, item, 1, originOf(like.added || now, item.record, true, false, !like.added));
+    }
+    // Треки плейлистов: даты добавления у сайта нет, поэтому как лайк без даты, с долей своего или сохранённого плейлиста.
+    // Лайкнутый трек второй раз не идёт
+    const likedIds = new Set((library?.likes ?? []).map((like) => like.id));
+    for (const track of library?.playlists ?? []) {
+        if (likedIds.has(track.id) || likedInPlay.has(track.id) || marked.has(track.id)) continue;
+        const upload = track.upload;
+        if (upload) tagLabels(upload.genre, upload.tags, labels);
+        const item = upload ? directionsOf(fromUpload(upload)) : directionsOf({ id: track.id, uploader: 0, uploaderName: '', title: '', duration: 0, genre: '', tags: '', credits: null });
+        apply(LIKE, track.id, upload?.uploader ?? 0, item, track.own ? P.playlistOwn : P.playlistSaved, originOf(now, item.record, false, false, true));
     }
     for (const id of library?.follows ?? []) entry('artists', String(id)).long += P.follow;
 
