@@ -34,6 +34,9 @@ export function installRendererRecovery(contents: WebContents, actions: Recovery
     let retry: ReturnType<typeof setTimeout> | undefined;
     let hang: ReturnType<typeof setTimeout> | undefined;
     let poll: ReturnType<typeof setInterval> | undefined;
+    // Упавшая загрузка показывает страницу ошибки Chromium, и та тоже присылает did-finish-load, но без did-navigate.
+    // Успех это загрузка, дошедшая до перехода: иначе повтор и опрос сети снимались сразу после сбоя
+    let loadFailed = false;
     const alive = (): boolean => !disposed && !actions.isQuitting() && !contents.isDestroyed();
     const cancelRetry = (): void => { clearTimeout(retry); retry = undefined; };
     const stopPoll = (): void => { clearInterval(poll); poll = undefined; };
@@ -74,6 +77,7 @@ export function installRendererRecovery(contents: WebContents, actions: Recovery
     contents.on('did-fail-load', (_event, code, _description, _url, isMainFrame) => {
         // -3: загрузку отменила новая навигация или сам клиент
         if (!isMainFrame || code === -3 || !alive()) return;
+        loadFailed = true;
         incident(false);
         if (!poll && !actions.online()) poll = setInterval(() => {
             if (!actions.online()) return;
@@ -81,7 +85,11 @@ export function installRendererRecovery(contents: WebContents, actions: Recovery
             reload();
         }, timing.poll);
     });
+    contents.on('did-navigate', () => {
+        loadFailed = false;
+    });
     contents.on('did-finish-load', () => {
+        if (loadFailed) return;
         stopPoll();
         cancelRetry();
     });

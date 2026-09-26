@@ -65,6 +65,7 @@ it('без сети загрузка повторяется, как только
     online = true;
     await vi.advanceTimersByTimeAsync(15_000);
     expect(offline.contents.reload).toHaveBeenCalledTimes(1);
+    offline.contents.emit('did-navigate');
     offline.contents.emit('did-finish-load');
     await vi.advanceTimersByTimeAsync(60 * 60_000);
     expect(offline.contents.reload).toHaveBeenCalledTimes(1);
@@ -83,6 +84,30 @@ it('без сети загрузка повторяется, как только
     down.contents.emit('did-fail-load', {}, -106, 'ERR', 'https://w.soundcloud.com/', false);
     await vi.advanceTimersByTimeAsync(60 * 60_000);
     expect(down.contents.reload).toHaveBeenCalledTimes(2);
+});
+
+it('страница ошибки после неудачной загрузки не снимает повтор: клиент без сети поднимается сам', async () => {
+    // Chromium показывает свою страницу ошибки и присылает did-finish-load без did-navigate (снято вживую 26.09.2026)
+    let online = false;
+    const offline = setup(() => online);
+    offline.failLoad();
+    offline.contents.emit('did-finish-load');
+    online = true;
+    await vi.advanceTimersByTimeAsync(15_000);
+    expect(offline.contents.reload).toHaveBeenCalledTimes(1);
+
+    const down = setup();
+    down.failLoad(-20);
+    down.contents.emit('did-finish-load');
+    await vi.advanceTimersByTimeAsync(60_000);
+    expect(down.contents.reload).toHaveBeenCalledTimes(1);
+    // Загрузка, дошедшая до перехода, это успех: отложенный повтор снимается
+    down.failLoad();
+    down.contents.emit('did-finish-load');
+    down.contents.emit('did-navigate');
+    down.contents.emit('did-finish-load');
+    await vi.advanceTimersByTimeAsync(60 * 60_000);
+    expect(down.contents.reload).toHaveBeenCalledTimes(1);
 });
 
 it('после начала выхода и после снятия восстановления страница не перезагружается', async () => {
