@@ -39,6 +39,7 @@ import { tintIcon } from './services/devIcon';
 import { revealWindow } from './services/revealWindow';
 import { watchHiddenPage } from './services/hiddenPageWatchdog';
 import { registerWindowIpc } from './ipc/windowIpc';
+import { registerUpdateIpc } from './ipc/updateIpc';
 import {
     app,
     BrowserWindow,
@@ -833,34 +834,19 @@ async function init() {
         language: appLanguage,
         onStatus: handleUpdateStatus,
     });
-    ipcMain.on('update-screen-later', (event) => {
-        if (!updateScreen?.owns(event.sender) || !isTrustedLocalSender(event)) return;
-        updateScreenDismissed = true;
-        closeUpdateScreen();
-    });
-    ipcMain.handle('install-update-now', (event) => {
-        if (!isTrustedLocalSender(event)) throw new Error('Недопустимый отправитель IPC');
-        return updateService?.installNow() ?? false;
+    registerUpdateIpc(ipcMain, {
+        trustedLocal: isTrustedLocalSender,
+        updates: () => updateService,
+        screenOwns: (sender) => updateScreen?.owns(sender) === true,
+        later: () => {
+            updateScreenDismissed = true;
+            closeUpdateScreen();
+        },
+        openExternal: (url) => shell.openExternal(url),
+        openPath: (folder) => shell.openPath(folder),
+        dataFolder: () => app.getPath('userData'),
     });
     updateService.start();
-    ipcMain.handle('get-update-state', (event) => {
-        if (!isTrustedLocalSender(event)) throw new Error('Недопустимый отправитель IPC');
-        return updateService?.getState() ?? null;
-    });
-    ipcMain.handle('open-release-page', async (event) => {
-        if (!isTrustedLocalSender(event)) throw new Error('Недопустимый отправитель IPC');
-        const url = updateService?.getState().releaseUrl;
-        if (url) await shell.openExternal(url);
-    });
-    ipcMain.handle('check-updates', async (event) => {
-        if (!isTrustedLocalSender(event)) throw new Error('Недопустимый отправитель IPC');
-        await updateService?.check();
-    });
-    ipcMain.handle('open-data-folder', async (event) => {
-        if (!isTrustedLocalSender(event)) throw new Error('Недопустимый отправитель IPC');
-        const error = await shell.openPath(app.getPath('userData'));
-        if (error) throw new Error(error);
-    });
     shortcutService = new ShortcutService(mainWindow);
     shortcutService.attachToWebContents(contentView.webContents);
     shortcutService.attachToWebContents(headerView.webContents);
