@@ -1870,6 +1870,7 @@ export function installWave(config: WaveConfig, createPlayback: typeof installPl
         }
     }
     // Связи из хранилища недоверенные: берутся только пары ключей загрузок с признаком и источником.
+    // Хранилище отдаёт их от решений пользователя к свежим, поэтому лишнее отрезается с хвоста.
     // Не прочитались: работаем без переноса на копии, а не без волны
     async function loadCopyGroups(id: number): Promise<Map<string, string>> {
         const links: RecordingLink[] = [];
@@ -2725,17 +2726,20 @@ export function installWave(config: WaveConfig, createPlayback: typeof installPl
     interface MenuTarget { kind: WaveLinkKind; url: string; artistUrl: string; track?: WaveTrack }
     interface Artist { id: number; username: string; url: string }
 
-    const resolved = new Map<string, Promise<unknown>>();
+    // Ответ живёт 10 минут: плейлист правят, станция трека меняется, а страница живёт сутками
+    const resolved = new Map<string, { at: number; found: Promise<unknown> }>();
     function resolveUrl(url: string): Promise<unknown> {
         const key = canonicalUrl(url) || url;
-        let found = resolved.get(key);
-        if (!found) {
-            found = call('resolve', {}, { url });
-            resolved.set(key, found);
-            if (resolved.size > 100) resolved.delete(resolved.keys().next().value as string);
-            // Неудачный ответ не кешируется: следующий клик спросит снова
-            void found.catch(() => resolved.delete(key));
-        }
+        const kept = resolved.get(key);
+        if (kept && Date.now() - kept.at < 10 * 60 * 1000) return kept.found;
+        const found = call('resolve', {}, { url });
+        resolved.delete(key);
+        resolved.set(key, { at: Date.now(), found });
+        if (resolved.size > 100) resolved.delete(resolved.keys().next().value as string);
+        // Неудачный ответ не кешируется: следующий клик спросит снова
+        void found.catch(() => {
+            if (resolved.get(key)?.found === found) resolved.delete(key);
+        });
         return found;
     }
     const tracksOf = (body: unknown): WaveTrack[] => collection(body).map(asTrack).filter((track): track is WaveTrack => !!track);

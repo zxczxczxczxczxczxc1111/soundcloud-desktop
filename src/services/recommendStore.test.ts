@@ -59,6 +59,14 @@ it('связь каталога только при одном ISRC и той ж
     expect(store.recordingLinks(77).filter((link) => link.source === 'user')).toEqual([{ a: 'sc:track:4', b: 'sc:track:9', same: false, source: 'user', at: 40 }]);
 });
 
+it('связи идут от решений пользователя к свежим связям каталога: при переполнении отпадают старые связи каталога', () => {
+    const store = open(folder());
+    store.recordUploads(77, [track(1, 'Artist - Song', 1, { publisher_metadata: { isrc: 'QZMHP2505378' } }), track(2, 'Artist - Song', 2, { publisher_metadata: { isrc: 'QZMHP2505378' } })], 10);
+    store.recordUploads(77, [track(5, 'Other - Tune', 5, { publisher_metadata: { isrc: 'QZMHP2505379' } }), track(6, 'Other - Tune', 6, { publisher_metadata: { isrc: 'QZMHP2505379' } })], 20);
+    expect(store.setRecordingLink(77, 'sc:track:7', 'sc:track:8', true, 5)).toBe(true);
+    expect(store.recordingLinks(77).map((link) => link.source + ':' + link.a)).toEqual(['user:sc:track:7', 'catalog:sc:track:5', 'catalog:sc:track:1']);
+});
+
 it('A16: полный обход снимает пропавшее, неполный и продолженный ничего не удаляют', () => {
     const store = open(folder());
     const first = store.syncStart(77, 'likes', false, 100);

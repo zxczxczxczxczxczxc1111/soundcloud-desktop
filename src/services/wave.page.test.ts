@@ -1334,6 +1334,27 @@ it('ошибка включения из истории возвращает fai
     expect(site.player.getCurrentSound()).toBeNull();
 });
 
+it('распознанная ссылка помнится 10 минут, потом спрашивается снова', async () => {
+    const site = fakeSite(relatedTracks, (name, _path, query) => {
+        if (name === 'resolve') return { id: query.url === 'https://soundcloud.com/artist/first' ? 91 : 92, kind: 'track', title: 'Track' };
+        return undefined;
+    });
+    window.eval(waveScript());
+    await vi.advanceTimersByTimeAsync(100);
+    const open = (window as unknown as { __scOpenTrack(path: string, go: boolean): Promise<string> }).__scOpenTrack;
+    const asked = (): number => site.api.callEndpoint.mock.calls.filter(([name, , query]) => name === 'resolve' && (query as { url?: string }).url === 'https://soundcloud.com/artist/first').length;
+    // Между открытиями первой ссылки играет вторая, иначе «уже играет» обходит распознавание
+    await open('/artist/first', false);
+    await open('/artist/second', false);
+    await vi.advanceTimersByTimeAsync(60 * 1000);
+    await open('/artist/first', false);
+    expect(asked()).toBe(1);
+    await open('/artist/second', false);
+    await vi.advanceTimersByTimeAsync(10 * 60 * 1000);
+    await open('/artist/first', false);
+    expect(asked()).toBe(2);
+});
+
 function savedLibrary(snapshot: PlaybackSnapshot | null = null) {
     const library = {
         loadSession: vi.fn(async () => snapshot), saveSession: vi.fn(async () => true),

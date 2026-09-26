@@ -792,8 +792,10 @@ export class RecommendStore {
         copyFileSync(source, file + '.tmp');
         renameSync(file + '.tmp', file);
     }
+    // Сначала решения пользователя, потом свежие связи каталога: при переполнении отпадают самые старые связи каталога,
+    // а не новые решения. Страница режет список сверху по тому же порядку
     private readLinks(db: DatabaseSync): RecordingLink[] {
-        return (db.prepare('select a, b, source, same, at from relations order by at limit 50000').all() as Values[]).map((row) => ({
+        return (db.prepare("select a, b, source, same, at from relations order by source = 'user' desc, at desc limit 50000").all() as Values[]).map((row) => ({
             a: str(row.a), b: str(row.b), same: num(row.same) === 1, source: str(row.source) === 'user' ? 'user' as const : 'catalog' as const, at: num(row.at),
         }));
     }
