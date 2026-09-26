@@ -152,6 +152,15 @@ describe('жанр', () => {
         expect(moodTags([track(1, {})], around, 2)).toEqual(['phonk', 'drift']);
         expect(moodTags([track(1, {})], [], 2)).toEqual([]);
     });
+    it('настроение: ник, числа и метка-спам одного загрузчика его не уводят', () => {
+        // Своя метка-ник и год у зерна не настроение
+        const seed = track(1, { genre: 'Phonk', tag_list: 'ivoxygen 2024 drift', user: { id: 1, username: 'ivoxygen' } });
+        expect(moodTags([seed], [], 2)).toEqual(['phonk', 'drift']);
+        // Среди похожих один загрузчик с восемью треками и своей меткой голосует один раз
+        const spam = Array.from({ length: 8 }, (_, i) => track(10 + i, { user_id: 5, user: { id: 5, username: 'Uploader' }, genre: '', tag_list: 'fyp viral' }));
+        const others = [20, 21, 22].map((id) => track(id, { genre: 'Hip-hop & Rap', tag_list: 'memphis' }));
+        expect(moodTags([track(1, {})], [...spam, ...others], 1)).toEqual(['hip-hop & rap']);
+    });
     it('путь трека для журнала: только /user/track, секретная ссылка приватного трека не проходит', () => {
         expect(trackPath('https://soundcloud.com/Mighty_Mason/krovyu-1?in=x')).toBe('/mighty_mason/krovyu-1');
         expect(trackPath('https://soundcloud.com/user/track/s-AbCdEf')).toBe('');

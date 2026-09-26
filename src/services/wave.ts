@@ -991,31 +991,45 @@ export function pickFinds(
     return spreadBy([...capped, ...tracks.filter((track) => !capped.includes(track))].slice(0, limit), trackArtist, 1);
 }
 
-// Настроение зёрен для запасного пути волны: их жанр и теги, а если их нет, самые частые жанры и теги
-// среди похожих (включая отсеянные) в том написании, что встречается чаще
+// Настроение зёрен для запасного пути волны: их жанр и теги, а если их нет, самые весомые жанры и теги
+// среди похожих (включая отсеянные) в том написании, что встречается чаще. Вес как во вкусе (tagShares): жанр 1,
+// метки вместе 0.5, ник исполнителя и числа не в счёт. Среди похожих аккаунт голосует за метку один раз:
+// загрузчик, который ставит одну метку-спам на все свои треки, настроение не перетягивает
 export function moodTags(seeds: WaveTrack[], around: WaveTrack[], limit: number): string[] {
-    const labels = (track: WaveTrack): string[] => {
-        const list = [(track.genre ?? '').trim()];
-        for (const match of (track.tag_list ?? '').matchAll(/"([^"]+)"|(\S+)/g)) list.push((match[1] ?? match[2] ?? '').trim());
-        return list.filter((label) => normalizeTag(label).length >= 2);
-    };
-    const count = (tracks: WaveTrack[]): string[] => {
-        const counts = new Map<string, { count: number; spellings: Map<string, number> }>();
-        for (const track of tracks)
-            for (const label of new Set(labels(track).map((item) => item.toLowerCase()))) {
-                const key = normalizeTag(label);
-                const entry = counts.get(key) ?? { count: 0, spellings: new Map<string, number>() };
-                entry.count++;
-                entry.spellings.set(label, (entry.spellings.get(label) ?? 0) + 1);
-                counts.set(key, entry);
+    const count = (tracks: WaveTrack[], onePerAccount: boolean): string[] => {
+        const found = new Map<string, { weight: number; spellings: Map<string, number> }>();
+        const voted = new Set<string>();
+        for (const track of tracks) {
+            // Написание каждого ключа в этом треке: жанр целиком, его части и метки
+            const genre = (track.genre ?? '').trim();
+            const labels = [genre, ...genre.split(/\s+-\s+|[/,;|]+/)];
+            for (const match of (track.tag_list ?? '').matchAll(/"([^"]+)"|(\S+)/g)) labels.push(match[1] ?? match[2] ?? '');
+            const spelled = new Map<string, string>();
+            for (const label of labels) {
+                const text = label.trim().toLowerCase();
+                const key = genreCanon(normalizeTag(text));
+                if (key && !spelled.has(key)) spelled.set(key, text);
             }
-        return [...counts.values()]
-            .sort((a, b) => b.count - a.count)
+            const account = trackArtist(track);
+            for (const [key, share] of tagShares(track.genre, track.tag_list, [track.user?.username, ...trackCredits(track).map((credit) => credit.name)])) {
+                if (onePerAccount && account) {
+                    if (voted.has(account + ' ' + key)) continue;
+                    voted.add(account + ' ' + key);
+                }
+                const entry = found.get(key) ?? { weight: 0, spellings: new Map<string, number>() };
+                entry.weight += share;
+                const text = spelled.get(key) ?? key;
+                entry.spellings.set(text, (entry.spellings.get(text) ?? 0) + 1);
+                found.set(key, entry);
+            }
+        }
+        return [...found.values()]
+            .sort((a, b) => b.weight - a.weight)
             .slice(0, limit)
             .map((entry) => [...entry.spellings].sort((a, b) => b[1] - a[1])[0][0]);
     };
-    const own = count(seeds);
-    return own.length ? own : count(around);
+    const own = count(seeds, false);
+    return own.length ? own : count(around, true);
 }
 
 // Громкие мастеринги дают сплошной «штрихкод», поэтому динамика растягивается: 10-й и 99-й перцентили в 0..1
