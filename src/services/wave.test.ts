@@ -90,6 +90,18 @@ describe('вкус волны', () => {
         expect(reasonText({ kind: 'tasteTag', genre: 'dark techno' }, WAVE_TEXTS.ru)).toBe('В духе dark techno, который ты любишь');
     });
 
+    it('жанр весит целиком, одна метка из пачки десятой частью и без причины «В духе»; ник загрузчика в метках не считается', () => {
+        const profile = taste([], [['dark', 2], ['ivoxygen', 3]]);
+        const byGenre = item(1, 10, { genre: 'Dark' });
+        const byTag = item(2, 20, { genre: 'Pop', tag_list: 'dark sad love night slow' });
+        const nick = item(3, 30, { genre: 'Pop', tag_list: 'ivoxygen', user: { id: 30, username: 'IVOXYGEN' } });
+        expect(tasteScore(byGenre.track, profile).tag).toBeCloseTo(2, 6);
+        expect(tasteScore(byTag.track, profile).tag).toBeCloseTo(0.2, 6);
+        expect(tasteReason(byGenre, profile)).toEqual({ kind: 'tasteTag', genre: 'dark' });
+        expect(tasteReason(byTag, profile)).toBeNull();
+        expect(tasteScore(nick.track, profile).tag).toBe(0);
+    });
+
     it('причина по вкусу достаётся только заметной трети подборки', () => {
         const profile = taste([], [['techno', 2]]);
         const list = Array.from({ length: 10 }, (_, i) => item(i + 1, 100 + i, { genre: 'techno' }));

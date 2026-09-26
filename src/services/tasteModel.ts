@@ -3,7 +3,7 @@ import { join } from 'path';
 import { COUNTED_MS, localDayStart, type HistoryIndex, type TastePlay } from './historyIndex';
 import type { TasteLibrary, TasteUpload } from './recommendStore';
 import { copyKey, familyKey, nameKey, parseTrackTitle, trackCredits, type CreditRole, type TrackCredit } from './trackIdentity';
-import { normalizeTag, tagKeys, type WaveTrack } from './wave';
+import { genreCanon, normalizeTag, tagShares, type WaveTrack } from './wave';
 
 // Модель вкуса «Моей волны» по журналу прослушиваний, лайкам и подпискам. Три части с разной памятью (раздел 6.1
 // плана радара): устойчивая за год, последние 30 дней и подтверждённые новые интересы недели. Аккаунт-куратор,
@@ -21,7 +21,8 @@ const PARTS: Part[] = ['tracks', 'artists', 'credits', 'families', 'tags', 'mark
 
 /** Параметры модели в одном месте; version растёт при каждом изменении их смысла */
 export const TASTE_PARAMS = {
-    version: 3,
+    /** 4: жанр весит 1, метки вместе 0.5, написания склеены, ник исполнителя в метках не считается (26.09.2026) */
+    version: 4,
     /** Полураспад устойчивой части, дни */
     halfLifeDays: 180,
     /** Смешивание: устойчивая часть, 30 дней, неделя */
@@ -124,11 +125,11 @@ function top(map: Map<string, number>, limit: number, floor: number): Array<[str
     return [...map].filter(([, weight]) => Math.abs(weight) >= floor).sort((a, b) => Math.abs(b[1]) - Math.abs(a[1])).slice(0, limit).map(([key, weight]) => [key, round(weight)]);
 }
 const numeric = (list: Array<[string, number]>): Array<[number, number]> => list.map(([key, weight]) => [Number(key), weight]);
-// Написание тега для людей: как в первом встреченном жанре или теге трека
+// Написание тега для людей: как в первом встреченном жанре, его части или теге трека. Ключ склеен, как в tagShares
 function tagLabels(genre: string, tags: string, into: Map<string, string>): void {
-    const labels = [genre, ...Array.from(tags.matchAll(/"([^"]+)"|(\S+)/g), (match) => match[1] ?? match[2] ?? '')];
+    const labels = [genre, ...genre.split(/\s+-\s+|[/,;|]+/), ...Array.from(tags.matchAll(/"([^"]+)"|(\S+)/g), (match) => match[1] ?? match[2] ?? '')];
     for (const label of labels) {
-        const key = normalizeTag(label);
+        const key = genreCanon(normalizeTag(label));
         if (key.length >= 2 && !into.has(key)) into.set(key, label.trim().toLowerCase().slice(0, 60));
     }
 }
@@ -139,7 +140,8 @@ interface Directions {
     credits: Array<[string, number]>;
     family: string;
     markers: string[];
-    tags: string[];
+    /** Ключ и доля: жанр 1, метки вместе 0.5 (tagShares) */
+    tags: Array<[string, number]>;
     record: string;
 }
 interface Heard {
@@ -158,7 +160,8 @@ function directionsOf(item: Heard): Directions {
     const parsed = parseTrackTitle(item.title);
     const uploader = nameKey(item.uploaderName);
     const shares = new Map<string, number>();
-    for (const credit of item.credits ?? trackCredits(track, parsed)) {
+    const credits = item.credits ?? trackCredits(track, parsed);
+    for (const credit of credits) {
         if (!credit || typeof credit.key !== 'string' || !credit.key || credit.key === uploader) continue;
         const share = TASTE_PARAMS.roles[credit.role] ?? 0;
         if (share > (shares.get(credit.key) ?? 0)) shares.set(credit.key, share);
@@ -173,7 +176,7 @@ function directionsOf(item: Heard): Directions {
         credits: [...shares],
         family: item.title ? familyKey(track, parsed) : '',
         markers: [...new Set(parsed.version.map((entry) => entry.split(':')[0]))].filter(Boolean),
-        tags: tagKeys(item.genre, item.tags),
+        tags: tagShares(item.genre, item.tags, [item.uploaderName, ...credits.map((credit) => credit?.name)]),
         record: item.title ? copyKey(track) : 'sc:track:' + item.id,
     };
 }
@@ -265,7 +268,7 @@ export function buildTaste(
         if (uploader > 0) push('artists', String(uploader), scale(weights[1]) * item.curator, origin);
         for (const [key, share] of item.credits) push('credits', key, scale(weights[1]) * share, origin);
         if (item.family && weights[0] > 0) push('families', item.family, scale(weights[0]) * P.familyShare, origin);
-        for (const key of item.tags) push('tags', key, scale(weights[2]), origin);
+        for (const [key, share] of item.tags) push('tags', key, scale(weights[2]) * share, origin);
         for (const key of item.markers) push('markers', key, scale(weights[2]) * P.markerShare, origin);
     };
 
@@ -337,7 +340,8 @@ export function buildTaste(
     }
 
     const droppedArtists = new Set(overrides.artists);
-    const droppedTags = new Set(overrides.tags);
+    // Убранные до склейки написаний (hiphopandrap) снимают и склеенный ключ (hiphop)
+    const droppedTags = new Set([...overrides.tags, ...overrides.tags.map(genreCanon)]);
     for (const id of droppedArtists) total.artists.delete(String(id));
     for (const key of droppedTags) total.tags.delete(key);
     const profile: TasteProfile = {

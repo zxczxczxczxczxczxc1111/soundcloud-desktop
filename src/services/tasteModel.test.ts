@@ -101,7 +101,8 @@ it('теги по ключам без регистра и знаков, «Бол
     const { profile, view } = buildTaste([...confident, play({ id: 1 })], [mark], { artists: [10], tags: [] }, NOW);
     // Один трек за неделю новый интерес не подтверждает: недельная часть его тегам не идёт
     expect(weightOf(profile.tags, 'techno')).toBeCloseTo(blended(0.2, HOUR_AGE, false), 2);
-    expect(weightOf(profile.tags, 'darktechno')).toBeCloseTo(blended(0.2, HOUR_AGE, false), 2);
+    // Жанр весит целиком, две метки делят 0.5 пополам
+    expect(weightOf(profile.tags, 'darktechno')).toBeCloseTo(blended(0.2 * 0.25, HOUR_AGE, false), 3);
     // Ручное действие подтверждает сразу
     expect(weightOf(profile.tags, 'drumandbass')).toBeCloseTo(0.3, 2);
     expect(weightOf(profile.tracks, 7)).toBeCloseTo(2, 2);
@@ -110,6 +111,18 @@ it('теги по ключам без регистра и знаков, «Бол
     expect(view.removed.artists).toEqual([{ id: 10, name: 'Artist' }]);
     expect(view.tags.find((tag) => tag.key === 'darktechno')?.label).toBe('dark techno');
     expect(view.artists.some((artist) => artist.id === 10)).toBe(false);
+});
+
+it('пачка меток на все жанры и ник артиста в метках не раздувают вкус: жанр 1, метки вместе 0.5, ник и числа выброшены', () => {
+    const spam = { genre: 'Alternative Rock', tags: 'Alternative "Hip Hop" Rap Ambient Dark ivoxygen 333', artist: 40, artistName: 'IVOXYGEN' };
+    const profile = buildTaste([...confident, play({ id: 41, ...spam, title: 'Castle' })], [], empty, NOW).profile;
+    const rock = weightOf(profile.tags, 'alternativerock') ?? 0;
+    expect(rock).toBeGreaterThan(0);
+    // Пять меток после жанра (hip hop и rap склеены в один hiphop) делят половину веса жанра
+    expect(weightOf(profile.tags, 'ambient')).toBeCloseTo(rock * 0.5 / 4, 3);
+    expect(weightOf(profile.tags, 'hiphop')).toBeCloseTo(rock * 0.5 / 4, 3);
+    expect(weightOf(profile.tags, 'ivoxygen')).toBeUndefined();
+    expect(weightOf(profile.tags, '333')).toBeUndefined();
 });
 
 it('новый интерес недели подтверждают две разные записи или два дня, копии одной версии за две не идут', () => {

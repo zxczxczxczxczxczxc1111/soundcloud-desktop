@@ -269,6 +269,24 @@ export function tagKeys(genre: string | null | undefined, tagList: string | null
     return keys;
 }
 
+// Жанр и метки трека с долями для модели вкуса: одинаково в main, на странице и в радаре. Жанр весит 1 на все свои части
+// («Hip Hop/Rap - Trap» это hiphop и trap по 0.5), метки вместе 0.5 поровну, не больше пяти; у трека без жанра метки весят 1.
+// Раньше каждая из шести меток весила как жанр, и артист, который пишет к каждому треку Alternative, Hip Hop, Ambient, Dark,
+// раздувал эти метки во вкусе. Написания склеиваются genreCanon. Имя исполнителя (names) и числа вкус не описывают:
+// свой ник в метках у каждого трека артиста копил бы «жанр» из ника
+export function tagShares(genre: string | null | undefined, tagList: string | null | undefined, names: Array<string | null | undefined> = []): Array<[string, number]> {
+    const skip = new Set(names.map((name) => normalizeTag(name ?? '')).filter((key) => key.length >= 2));
+    const usable = (key: string): boolean => key.length >= 2 && !/^\d+$/.test(key) && !skip.has(key);
+    const genres = genreParts(genre).filter(usable);
+    const tags: string[] = [];
+    for (const match of (tagList ?? '').matchAll(/"([^"]+)"|(\S+)/g)) {
+        const key = genreCanon(normalizeTag(match[1] ?? match[2] ?? ''));
+        if (usable(key) && !genres.includes(key) && !tags.includes(key) && tags.length < 5) tags.push(key);
+    }
+    const tagTotal = genres.length ? 0.5 : 1;
+    return [...genres.map((key): [string, number] => [key, 1 / genres.length]), ...tags.map((key): [string, number] => [key, tagTotal / tags.length])];
+}
+
 export function genreKeys(genre: string): string[] {
     const groups = [
         ['witchhouse', 'wtchhs', 'witchhaus'],
@@ -510,10 +528,21 @@ export function tasteScore(track: WaveTrack, taste: TasteMaps): TasteScore {
         }
         return { value: count ? sum / count : 0, key, best };
     };
-    const tags = average(tagKeys(track.genre, track.tag_list), taste.tags);
     // Анонимный ремикс без участников и имени исполнителя оценивается остальными частями, а не выпадает
     const parsed = parseTrackTitle(track.title);
     const uploader = nameKey(track.user?.username);
+    // Жанр и метки долями, как в модели: одна совпавшая метка из пачки даёт десятую часть, а не вес жанра.
+    // tagBest и tagKey это самый весомый вклад, по нему пишется причина «В духе ...»
+    const tags = { value: 0, key: '', best: 0 };
+    for (const [key, share] of tagShares(track.genre, track.tag_list, [track.user?.username, ...parsed.credits.map((item) => item.name)])) {
+        const weight = taste.tags.get(key);
+        if (weight === undefined) continue;
+        tags.value += share * weight;
+        if (share * weight > tags.best) {
+            tags.best = share * weight;
+            tags.key = key;
+        }
+    }
     let creditName = '';
     let creditBest = 0;
     let creditWorst = 0;
@@ -582,8 +611,10 @@ export function tasteReason(candidate: WaveCandidate, taste: TasteMaps): WaveRea
     if (score.creditName && score.creditBest >= 1 && score.creditBest > score.artist && score.creditBest >= score.tag) return { kind: 'tasteArtist', artist: score.creditName };
     if (name && score.artist >= 1 && score.artist >= score.tag) return { kind: 'tasteArtist', artist: name };
     if (!score.tagKey || score.tagBest < 1 || Math.max(score.artist, score.creditBest) >= 0.3) return null;
-    const labels = [candidate.track.genre ?? '', ...Array.from((candidate.track.tag_list ?? '').matchAll(/"([^"]+)"|(\S+)/g), (match) => match[1] ?? match[2] ?? '')];
-    const label = labels.find((item) => normalizeTag(item) === score.tagKey);
+    // Ключ склеен genreCanon: написание ищется так же, среди жанра целиком, его частей и меток
+    const genre = candidate.track.genre ?? '';
+    const labels = [genre, ...genre.split(/\s+-\s+|[/,;|]+/), ...Array.from((candidate.track.tag_list ?? '').matchAll(/"([^"]+)"|(\S+)/g), (match) => match[1] ?? match[2] ?? '')];
+    const label = labels.find((item) => genreCanon(normalizeTag(item)) === score.tagKey);
     return label ? { kind: 'tasteTag', genre: label.trim().toLowerCase() } : null;
 }
 
@@ -6150,7 +6181,7 @@ export function installWave(config: WaveConfig, createPlayback: typeof installPl
 
 // Помощники идут на страницу объявлениями рядом со скриптом: так они видны installWave и друг другу
 const pageHelpers = [
-    normalizeTag, tagKeys, genreKeys, genreCanon, genreParts, genreMain, parseGenres, formatGenres, genreKeysFor, classifyLink, canonicalUrl, trackMatchesGenre, trackArtist,
+    normalizeTag, tagKeys, tagShares, genreKeys, genreCanon, genreParts, genreMain, parseGenres, formatGenres, genreKeysFor, classifyLink, canonicalUrl, trackMatchesGenre, trackArtist,
     isWaveEligible, acceptCandidate, pickSpaced, tasteMaps, tasteScore, tasteOrder, tasteReason, applyTasteReasons, shuffleInPlace, topGenres, fillText, reasonText, shapeSamples,
     artworkUrl, formatTime, playEnd, siteSource, moodTags, trackPath, localDay, countText, tasteGroups, capPerArtist, forgottenPicks, artistNames, isNewArtist, spreadBy, pickFinds,
     ...identity.identityHelpers, ...sources.sourceHelpers, ...libraryMix.libraryHelpers, installPlaybackPage, installPlaybackRecovery,

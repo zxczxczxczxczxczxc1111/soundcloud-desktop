@@ -6,7 +6,7 @@ import type { HistoryIndex, TastePlay } from './historyIndex';
 import type { TasteProfile, TasteService } from './tasteModel';
 import type { ExclusionEntry, WaveExclusionList } from './waveExclusions';
 import { confirmedCopies, confirmedGroups, copyKeys, familyKey, nameKey, performerKey, trackCredits, versionKey, type TrackCredit } from './trackIdentity';
-import { tagKeys, tasteMaps, tasteScore, type TasteMaps, type WaveTrack } from './wave';
+import { tagShares, tasteMaps, tasteScore, type TasteMaps, type WaveTrack } from './wave';
 import { RADAR_FRESH_MS } from './radarSchedule';
 
 const DAY = 86400000;
@@ -141,7 +141,7 @@ export function scoreUpload(upload: StoredUpload, kind: Freshness, at: number, m
                     : { kind: 'taste' };
     const linked = followed || score.artist >= RADAR_PARAMS.linkWeight || score.creditBest >= RADAR_PARAMS.linkWeight || score.track > 0 || score.family > 0;
     return {
-        key: upload.key, id: upload.id, base, direction: score.tagKey || tagKeys(upload.genre, upload.tags)[0] || '', family: familyKey(track) || upload.key,
+        key: upload.key, id: upload.id, base, direction: score.tagKey || tagShares(upload.genre, upload.tags, [upload.uploaderName])[0]?.[0] || '', family: familyKey(track) || upload.key,
         uploader: upload.uploader, kind, at, heard, linked, reason, performer: performerKey(upload.uploader, upload.uploaderName, Array.isArray(upload.credits) ? upload.credits : []),
     };
 }
