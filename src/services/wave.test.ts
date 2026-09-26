@@ -89,6 +89,9 @@ describe('вкус волны', () => {
         expect(tasteReason(plain, profile)).toBeNull();
         expect(tasteReason({ ...byArtist, reason: { kind: 'artistTrack', artist: 'X' } }, profile)).toBeNull();
         expect(reasonText({ kind: 'tasteTag', genre: 'dark techno' }, WAVE_TEXTS.ru)).toBe('В духе dark techno, который ты любишь');
+        // Вес артиста копят прослушивания, лайки и подписка: подпись не утверждает, что его дослушивали
+        expect(reasonText({ kind: 'tasteArtist', artist: 'Artist' }, WAVE_TEXTS.ru)).toBe('Ты любишь Artist');
+        expect(reasonText({ kind: 'tasteArtist', artist: 'Artist' }, WAVE_TEXTS.en)).toBe('You love Artist');
     });
 
     it('жанр весит целиком, одна метка из пачки десятой частью и без причины «В духе»; ник загрузчика в метках не считается', () => {
