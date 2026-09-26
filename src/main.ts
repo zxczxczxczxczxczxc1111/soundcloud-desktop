@@ -17,7 +17,6 @@ import { playerAreaScript } from './services/playerArea';
 import { WaveJournal } from './services/waveJournal';
 import { WaveExclusions } from './services/waveExclusions';
 import { WaveShelf } from './services/waveShelf';
-import { TASTE_PARAMS } from './services/tasteParams';
 import { WaveSignals } from './services/waveSignals';
 import { LibraryService } from './services/libraryService';
 import type { BackupRestoreOutcome, BackupSaveOutcome } from './services/backup';
@@ -39,6 +38,7 @@ import { watchHiddenPage } from './services/hiddenPageWatchdog';
 import { registerWindowIpc } from './ipc/windowIpc';
 import { registerUpdateIpc } from './ipc/updateIpc';
 import { registerPageIpc, type PlaybackState } from './ipc/pageIpc';
+import { registerWaveIpc } from './ipc/waveIpc';
 import {
     app,
     BrowserWindow,
@@ -869,58 +869,12 @@ async function init() {
     });
     waveJournal?.flush();
     waveJournal = new WaveJournal(path.join(app.getPath('userData'), 'wave'));
-    ipcMain.removeHandler('soundcloud:wave-journal:load');
-    ipcMain.removeAllListeners('soundcloud:wave-journal:add');
-    ipcMain.handle('soundcloud:wave-journal:load', (event, userId: unknown) => (isTrustedSoundCloudSender(event) ? waveJournal?.load(userId) ?? [] : []));
-    ipcMain.on('soundcloud:wave-journal:add', (event, userId: unknown, ids: unknown) => {
-        if (isTrustedSoundCloudSender(event)) waveJournal?.add(userId, ids);
-    });
     // Журнал сигналов: как слушается каждый трек, из него потом учится подбор
     waveSignals?.flush();
     waveSignals = new WaveSignals(path.join(app.getPath('userData'), 'wave'), 3000, (from, to) => awayTracker.away(from, to));
-    ipcMain.removeAllListeners('soundcloud:wave-signals:add');
-    ipcMain.on('soundcloud:wave-signals:add', (event, userId: unknown, signals: unknown) => {
-        if (isTrustedSoundCloudSender(event)) waveSignals?.add(userId, signals);
-    });
-    ipcMain.removeAllListeners('soundcloud:wave-empty');
-    ipcMain.on('soundcloud:wave-empty', (event, counts: unknown) => {
-        if (!isTrustedSoundCloudSender(event) || !counts || typeof counts !== 'object') return;
-        const value = counts as Record<string, unknown>;
-        const count = (input: unknown): number => (typeof input === 'number' && Number.isSafeInteger(input) && input >= 0 ? Math.min(input, 10000) : 0);
-        diagnostics.record('wave.empty', { waveSeen: count(value.seen), waveArtistTracks: count(value.artistTracks), waveMoodTags: count(value.moodTags) });
-    });
     // Отметки волны («Не нравится», скрытые артисты, «Не сейчас», «Больше такого»): ставит страница, снимает и F1
     const exclusions = new WaveExclusions(path.join(app.getPath('userData'), 'wave'));
     waveExclusions = exclusions;
-    for (const channel of ['soundcloud:wave-exclusions:load', 'soundcloud:wave-exclusions:set', 'get-wave-exclusions', 'remove-wave-exclusion', 'soundcloud:wave-taste', 'soundcloud:wave-shelf:load', 'soundcloud:wave-shelf:save', 'soundcloud:wave-library:load', 'soundcloud:wave-library:save', 'soundcloud:wave-library:heard']) ipcMain.removeHandler(channel);
-    ipcMain.handle('soundcloud:wave-exclusions:load', (event, userId: unknown) =>
-        isTrustedSoundCloudSender(event) ? exclusions.load(userId) : null,
-    );
-    ipcMain.handle('soundcloud:wave-exclusions:set', (event, userId: unknown, kind: unknown, entry: unknown, excluded: unknown) => {
-        if (!isTrustedSoundCloudSender(event)) return false;
-        const saved = exclusions.set(userId, kind, entry, excluded);
-        if (saved) {
-            settingsManager.getView()?.webContents.send('wave-exclusions-changed');
-            // «Больше такого» учит модель вкуса, «Не нравится» снимает его с трека
-            listeningLibrary?.invalidate(userId, exclusions.load(userId).more.map((entry) => ({ id: entry.id, artist: entry.artistId ?? 0, genre: entry.genre ?? '', tags: entry.tags ?? '', at: entry.at })));
-        }
-        return saved;
-    });
-    ipcMain.handle('get-wave-exclusions', (event) => {
-        if (!isTrustedLocalSender(event)) throw new Error('Недопустимый отправитель IPC');
-        return exclusions.load(exclusions.currentUser());
-    });
-    ipcMain.handle('remove-wave-exclusion', (event, kind: unknown, id: unknown) => {
-        if (!isTrustedLocalSender(event)) throw new Error('Недопустимый отправитель IPC');
-        const userId = exclusions.currentUser();
-        if (!exclusions.set(userId, kind, { id }, false)) throw new Error('Отметка не снята');
-        listeningLibrary?.invalidate(userId, exclusions.load(userId).more.map((entry) => ({ id: entry.id, artist: entry.artistId ?? 0, genre: entry.genre ?? '', tags: entry.tags ?? '', at: entry.at })));
-        // Страница держит отметки у себя, поэтому перечитывает их по сигналу
-        if (!contentView.webContents.isDestroyed())
-            contentView.webContents.executeJavaScript('window.__scWaveExclusionsChanged && window.__scWaveExclusionsChanged()').catch((error: unknown) => {
-                console.warn('Волна не перечитала исключения:', error);
-            });
-    });
     // История прослушиваний: индекс поверх журнала сигналов, страница поверх сайта до его плеера
     historyManager?.dispose();
     // Перед чтением журнала и копией профиля буферы главного процесса ложатся на диск
@@ -929,6 +883,22 @@ async function init() {
         waveJournal?.flush();
     });
     listeningLibrary = library;
+    // Подборки дня: снимок собирает страница, main хранит его до полуночи и подсказывает, что звучало за 30 дней
+    const shelf = new WaveShelf(path.join(app.getPath('userData'), 'wave'));
+    registerWaveIpc(ipcMain, {
+        trustedSite: isTrustedSoundCloudSender,
+        trustedLocal: isTrustedLocalSender,
+        store,
+        diagnostics,
+        journal: () => waveJournal,
+        signals: () => waveSignals,
+        exclusions,
+        library,
+        shelf,
+        settingsView: () => settingsManager?.getView()?.webContents,
+        page: () => contentView.webContents,
+        applySettingChange,
+    });
     // Пятничный радар: расписание здесь, сбор каталога на странице сайта, выпуск считает и пишет worker
     radarScheduler?.stop();
     const radarPage = async (script: string): Promise<unknown> =>
@@ -1026,92 +996,6 @@ async function init() {
             }
         });
     }
-    ipcMain.handle('soundcloud:wave-taste', async (event, userId: unknown) => {
-        if (!isTrustedSoundCloudSender(event)) return null;
-        try {
-            return await library.request('profile', userId);
-        } catch (error) {
-            console.warn('Вкус волны не посчитан:', error);
-            return null;
-        }
-    });
-    // Подборки дня: снимок собирает страница, main хранит его до полуночи и подсказывает, что звучало за 30 дней
-    const shelf = new WaveShelf(path.join(app.getPath('userData'), 'wave'));
-    ipcMain.handle('soundcloud:wave-shelf:load', async (event, userId: unknown) => {
-        if (!isTrustedSoundCloudSender(event)) return null;
-        let recent: number[] = [];
-        type ShelfTrack = { id: number; artist: number; title: string; artistName: string; genre: string; tags: string; path: string; artwork: string; dur: number };
-        // Прослушанное от 30 секунд за 90 дней с жанром и тегами: из него тоже строятся жанры полки
-        const heard = new Map<number, ShelfTrack>();
-        try {
-            if (typeof userId === 'number' && Number.isSafeInteger(userId) && userId > 0) {
-                const since = Date.now() - 30 * 86400000;
-                const plays = await library.request('tastePlays', userId, Date.now() - 90 * 86400000);
-                recent = [...new Set(plays.filter((play) => play.at >= since).map((play) => play.id))].slice(-5000);
-                for (const play of plays)
-                    if (play.heard >= 30000 && !heard.has(play.id))
-                        heard.set(play.id, { id: play.id, artist: play.artist, title: play.title, artistName: play.artistName, genre: play.genre, tags: play.tags, path: play.path, artwork: play.artwork, dur: play.dur });
-            }
-        } catch (error) {
-            console.warn('Недавние прослушивания для подборок не прочитаны:', error);
-        }
-        // Треки своих и сохранённых плейлистов из хранилища рекомендаций: жанры полки берут и их (Э6).
-        // Пути и обложки там нет: обложки карточки берутся у лайков, треки при раскрытии перечитывает trackBatch.
-        // share это доля лайка, как в модели вкуса: вкус хранит только тысячу самых весомых треков, и слабые плейлистные
-        // из него выпадают, поэтому полка получает долю напрямую
-        let playlists: Array<ShelfTrack & { share: number }> = [];
-        try {
-            if (typeof userId === 'number' && Number.isSafeInteger(userId) && userId > 0)
-                playlists = (await library.request('playlistTracks', userId)).flatMap((entry) => (entry.upload ? [{
-                    id: entry.id, artist: entry.upload.uploader, title: entry.upload.title, artistName: entry.upload.uploaderName, genre: entry.upload.genre,
-                    tags: entry.upload.tags, path: '', artwork: '', dur: entry.upload.duration, share: entry.own ? TASTE_PARAMS.playlistOwn : TASTE_PARAMS.playlistSaved,
-                }] : [])).slice(0, 5000);
-        } catch (error) {
-            console.warn('Треки плейлистов для подборок не прочитаны:', error);
-        }
-        // Лайки за 30 дней по датам библиотеки: в «Давно не слушал» они не идут. Лайк без даты свежим не считается
-        let fresh: number[] = [];
-        try {
-            if (typeof userId === 'number' && Number.isSafeInteger(userId) && userId > 0) {
-                const since = Date.now() - 30 * 86400000;
-                fresh = (await library.request('libraryMembers', userId, 'likes'))
-                    .filter((member) => member.added >= since)
-                    .map((member) => Number(member.key.slice('sc:track:'.length)))
-                    .filter((id) => Number.isSafeInteger(id) && id > 0)
-                    .slice(0, 5000);
-            }
-        } catch (error) {
-            console.warn('Свежие лайки для подборок не прочитаны:', error);
-        }
-        return { snapshot: shelf.load(userId), recent, heard: [...heard.values()].slice(-3000), playlists, fresh };
-    });
-    ipcMain.handle('soundcloud:wave-shelf:save', (event, userId: unknown, snapshot: unknown) =>
-        isTrustedSoundCloudSender(event) ? shelf.save(userId, snapshot) : false,
-    );
-    // «Моя музыка»: выбор источников и режим живут в настройках (попадают в резервную копию), ввод проверяется как смена в F1
-    ipcMain.handle('soundcloud:wave-library:load', (event) => {
-        if (!isTrustedSoundCloudSender(event)) return null;
-        const value = store.get('myMusic');
-        return validateSettingChange({ key: 'myMusic', value }) ? value : null;
-    });
-    ipcMain.handle('soundcloud:wave-library:save', (event, value: unknown) => {
-        if (!isTrustedSoundCloudSender(event)) return false;
-        const change = { key: 'myMusic', value };
-        if (!validateSettingChange(change)) return false;
-        applySettingChange(change);
-        return true;
-    });
-    // Слышанное в клиенте за 3 дня от 30 секунд: в перемешивании «Моей музыки» оно не играет
-    ipcMain.handle('soundcloud:wave-library:heard', async (event, userId: unknown) => {
-        if (!isTrustedSoundCloudSender(event) || typeof userId !== 'number' || !Number.isSafeInteger(userId) || userId <= 0) return [];
-        try {
-            const plays = await library.request('tastePlays', userId, Date.now() - 3 * 86400000);
-            return [...new Set(plays.filter((play) => play.heard >= 30000).map((play) => play.id))].slice(0, 20000);
-        } catch (error) {
-            console.warn('Слышанное за 3 дня не прочитано:', error);
-            return [];
-        }
-    });
     historyManager = new HistoryManager(mainWindow, library, {
         site: () => (contentView.webContents.isDestroyed() ? null : contentView.webContents),
         fallbackUser: () => waveExclusions?.currentUser() ?? 0,
