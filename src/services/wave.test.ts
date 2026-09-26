@@ -3,7 +3,7 @@ import {
     WAVE_TEXTS, acceptCandidate, artworkUrl, canonicalUrl, classifyLink, formatGenres, genreKeys, genreKeysFor, isWaveEligible,
     moodTags, normalizeTag, trackPath, parseGenres, pickSpaced, reasonText, shapeSamples, topGenres, trackMatchesGenre,
     applyTasteReasons, tagKeys, tasteMaps, tasteOrder, tasteReason, tasteScore, type TasteMaps, type WaveCandidate, type WaveFilter, type WaveTrack,
-    countText, forgottenPicks, localDay, pickFinds, tasteGroups, artistNames, isNewArtist, spreadBy, genreCanon, genreParts, genreMain,
+    countText, forgottenPicks, localDay, pickFinds, tasteGroups, capPerArtist, artistNames, isNewArtist, spreadBy, genreCanon, genreParts, genreMain,
 } from './wave';
 import { copyKeys, familyKey, versionKey } from './trackIdentity';
 
@@ -309,7 +309,7 @@ describe('подборки', () => {
         expect(groups.some((group) => group.labels[0] === 'sad')).toBe(false);
     });
 
-    it('поджанр, который уже есть отдельной группой, вливается в неё; подпись берётся из поля жанра, а не из тегов', () => {
+    it('метка не уводит трек из жанра, который поставил загрузчик; подпись берётся из поля жанра, а не из тегов', () => {
         const user = (id: number) => ({ user: { id, username: 'User ' + id } });
         const items = [
             ...Array.from({ length: 51 }, (_, i) => track(1000 + i, { ...user(1000 + i), genre: 'Alternative' })),
@@ -320,9 +320,33 @@ describe('подборки', () => {
         const groups = tasteGroups(items, 8, 8);
         const alternative = groups.filter((group) => group.keys[0] === 'alternative');
         expect(alternative).toHaveLength(1);
-        expect(alternative[0].tracks).toHaveLength(60);
-        expect(groups.find((group) => group.keys[0] === 'alternativerock')?.tracks).toHaveLength(36);
+        // Девять треков Alternative Rock с меткой alternative остаются в своём жанре
+        expect(alternative[0].tracks).toHaveLength(51);
+        expect(groups.find((group) => group.keys[0] === 'alternativerock')?.tracks).toHaveLength(45);
         expect(groups.find((group) => group.keys[0] === 'hiphop')?.labels[0]).toBe('Hip-hop & Rap');
+    });
+
+    it('артист с пачкой меток на все жанры не собирает свою карточку и не растекается по чужим (случай ivoxygen)', () => {
+        const star = { id: 1, username: 'Star' };
+        const spam = 'Alternative "Alternative Rock" "Hip Hop" Rap Ambient Dark Atmospheric';
+        const items = [
+            ...Array.from({ length: 12 }, (_, i) => track(100 + i, { user_id: 1, user: star, genre: 'Alternative Rock', tag_list: spam })),
+            ...Array.from({ length: 10 }, (_, i) => track(200 + i, { user_id: 1, user: star, genre: 'Hip-hop & Rap', tag_list: spam })),
+            ...Array.from({ length: 4 }, (_, i) => track(300 + i, { user_id: 1, user: star, genre: 'Ambient', tag_list: spam })),
+            ...Array.from({ length: 20 }, (_, i) => track(400 + i, { user_id: 10 + i, user: { id: 10 + i, username: 'Rock ' + i }, genre: 'Alternative Rock', tag_list: 'grunge' })),
+            ...Array.from({ length: 20 }, (_, i) => track(500 + i, { user_id: 40 + i, user: { id: 40 + i, username: 'Rap ' + i }, genre: 'Hip-hop & Rap', tag_list: 'trap' })),
+        ].map((entry) => ({ track: entry, weight: 1 }));
+        const groups = tasteGroups(items, 8, 8);
+        const place = (id: number): string | undefined => groups.find((group) => group.tracks.some((entry) => entry.id === id))?.keys[0];
+        expect(place(100)).toBe('alternativerock');
+        expect(place(200)).toBe('hiphop');
+        expect(groups.some((group) => ['ambient', 'dark', 'atmospheric'].includes(group.keys[0]))).toBe(false);
+        expect(groups.find((group) => group.keys[0] === 'hiphop')?.tracks).toHaveLength(30);
+    });
+
+    it('в подборке не больше заданного числа треков одного артиста, порядок сохраняется', () => {
+        const list = [1, 1, 2, 1, 3, 1, 2].map((artist, i) => track(10 + i, { user_id: artist }));
+        expect(capPerArtist(list, 2).map((entry) => entry.id)).toEqual([10, 11, 12, 14, 16]);
     });
 
     it('сборный канал не раздаёт свой жанр чужим песням без тегов, своя песня артиста наследует', () => {

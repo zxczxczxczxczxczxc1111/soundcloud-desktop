@@ -725,18 +725,29 @@ export function tasteGroups(items: Array<{ track: WaveTrack; weight: number }>, 
         const uploader = nameKey(item.track.user?.username);
         return !parseTrackTitle(item.track.title).credits.some((credit) => credit.role === 'artist' && credit.key !== uploader);
     });
-    keysOf.forEach((keys, i) => {
+    const bestCluster = (keys: string[]): number => {
         const score = new Map<number, number>();
         for (const key of keys) {
             const c = clusterOf.get(key);
             if (c !== undefined) score.set(c, (score.get(c) ?? 0) + (tagWeight.get(key) ?? 0));
         }
+        let best = -1;
         let bestScore = 0;
         for (const [c, value] of score)
             if (value > bestScore) {
                 bestScore = value;
-                assigned[i] = c;
+                best = c;
             }
+        return best;
+    };
+    // Группу решает жанр трека: загрузчик ставит его один, а меток часто пишет пачку на все жанры сразу
+    // (Alternative, Hip Hop, Ambient у каждого трека). Метки решают, только если жанра нет или по жанру группа не набирается
+    const byGenre = genreOf.map(bestCluster);
+    const genreSize = new Map<number, number>();
+    for (const c of byGenre) if (c >= 0) genreSize.set(c, (genreSize.get(c) ?? 0) + 1);
+    keysOf.forEach((keys, i) => {
+        const c = byGenre[i];
+        assigned[i] = c >= 0 && (genreSize.get(c) ?? 0) >= minSize ? c : bestCluster(keys);
         if (assigned[i] < 0 || !own[i]) return;
         const artist = trackArtist(items[i].track);
         const votes = artistVotes.get(artist) ?? new Map<number, number>();
@@ -788,13 +799,15 @@ export function tasteGroups(items: Array<{ track: WaveTrack; weight: number }>, 
     groups.forEach((group, c) => {
         if (members[c].length <= 40) return;
         const head = [...group.keys].sort((a, b) => b[1] - a[1])[0]?.[0];
+        // Поджанр тоже по жанру трека, метки только у трека без жанра
+        const own = (i: number): string[] => (genreOf[i].length ? genreOf[i] : keysOf[i]);
         const counts = new Map<string, number>();
-        for (const i of members[c]) for (const key of keysOf[i]) if (key !== head && (asGenre.get(key) ?? 0) >= 3) counts.set(key, (counts.get(key) ?? 0) + 1);
+        for (const i of members[c]) for (const key of own(i)) if (key !== head && (asGenre.get(key) ?? 0) >= 3) counts.set(key, (counts.get(key) ?? 0) + 1);
         const candidates = [...counts].filter(([, count]) => count >= minSize).sort((a, b) => b[1] - a[1]).map(([key]) => key);
         if (!candidates.length) return;
         const parts = new Map<string, number[]>(candidates.map((key) => [key, []]));
         for (const i of members[c]) {
-            const key = candidates.find((candidate) => keysOf[i].includes(candidate));
+            const key = candidates.find((candidate) => own(i).includes(candidate));
             if (key) parts.get(key)?.push(i);
         }
         const moved = new Set<number>();
@@ -850,6 +863,16 @@ export function tasteGroups(items: Array<{ track: WaveTrack; weight: number }>, 
                 weight: group.weight,
             };
         });
+}
+// Не больше cap треков одного артиста, порядок сохраняется: любимый артист не забирает подборку жанра целиком
+export function capPerArtist(tracks: WaveTrack[], cap: number): WaveTrack[] {
+    const taken = new Map<number, number>();
+    return tracks.filter((track) => {
+        const artist = trackArtist(track);
+        const count = taken.get(artist) ?? 0;
+        taken.set(artist, count + 1);
+        return count < cap;
+    });
 }
 // «Давно не слушал»: лайки, которых нет среди прослушанного за последние недели. Сначала то, что модель вкуса
 // ценит выше (дослушивал, переслушивал), дальше лайки постарше. liked идёт от новых лайков к старым
@@ -2738,9 +2761,11 @@ export function installWave(config: WaveConfig, createPlayback: typeof installPl
     // ===== Подборки: находки дня, давно не слушал, отдельные вкусы; набор треков из меню =====
     interface ShelfCard { kind: 'daily' | 'forgotten' | 'group'; title: string; sub: string; ids: number[]; seeds: number[]; keys: string[]; art: string[] }
     interface Shelf { day: string; v: number; cards: ShelfCard[] }
-    // Формат сборки полки: 2 это жанры из всех лайков и прослушанного, до восьми, с поджанрами (26.09.2026).
+    // Формат сборки полки: 2 это жанры из всех лайков и прослушанного, до восьми, с поджанрами (26.09.2026);
+    // 3 это группа по жанру трека, а не по меткам, и не больше SHELF_ARTIST_CAP треков артиста в карточке (26.09.2026).
     // Снимок другого формата собирается заново сразу, а не в полночь
-    const SHELF_FORMAT = 2;
+    const SHELF_FORMAT = 3;
+    const SHELF_ARTIST_CAP = 5;
     // Прослушанное от 30 секунд из индекса истории: main отдаёт его вместе со снимком
     interface HeardTrack { id: number; artist: number; title: string; artistName: string; genre: string; tags: string; path: string; artwork: string; dur: number }
     let shelf: Shelf | null = null;
@@ -2889,7 +2914,13 @@ export function installWave(config: WaveConfig, createPlayback: typeof installPl
             const track = heardTrack(entry);
             return isWaveEligible(track) && !isExcluded(track) ? [{ track, weight }] : [];
         });
-        const groups = tasteGroups([...liked.map((track) => ({ track, weight: 1 + Math.max(0, weights?.get(track.id) ?? 0) })), ...listened], 8, 8);
+        const tasted = [...liked.map((track) => ({ track, weight: 1 + Math.max(0, weights?.get(track.id) ?? 0) })), ...listened];
+        const groups = tasteGroups(tasted, 8, 8);
+        const artistTotal = new Map<string, number>();
+        for (const { track } of tasted) {
+            const name = artistName(track).trim();
+            if (name) artistTotal.set(name, (artistTotal.get(name) ?? 0) + 1);
+        }
         for (const group of groups) {
             const [a, b] = group.labels.map(capital);
             const artists = new Map<string, number>();
@@ -2897,14 +2928,21 @@ export function installWave(config: WaveConfig, createPlayback: typeof installPl
                 const name = artistName(track).trim();
                 if (name) artists.set(name, (artists.get(name) ?? 0) + 1);
             }
+            // В подписи те, кто характерен для жанра: треков здесь, помноженное на долю здесь от всех его треков, не меньше 1.
+            // Самый лайкнутый артист, у которого тут 4 трека из 72, не лезет в подпись каждой карточки.
+            // Артист с одним треком подпись не делает; никто не прошёл - подпись по числу треков, как раньше
+            const typical = (name: string, count: number): number => (count * count) / (artistTotal.get(name) ?? count);
+            const strong = [...artists].filter(([name, count]) => count >= 2 && typical(name, count) >= 1);
+            const sub = (strong.length ? strong : [...artists]).sort((x, y) => typical(y[0], y[1]) - typical(x[0], x[1]) || y[1] - x[1]).slice(0, 3).map(([name]) => name);
+            const shown = capPerArtist(group.tracks, SHELF_ARTIST_CAP).slice(0, 60);
             cards.push({
                 kind: 'group',
                 title: b ? fillText(T.groupAnd, { a, b }) : a,
-                sub: [...artists].sort((x, y) => y[1] - x[1]).slice(0, 3).map(([name]) => name).join(', '),
-                ids: group.tracks.slice(0, 60).map((track) => track.id),
+                sub: sub.join(', '),
+                ids: shown.map((track) => track.id),
                 seeds: [],
                 keys: group.keys,
-                art: coversOf(group.tracks),
+                art: coversOf(shown),
             });
         }
         return { day, v: SHELF_FORMAT, cards };
@@ -4339,6 +4377,12 @@ export function installWave(config: WaveConfig, createPlayback: typeof installPl
         '.scw-lib{padding:16px 16px 8px;border-radius:6px;background:var(--scw-film)}',
         '.scw-lib-src{margin-bottom:12px}',
         '#sc-wave .scw-lib .scw-chip{max-width:280px;overflow:hidden;text-overflow:ellipsis}',
+        // Выбранное тёмной заливкой с оранжевой точкой, а не белым: десяток белых плашек на тёмной полке режет глаз
+        '#sc-wave .scw-lib .scw-chip{background:transparent;box-shadow:inset 0 0 0 1px rgba(255,255,255,.14)}',
+        '#sc-wave .scw-lib .scw-chip[aria-pressed="true"]{background:rgba(255,255,255,.14);box-shadow:none;color:#fff}',
+        '#sc-wave .scw-lib .scw-chip[aria-pressed="true"]:hover{background:rgba(255,255,255,.2)}',
+        '#sc-wave .scw-lib .scw-chip[aria-pressed="true"]::before{content:"";display:inline-block;width:6px;height:6px;margin-right:8px;border-radius:50%;background:#ff5500;vertical-align:1px}',
+        '#sc-wave .scw-lib .scw-seg button[aria-checked="true"]{background:rgba(255,255,255,.14);color:#fff}',
         '.scw-chip-n{margin-left:6px;font-weight:400;opacity:.7}',
         '.scw-lib .scw-mix-head{flex-wrap:wrap}',
         '#sc-wave .scw-lib-more{grid-column:1/-1;justify-self:center;margin:8px 0}',
@@ -6079,7 +6123,7 @@ export function installWave(config: WaveConfig, createPlayback: typeof installPl
 const pageHelpers = [
     normalizeTag, tagKeys, genreKeys, genreCanon, genreParts, genreMain, parseGenres, formatGenres, genreKeysFor, classifyLink, canonicalUrl, trackMatchesGenre, trackArtist,
     isWaveEligible, acceptCandidate, pickSpaced, tasteMaps, tasteScore, tasteOrder, tasteReason, applyTasteReasons, shuffleInPlace, topGenres, fillText, reasonText, shapeSamples,
-    artworkUrl, formatTime, playEnd, siteSource, moodTags, trackPath, localDay, countText, tasteGroups, forgottenPicks, artistNames, isNewArtist, spreadBy, pickFinds,
+    artworkUrl, formatTime, playEnd, siteSource, moodTags, trackPath, localDay, countText, tasteGroups, capPerArtist, forgottenPicks, artistNames, isNewArtist, spreadBy, pickFinds,
     ...identity.identityHelpers, ...sources.sourceHelpers, ...libraryMix.libraryHelpers, installPlaybackPage, installPlaybackRecovery,
 ];
 

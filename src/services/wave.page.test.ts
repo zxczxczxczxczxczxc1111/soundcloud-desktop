@@ -899,7 +899,7 @@ const batchOf = (list: WaveTrack[]) => (query: Record<string, unknown>): WaveTra
 
 it('ошибка подборок видна, повтор восстанавливает полку без перезагрузки страницы', async () => {
     fakeSite(relatedTracks);
-    const snapshot = { day: localDay(Date.now()), v: 2, cards: [{ kind: 'group', title: 'Techno', sub: '', ids: [51], seeds: [], keys: ['techno'], art: [] }] };
+    const snapshot = { day: localDay(Date.now()), v: 3, cards: [{ kind: 'group', title: 'Techno', sub: '', ids: [51], seeds: [], keys: ['techno'], art: [] }] };
     const load = vi.fn().mockRejectedValueOnce(new Error('Offline')).mockResolvedValue({ snapshot, recent: [] });
     Object.assign(window, { soundcloudAPI: { waveShelf: { load, save: vi.fn(async () => true) } } });
     window.eval(waveScript()); await vi.advanceTimersByTimeAsync(100);
@@ -914,7 +914,7 @@ it('полка показывает все жанры одной сеткой, �
     const art = ['https://i1.sndcdn.com/artworks-0-t300x300.jpg'];
     const group = (i: number) => ({ kind: 'group', title: 'Genre ' + i, sub: '', ids: [5200 + i], seeds: [], keys: ['g' + i], art });
     const snapshot = {
-        day: localDay(Date.now()), v: 2,
+        day: localDay(Date.now()), v: 3,
         cards: [
             { kind: 'daily', title: '', sub: '', ids: [5101], seeds: [], keys: [], art },
             { kind: 'forgotten', title: '', sub: '', ids: [5102], seeds: [], keys: [], art },
@@ -938,7 +938,7 @@ it('полка из снимка дня: находки играют первы�
     const site = fakeSite(relatedTracks, (name, _path, query) => (name === 'trackBatch' ? batchOf(finds)(query) : undefined));
     const art = [0, 1, 2, 3].map((i) => 'https://i1.sndcdn.com/artworks-' + i + '-t300x300.jpg');
     const snapshot = {
-        day: localDay(Date.now()), v: 2,
+        day: localDay(Date.now()), v: 3,
         cards: [
             { kind: 'daily', title: '', sub: '', ids: finds.map((track) => track.id), seeds: [1], keys: [], art },
             { kind: 'group', title: 'Techno and Industrial', sub: 'A, B', ids: [5101, 5102], seeds: [], keys: ['techno'], art: art.slice(0, 1) },
@@ -991,7 +991,7 @@ it('раскрытая подборка: треки списком, трек и�
         id: 5001 + i, kind: 'track', user_id: 600 + i, duration: 200000, title: 'Find ' + i, user: { id: 600 + i, username: 'Artist ' + i },
     }));
     const site = fakeSite(relatedTracks, (name, _path, query) => (name === 'trackBatch' ? batchOf(finds)(query) : undefined));
-    const snapshot = { day: localDay(Date.now()), v: 2, cards: [{ kind: 'daily', title: '', sub: '', ids: finds.map((track) => track.id), seeds: [1], keys: [], art: [] }] };
+    const snapshot = { day: localDay(Date.now()), v: 3, cards: [{ kind: 'daily', title: '', sub: '', ids: finds.map((track) => track.id), seeds: [1], keys: [], art: [] }] };
     Object.assign(window, { soundcloudAPI: { waveShelf: { load: vi.fn(async () => ({ snapshot, recent: [] })), save: vi.fn(async () => true) } } });
     window.eval(waveScript());
     await vi.advanceTimersByTimeAsync(100);
@@ -1029,7 +1029,7 @@ it('ссылки в строках и шапке: название на трек
         permalink_url: i === 1 ? 'https://soundcloud.com/artist-1/find-1/s-SeCrEt' : 'https://soundcloud.com/artist-' + i + '/find-' + i,
     }));
     const site = fakeSite(relatedTracks, (name, _path, query) => (name === 'trackBatch' ? batchOf(finds)(query) : undefined));
-    const snapshot = { day: localDay(Date.now()), v: 2, cards: [{ kind: 'daily', title: '', sub: '', ids: finds.map((track) => track.id), seeds: [1], keys: [], art: [] }] };
+    const snapshot = { day: localDay(Date.now()), v: 3, cards: [{ kind: 'daily', title: '', sub: '', ids: finds.map((track) => track.id), seeds: [1], keys: [], art: [] }] };
     Object.assign(window, { soundcloudAPI: { waveShelf: { load: vi.fn(async () => ({ snapshot, recent: [] })), save: vi.fn(async () => true) } } });
     window.eval(waveScript());
     await vi.advanceTimersByTimeAsync(100);
@@ -1079,7 +1079,7 @@ it('ссылки в строках и шапке: название на трек
 it('«Назад» после перехода по ссылке: раскрытая подборка на месте, список на прежней прокрутке', async () => {
     const finds = Array.from({ length: 12 }, (_, i): WaveTrack => ({ id: 5001 + i, kind: 'track', user_id: 600 + i, duration: 200000, title: 'Find ' + i }));
     fakeSite(relatedTracks, (name, _path, query) => (name === 'trackBatch' ? batchOf(finds)(query) : undefined));
-    const snapshot = { day: localDay(Date.now()), v: 2, cards: [{ kind: 'daily', title: '', sub: '', ids: finds.map((track) => track.id), seeds: [1], keys: [], art: [] }] };
+    const snapshot = { day: localDay(Date.now()), v: 3, cards: [{ kind: 'daily', title: '', sub: '', ids: finds.map((track) => track.id), seeds: [1], keys: [], art: [] }] };
     Object.assign(window, { soundcloudAPI: { waveShelf: { load: vi.fn(async () => ({ snapshot, recent: [] })), save: vi.fn(async () => true) } } });
     window.eval(waveScript());
     await vi.advanceTimersByTimeAsync(100);
@@ -1123,13 +1123,40 @@ it('снимок дня старого формата пересобираетс
     const [userId, saved] = shelf.save.mock.calls[0] as unknown as [number, { day: string; v: number; cards: Array<{ kind: string; title: string; ids: number[] }> }];
     expect(userId).toBe(77);
     expect(saved.day).toBe(localDay(Date.now()));
-    expect(saved.v).toBe(2);
+    expect(saved.v).toBe(3);
     expect(saved.cards.map((card) => card.kind)).toEqual(['daily', 'forgotten', 'group', 'group']);
     expect(saved.cards[0].ids).toHaveLength(30);
     expect(saved.cards[0].ids.every((id) => id > 2000000)).toBe(true);
     expect(saved.cards[1].ids).not.toContain(2001);
     expect(saved.cards.slice(2).map((card) => card.title).sort()).toEqual(['Lo-Fi and Chill', 'Techno and Industrial']);
     expect(document.querySelectorAll('#sc-wave .scw-card[data-card]')).toHaveLength(4);
+});
+
+it('жанр полки: не больше 5 треков одного артиста, в подписи артисты, характерные именно для этого жанра', async () => {
+    const make = (id: number, artist: number, name: string, genre: string, tags: string): WaveTrack => ({ id, kind: 'track', duration: 200000, title: 'Like ' + id, user_id: artist, user: { id: artist, username: name }, genre, tag_list: tags });
+    const liked = [
+        ...Array.from({ length: 15 }, (_, i) => make(2001 + i, 500 + (i % 5), 'Tech' + (i % 5), 'Techno', 'industrial')),
+        ...Array.from({ length: 15 }, (_, i) => make(2101 + i, 510 + (i % 5), 'Lo' + (i % 5), 'Lo-Fi', 'chill')),
+        // Любимый артист: 8 треков техно и 20 лоу-фая
+        ...Array.from({ length: 8 }, (_, i) => make(2201 + i, 900, 'Star', 'Techno', 'industrial')),
+        ...Array.from({ length: 20 }, (_, i) => make(2301 + i, 900, 'Star', 'Lo-Fi', 'chill')),
+    ];
+    fakeSite(relatedTracks, (name, _path, query) => {
+        if (name === 'soundLikesIds') return { collection: liked.map((track) => track.id) };
+        if (name === 'trackBatch') return batchOf(liked)(query);
+        return undefined;
+    });
+    const shelf = { load: vi.fn(async () => ({ snapshot: null, recent: [] })), save: vi.fn(async () => true) };
+    Object.assign(window, { soundcloudAPI: { waveShelf: shelf } });
+    window.eval(waveScript());
+    await vi.advanceTimersByTimeAsync(100);
+    const [, saved] = shelf.save.mock.calls[0] as unknown as [number, { cards: Array<{ kind: string; title: string; sub: string; ids: number[] }> }];
+    const card = (title: string) => saved.cards.find((entry) => entry.kind === 'group' && entry.title.startsWith(title))!;
+    const stars = (ids: number[]): number => ids.filter((id) => id > 2200).length;
+    expect(stars(card('Techno').ids)).toBe(5);
+    expect(stars(card('Lo-Fi').ids)).toBe(5);
+    expect(card('Techno').sub.split(', ')).not.toContain('Star');
+    expect(card('Lo-Fi').sub.split(', ')[0]).toBe('Star');
 });
 
 it('набор через меню: трек в подборку, кнопка в шапке включает волну по набору и очищает его', async () => {
