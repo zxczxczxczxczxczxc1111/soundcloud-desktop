@@ -1009,6 +1009,7 @@ async function init() {
         if (!isTrustedSoundCloudSender(event)) return;
         const meta = validateTrackMeta(payload);
         if (!meta) return;
+        historyManager?.setNowPlaying(meta.id);
         presenceService.updateMeta(meta);
         sendPresencePreview();
     });

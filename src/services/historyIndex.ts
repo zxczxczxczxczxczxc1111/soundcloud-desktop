@@ -3,12 +3,14 @@ import { mkdirSync, rmSync } from 'fs';
 import { join } from 'path';
 import type { PlaySignal } from '../types';
 import { artworkOf, spanCoverage, text, trackPathOf } from './waveSignals';
+import { genreMain } from './wave';
 
 // Индекс истории прослушиваний поверх журнала сигналов. Первоисточник остаётся JSONL: индекс досинхронизируется
 // из него при открытии страницы истории и пересобирается целиком, если файла нет, схема сменилась или файл испорчен
 // 2: теги трека и лайк во время прослушивания для модели вкуса волны
 // 3: покрытие сыгранными участками, кто сменил трек и выбран ли он кликом (сигналы v3)
-export const HISTORY_SCHEMA = 3;
+// 4: место остановки: «пропущен на» показывает его, а не сколько играло
+export const HISTORY_SCHEMA = 4;
 /** Трек засчитывается в топах и счётчиках с 30 секунд реально прозвучавшего звука */
 export const COUNTED_MS = 30000;
 const DAY = 86400000;
@@ -29,6 +31,10 @@ export interface HistoryRow {
     source: string;
     liked: boolean;
     away: boolean;
+    /** Где остановился, мс; null у записей, пришедших в индекс без него */
+    pos: number | null;
+    /** Кто сменил трек: user, auto или пусто у событий до v3 */
+    endedBy: string;
     title: string;
     artistName: string;
     path: string;
@@ -124,7 +130,7 @@ export function ftsQuery(value: unknown): string {
 const SCHEMA = [
     'create table if not exists meta(key text primary key, value integer not null)',
     "create table if not exists tracks(id integer primary key, artist integer not null default 0, title text not null default '', artist_name text not null default '', path text not null default '', artwork text not null default '', genre text not null default '', tags text not null default '', dur integer not null default 0, resolved integer not null default 0)",
-    'create table if not exists plays(at integer not null, id integer not null, artist integer not null, heard integer not null, dur integer not null, end text not null, source text not null, liked integer not null, liked_now integer not null default 0, away integer not null, tz integer, covered integer, ended_by text, picked integer, primary key(at, id)) without rowid',
+    'create table if not exists plays(at integer not null, id integer not null, artist integer not null, heard integer not null, dur integer not null, end text not null, source text not null, liked integer not null, liked_now integer not null default 0, away integer not null, tz integer, covered integer, ended_by text, picked integer, pos integer, primary key(at, id)) without rowid',
     'create index if not exists plays_id on plays(id)',
     'create index if not exists plays_artist on plays(artist, at)',
     'create index if not exists tracks_resolved on tracks(resolved)',
@@ -147,7 +153,7 @@ const UPSERT_TRACK =
     'dur = case when excluded.dur > 0 then excluded.dur else tracks.dur end, ' +
     "resolved = case when excluded.title != '' or tracks.title != '' then 1 else max(tracks.resolved, excluded.resolved) end";
 const ROW =
-    'select p.at, p.id, p.artist, p.heard, p.dur, p.end, p.source, p.liked, p.away, ' +
+    "select p.at, p.id, p.artist, p.heard, p.dur, p.end, p.source, p.liked, p.away, p.pos, coalesce(p.ended_by, '') as endedBy, " +
     "coalesce(t.title, '') as title, coalesce(t.artist_name, '') as artistName, coalesce(t.path, '') as path, coalesce(t.artwork, '') as artwork, coalesce(t.resolved, 0) as resolved " +
     'from plays p left join tracks t on t.id = p.id';
 
@@ -165,6 +171,8 @@ function toRow(value: Values): HistoryRow {
         source: str(value.source),
         liked: num(value.liked) === 1,
         away: num(value.away) === 1,
+        pos: value.pos === null || value.pos === undefined ? null : num(value.pos),
+        endedBy: str(value.endedBy),
         title: str(value.title),
         artistName: str(value.artistName),
         path: str(value.path),
@@ -191,18 +199,21 @@ export class HistoryIndex {
         let db = new DatabaseSync(this.file(userId));
         try {
             let version = num((db.prepare('pragma user_version').get() as Values | undefined)?.user_version);
-            if (version === 2) {
-                // Со второй схемы колонки добавляются на месте: пересборка потеряла бы названия, добранные у сайта.
+            const added: Record<number, string[]> = { 2: ['covered integer', 'ended_by text', 'picked integer', 'pos integer'], 3: ['pos integer'] };
+            if (added[version]) {
+                // Со второй и третьей схемы колонки добавляются на месте: пересборка потеряла бы названия, добранные у сайта.
+                // Журнал перечитывается целиком, чтобы старые записи получили место остановки.
                 // Не вышло: индекс собирается заново ниже, как при любой чужой схеме
                 db.exec('begin');
                 try {
-                    for (const column of ['covered integer', 'ended_by text', 'picked integer']) db.exec('alter table plays add column ' + column);
+                    for (const column of added[version]) db.exec('alter table plays add column ' + column);
+                    db.exec("delete from meta where key = 'synced_at'");
                     db.exec('pragma user_version = ' + HISTORY_SCHEMA);
                     db.exec('commit');
                     version = HISTORY_SCHEMA;
                 } catch (error) {
                     db.exec('rollback');
-                    console.warn('История: колонки v3 не добавлены, индекс пересобирается', error);
+                    console.warn('История: колонки схемы ' + HISTORY_SCHEMA + ' не добавлены, индекс пересобирается', error);
                 }
             }
             if (version !== 0 && version !== HISTORY_SCHEMA) {
@@ -284,8 +295,10 @@ export class HistoryIndex {
         const { db } = handle;
         const upsert = db.prepare(UPSERT_TRACK);
         const insert = db.prepare(
-            'insert or ignore into plays(at, id, artist, heard, dur, end, source, liked, liked_now, away, tz, covered, ended_by, picked) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
+            'insert or ignore into plays(at, id, artist, heard, dur, end, source, liked, liked_now, away, tz, covered, ended_by, picked, pos) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
         );
+        // Запись из индекса прошлой схемы: место остановки дописывается, остальное не трогается
+        const fillPos = db.prepare('update plays set pos = ? where at = ? and id = ? and pos is null');
         let added = 0;
         let latest = 0;
         db.exec('begin');
@@ -296,9 +309,10 @@ export class HistoryIndex {
                 const result = insert.run(
                     signal.at, signal.id, signal.artist, signal.heard, signal.dur, signal.end, signal.source,
                     signal.liked || signal.likedNow ? 1 : 0, signal.likedNow ? 1 : 0, signal.away ? 1 : 0, signal.tz ?? null,
-                    signal.spans ? spanCoverage(signal.spans) : null, signal.endedBy ?? null, signal.picked === undefined ? null : signal.picked ? 1 : 0,
+                    signal.spans ? spanCoverage(signal.spans) : null, signal.endedBy ?? null, signal.picked === undefined ? null : signal.picked ? 1 : 0, signal.pos,
                 );
-                added += num(result.changes);
+                if (num(result.changes)) added++;
+                else fillPos.run(signal.pos, signal.at, signal.id);
                 latest = Math.max(latest, signal.at);
             }
             db.prepare("insert into meta(key, value) values ('synced_at', ?) on conflict(key) do update set value = max(meta.value, excluded.value)").run(latest);
@@ -379,9 +393,23 @@ export class HistoryIndex {
                 "select p.id, count(*) as plays, sum(p.heard) as ms, coalesce(t.title, '') as title, coalesce(t.artist_name, '') as artistName, coalesce(t.artwork, '') as artwork, coalesce(t.path, '') as path " +
                     'from plays p left join tracks t on t.id = p.id where p.at >= ? and p.at < ? and p.heard >= ? group by p.id order by plays desc, ms desc limit 8',
             ).all(...range, COUNTED_MS) as Values[]).map((row) => ({ key: num(row.id), name: str(row.title), artistName: str(row.artistName), artwork: str(row.artwork), path: str(row.path), plays: num(row.plays), ms: num(row.ms) }));
-            const genres = (db.prepare(
-                "select t.genre, count(*) as plays, sum(p.heard) as ms from plays p join tracks t on t.id = p.id where p.at >= ? and p.at < ? and p.heard >= ? and t.genre != '' group by t.genre order by plays desc, ms desc limit 5",
-            ).all(...range, COUNTED_MS) as Values[]).map((row) => ({ key: str(row.genre), name: str(row.genre), artistName: '', artwork: '', path: '', plays: num(row.plays), ms: num(row.ms) }));
+            // Написания одного жанра склеиваются той же таблицей, что у полки волны; подпись это самое слушаемое написание
+            const merged = new Map<string, { plays: number; ms: number; labels: Map<string, number> }>();
+            for (const row of db.prepare(
+                "select t.genre, count(*) as plays, sum(p.heard) as ms from plays p join tracks t on t.id = p.id where p.at >= ? and p.at < ? and p.heard >= ? and t.genre != '' group by t.genre",
+            ).all(...range, COUNTED_MS) as Values[]) {
+                const main = genreMain(str(row.genre));
+                if (!main.key) continue;
+                const entry = merged.get(main.key) ?? { plays: 0, ms: 0, labels: new Map<string, number>() };
+                entry.plays += num(row.plays);
+                entry.ms += num(row.ms);
+                entry.labels.set(main.label, (entry.labels.get(main.label) ?? 0) + num(row.plays));
+                merged.set(main.key, entry);
+            }
+            const genres = [...merged].sort((a, b) => b[1].plays - a[1].plays || b[1].ms - a[1].ms).slice(0, 5).map(([key, entry]) => {
+                const name = [...entry.labels].sort((a, b) => b[1] - a[1])[0][0];
+                return { key, name, artistName: '', artwork: '', path: '', plays: entry.plays, ms: entry.ms };
+            });
 
             const binHours = waveBinHours(start, to);
             const binMs = binHours * 3600000;

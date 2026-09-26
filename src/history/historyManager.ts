@@ -46,6 +46,8 @@ export class HistoryManager {
     private player = { height: 0, viewport: 0 };
     private filling = false;
     private disposed = false;
+    // Трек в плеере сайта: страница истории отмечает его строку
+    private nowPlaying = 0;
     private resize = (): void => this.updateBounds();
     private ready = (event: IpcMainEvent): void => {
         if (!this.owns(event)) return;
@@ -80,7 +82,7 @@ export class HistoryManager {
                 }
                 void this.fill(this.userId);
             }
-            return { language: this.host.language(), signedIn: this.userId > 0, reduceMotion: this.host.reduceMotion?.() === true };
+            return { language: this.host.language(), signedIn: this.userId > 0, reduceMotion: this.host.reduceMotion?.() === true, playing: this.nowPlaying };
         });
         ipcMain.handle('history:overview', (event, from: unknown, to: unknown) => {
             this.guard(event);
@@ -235,6 +237,12 @@ export class HistoryManager {
     /** Журнал поменялся не со страницы (восстановление копии): открытое окно перечитывает период */
     public changed(): void {
         if (this.view && !this.view.webContents.isDestroyed()) this.view.webContents.send('history:changed');
+    }
+    /** Плеер сайта сменил трек */
+    public setNowPlaying(id: number): void {
+        if (!isId(id) || id === this.nowPlaying) return;
+        this.nowPlaying = id;
+        if (this.view && !this.view.webContents.isDestroyed()) this.view.webContents.send('history:now', id);
     }
     public setLanguage(language: 'ru' | 'en'): void {
         this.view?.webContents.send('history:language', language);

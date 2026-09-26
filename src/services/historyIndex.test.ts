@@ -254,7 +254,7 @@ it('индекс второй схемы получает колонки v3 на
     expect(first.resolve(USER, [11], [{ id: 11, title: 'С сайта' }])).toBe(1);
     first.close();
     const old = new DatabaseSync(join(directory, 'history-' + USER + '.sqlite'));
-    for (const column of ['covered', 'ended_by', 'picked']) old.exec('alter table plays drop column ' + column);
+    for (const column of ['covered', 'ended_by', 'picked', 'pos']) old.exec('alter table plays drop column ' + column);
     old.exec('pragma user_version = 2');
     old.close();
     journal.list.push(signal({ at: T0 + HOUR, id: 12, v: 3, spans: [[0, 50000]], endedBy: 'auto' }));
@@ -268,6 +268,58 @@ it('индекс второй схемы получает колонки v3 на
     ]);
     // Трек 11 не просится у сайта заново, трек 12 без названия в журнале просится
     expect(index.missing(USER)).toEqual([12]);
+    // Журнал перечитан целиком: старая запись получила место остановки
+    expect(index.day(USER, T0, T0 + 2 * HOUR).map((row) => [row.id, row.pos])).toEqual([[12, 190000], [11, 190000]]);
+});
+
+it('индекс третьей схемы получает место остановки на месте: названия остаются, старые записи дозаполняются из журнала', () => {
+    const directory = dir();
+    const journal = new Journal();
+    journal.list = [signal({ end: 'skip', heard: 40000, pos: 150000 })];
+    const first = open(journal, directory);
+    first.sync(USER);
+    expect(first.resolve(USER, [11], [{ id: 11, title: 'С сайта' }])).toBe(1);
+    first.close();
+    const old = new DatabaseSync(join(directory, 'history-' + USER + '.sqlite'));
+    old.exec('alter table plays drop column pos');
+    old.exec('pragma user_version = 3');
+    old.close();
+    const index = open(journal, directory);
+    expect(index.sync(USER)).toBe(0);
+    expect(journal.calls[journal.calls.length - 1]).toBe(0);
+    expect(index.day(USER, T0, T0 + HOUR)).toEqual([expect.objectContaining({ id: 11, title: 'С сайта', pos: 150000, heard: 40000 })]);
+});
+
+it('строка журнала дня отдаёт место остановки и кто сменил трек', () => {
+    const journal = new Journal();
+    journal.list = [
+        signal({ v: 3, end: 'skip', heard: 20000, pos: 95000, endedBy: 'user' }),
+        signal({ at: T0 + HOUR, id: 12, v: 3, end: 'skip', heard: 60000, pos: 60000, endedBy: 'auto' }),
+    ];
+    const index = open(journal);
+    index.sync(USER);
+    expect(index.day(USER, T0, T0 + 2 * HOUR).map((row) => [row.id, row.pos, row.endedBy])).toEqual([[12, 60000, 'auto'], [11, 95000, 'user']]);
+});
+
+it('жанры топа склеивают написания: hip-hop & rap, hip-hop/rap и rap один жанр, поджанр составного жанра отдельно', () => {
+    const journal = new Journal();
+    journal.list = [
+        signal({ id: 11, genre: 'Hip-hop & Rap' }),
+        signal({ at: T0 + HOUR, id: 11, genre: 'Hip-hop & Rap' }),
+        signal({ at: T0 + 2 * HOUR, id: 12, genre: 'Hip-hop/Rap' }),
+        signal({ at: T0 + 3 * HOUR, id: 13, genre: 'Rap' }),
+        signal({ at: T0 + 4 * HOUR, id: 14, genre: 'Club' }),
+        signal({ at: T0 + 5 * HOUR, id: 15, genre: 'Hip Hop/Rap - Trap' }),
+        signal({ at: T0 + 6 * HOUR, id: 16, genre: 'Trap' }),
+        signal({ at: T0 + 7 * HOUR, id: 17, genre: 'Trap' }),
+    ];
+    const index = open(journal);
+    index.sync(USER);
+    expect(index.overview(USER, T0, T0 + DAY)?.genres.map((genre) => [genre.name, genre.plays])).toEqual([
+        ['hip-hop & rap', 4],
+        ['trap', 3],
+        ['club', 1],
+    ]);
 });
 
 it('помощники: шаг волны, запрос поиска, жанр, местное время', () => {

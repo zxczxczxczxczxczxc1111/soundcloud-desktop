@@ -5,6 +5,8 @@
     const view = document.getElementById('view');
     const tip = document.getElementById('tip');
     const ARTISTS_SHORT = 8;
+    // Прослушивание засчитывается с 30 секунд звука, как в индексе истории (COUNTED_MS)
+    const COUNTED_MS = 30000;
 
     const TEXTS = {
         ru: {
@@ -43,8 +45,10 @@
             prevDay: 'Предыдущий день с музыкой',
             nextDay: 'Следующий день с музыкой',
             dayEmpty: 'В этот день музыки не было',
-            trackCount: ['трек', 'трека', 'треков'],
             fromWave: 'Из волны',
+            fromRadar: 'Из радара релизов',
+            fromLibrary: 'Из «Моей музыки»',
+            fromMix: 'Из подборки',
             away: 'Играло, пока тебя не было у компьютера',
             like: 'Лайк',
             skipped: (t) => 'пропущен на ' + t,
@@ -112,8 +116,10 @@
             prevDay: 'Previous day with music',
             nextDay: 'Next day with music',
             dayEmpty: 'No music on this day',
-            trackCount: ['track', 'tracks'],
             fromWave: 'From the wave',
+            fromRadar: 'From Release Radar',
+            fromLibrary: 'From My music',
+            fromMix: 'From a mix',
             away: 'Played while you were away',
             like: 'Liked',
             skipped: (t) => 'skipped at ' + t,
@@ -159,7 +165,8 @@
         day: null,
         results: null,
         allArtists: false,
-        playing: '',
+        // Трек, который сейчас в плеере сайта: отмечается самая свежая его строка
+        nowId: 0,
         // Вкус глазами волны: не зависит от периода, считается по всей истории с забыванием
         taste: null,
     };
@@ -235,19 +242,37 @@
         '<label class="search"><input type="search" id="q" placeholder="' + esc(T.search) + '" value="' + esc(state.query) + '" aria-label="' + esc(T.searchLabel) + '" spellcheck="false" autocomplete="off">' + ICON.search + '</label></div>';
     const art = (url, cls) => (url ? '<img class="' + cls + '" src="' + esc(url) + '" alt="" loading="lazy">' : '<span class="' + cls + '" aria-hidden="true"></span>');
     const keyOf = (r) => r.at + ':' + r.id;
+    // Откуда играло: радар, «Моя музыка» и подборки называются своими именами, остальное волна
+    function sourceLabel(source) {
+        const kind = source.slice(5);
+        if (kind === 'radar') return T.fromRadar;
+        if (kind === 'library') return T.fromLibrary;
+        return ['daily', 'forgotten', 'group', 'tracks'].includes(kind) ? T.fromMix : T.fromWave;
+    }
+    // Играющий трек отмечается одной строкой: самой свежей в списке (строки идут от новых к старым)
+    const playingKey = (rows) => {
+        const found = state.nowId ? rows.find((r) => r.id === state.nowId) : null;
+        return found ? keyOf(found) : '';
+    };
 
-    function row(r, withDate) {
-        const frac = r.dur ? Math.min(1, r.heard / r.dur) : 1;
+    function row(r, withDate, playing) {
+        // Смену трека сайтом (endedBy auto) человек не делал, это не пропуск. Серым идёт только пропуск раньше 30 секунд,
+        // подпись пропуска показывает место остановки; у записей без него остаётся, сколько играло
+        const skipped = r.end === 'skip' && r.endedBy !== 'auto';
+        const stop = skipped && r.pos !== null && r.pos !== undefined ? r.pos : r.heard;
+        const early = skipped && r.heard < COUNTED_MS;
+        const frac = r.dur ? Math.min(1, (skipped ? stop : r.heard) / r.dur) : 1;
+        const label = r.source.startsWith('wave') ? sourceLabel(r.source) : '';
         const icons =
-            (r.source.startsWith('wave') ? '<span data-tip="' + esc(T.fromWave) + '" aria-label="' + esc(T.fromWave) + '">' + ICON.wave + '</span>' : '') +
+            (label ? '<span data-tip="' + esc(label) + '" aria-label="' + esc(label) + '">' + ICON.wave + '</span>' : '') +
             (r.away ? '<span data-tip="' + esc(T.away) + '" aria-label="' + esc(T.away) + '">' + ICON.away + '</span>' : '') +
             (r.liked ? '<span class="like" data-tip="' + esc(T.like) + '" aria-label="' + esc(T.like) + '">' + ICON.like + '</span>' : '');
-        const heard = !r.dur ? clock(r.heard) : r.end === 'skip' ? T.skipped(clock(r.heard)) : r.end === 'done' ? T.done(clock(r.dur)) : T.of(clock(r.heard), clock(r.dur));
+        const heard = !r.dur ? clock(r.heard) : skipped ? T.skipped(clock(stop)) : r.end === 'done' ? T.done(clock(r.dur)) : T.of(clock(r.heard), clock(r.dur));
         const title = r.title ? '<b>' + esc(r.title) + '</b>' : '<b class="none">' + esc(r.resolved === 2 ? T.unavailable : T.loading) + '</b>';
         const when = withDate ? cap(fmtShort.format(r.at)) + ', ' + timeOf(r.at) : timeOf(r.at);
-        const play = r.path ? ' play" role="button" tabindex="0" data-path="' + esc(r.path) + '" data-key="' + esc(keyOf(r)) : '';
+        const play = r.path ? ' play" role="button" tabindex="0" data-path="' + esc(r.path) + '" data-id="' + r.id : '';
         return (
-            '<div class="row' + (r.end === 'skip' ? ' skip' : '') + (state.playing === keyOf(r) ? ' playing' : '') + play + '">' +
+            '<div class="row' + (early ? ' skip' : '') + (playing ? ' playing' : '') + play + '">' +
             '<span class="tm num">' + esc(when) + '</span>' + art(r.artwork, 'art') +
             '<span class="ti">' + title + '<span>' + esc(r.artistName) + '</span></span>' +
             '<span class="hd"><span class="bar"><i style="width:' + (frac * 100).toFixed(1) + '%"></i></span><span class="hn num">' + esc(heard) + '</span></span>' +
@@ -399,14 +424,17 @@
         const data = state.day;
         const rows = data ? data.rows : [];
         const total = rows.reduce((sum, r) => sum + r.heard, 0);
+        // Прослушивания считаются как в обзоре периода: с 30 секунд звука
+        const counted = rows.filter((r) => r.heard >= COUNTED_MS).length;
+        const playing = playingKey(rows);
         const before = data && data.before !== null ? dayStart(data.before) : '';
         const after = data && data.after !== null ? dayStart(data.after) : '';
         return (
             '<div class="sec" id="journal"><div class="jn"><h2>' + esc(dayTitle(state.selected)) + '</h2><span class="sub num">' +
-            esc(rows.length ? span(total) + ', ' + rows.length + ' ' + plural(rows.length, T.trackCount) : T.silence) + '</span>' +
+            esc(rows.length ? span(total) + ', ' + counted + ' ' + plural(counted, T.counted) : T.silence) + '</span>' +
             '<button class="icon-btn" data-day="' + before + '"' + (before === '' ? ' disabled' : '') + ' aria-label="' + esc(T.prevDay) + '" data-tip="' + esc(T.prevDay) + '">' + ICON.prev + '</button>' +
             '<button class="icon-btn" data-day="' + after + '"' + (after === '' ? ' disabled' : '') + ' aria-label="' + esc(T.nextDay) + '" data-tip="' + esc(T.nextDay) + '">' + ICON.next + '</button></div>' +
-            '<div class="jn-list">' + (rows.length ? rows.map((r) => row(r, false)).join('') : '<p class="empty">' + esc(T.dayEmpty) + '</p>') + '</div></div>'
+            '<div class="jn-list">' + (rows.length ? rows.map((r) => row(r, false, keyOf(r) === playing)).join('') : '<p class="empty">' + esc(T.dayEmpty) + '</p>') + '</div></div>'
         );
     }
 
@@ -419,8 +447,9 @@
         const figs = [
             [s.counted, plural(s.counted, T.counted)],
             [s.artistCount, plural(s.artistCount, T.artists)],
-            [s.fresh, plural(s.fresh, T.fresh)],
         ];
+        // За всё время каждый артист появился впервые: «новых» столько же, сколько всех, число ничего не говорит
+        if (state.period !== 'all') figs.push([s.fresh, plural(s.fresh, T.fresh)]);
         const moreButton = s.artists.length > ARTISTS_SHORT ? '<button class="link" data-act="artists">' + esc(state.allArtists ? T.less : T.more) + '</button>' : '';
         return (
             '<div class="hero"><div><div class="big num">' + (h ? h + '<small>' + esc(T.h) + '</small>' : '') + m + '<small>' + esc(T.min) + '</small></div><div class="big-cap">' + esc(T.music(state.period)) + '</div></div>' +
@@ -439,9 +468,10 @@
         const list = state.results || [];
         if (!list.length) return '<p class="empty">' + esc(T.searchEmpty) + '</p>';
         const count = list.length + ' ' + plural(list.length, T.plays);
+        const playing = playingKey(list);
         return (
             '<div class="sec"><div class="sec-h"><h2>' + esc(T.results) + '</h2><span class="sub num">' + esc(list.length >= 200 ? T.latest(200) : count) + '</span></div>' +
-            '<div class="search-rows">' + list.map((r) => row(r, true)).join('') + '</div></div>'
+            '<div class="search-rows">' + list.map((r) => row(r, true, keyOf(r) === playing)).join('') + '</div></div>'
         );
     }
 
@@ -500,9 +530,11 @@
     async function reload(first) {
         try {
             await Promise.all([loadOverview(), first ? loadTaste() : Promise.resolve()]);
-            await loadDay(state.selected || today());
-            // Первое открытие без музыки сегодня: журнал последнего дня, когда она была
-            if (first && !state.day.rows.length && state.day.before !== null) await loadDay(dayStart(state.day.before));
+            // Выбранный день вне нового периода: журнал идёт на сегодня, как при первом открытии
+            const inside = !!state.selected && state.selected >= state.overview.from;
+            await loadDay(inside ? state.selected : today());
+            // Сегодня без музыки: журнал последнего дня, когда она была, но не раньше начала периода
+            if ((first || !inside) && !state.day.rows.length && state.day.before !== null && state.day.before >= state.overview.from) await loadDay(dayStart(state.day.before));
             if (state.query) await loadResults();
             state.failed = false;
         } catch (error) {
@@ -513,13 +545,14 @@
     }
 
     let playRequest = 0;
-    async function play(path, key) {
+    async function play(path, id) {
         const request = ++playRequest;
         try {
             const result = await api.invoke('history:play', path);
             if (request !== playRequest) return;
             if (result === 'played') {
-                state.playing = key || '';
+                // main пришлёт смену трека сам; отметка ставится сразу, чтобы не ждать его
+                state.nowId = Number(id) || 0;
                 render(true);
             } else if (result !== 'superseded') {
                 showPlayError();
@@ -598,7 +631,7 @@
             return render(true);
         }
         if (data.artist) return api.send('history:artist', data.artist);
-        if (data.path) return play(data.path, data.key);
+        if (data.path) return play(data.path, data.id);
         if (data.wave) {
             const wave = state.overview.wave;
             const box = target.getBoundingClientRect();
@@ -631,7 +664,7 @@
         }
         if ((event.key === 'Enter' || event.key === ' ') && event.target.classList && event.target.classList.contains('play')) {
             event.preventDefault();
-            play(event.target.dataset.path, event.target.dataset.key);
+            play(event.target.dataset.path, event.target.dataset.id);
         }
     });
 
@@ -688,6 +721,13 @@
         setLanguage(lang);
         render(true);
     });
+    // Плеер сайта сменил трек: отметка «играет» переезжает на него, пауза её не снимает
+    api.on('history:now', (id) => {
+        const next = typeof id === 'number' && id > 0 ? id : 0;
+        if (next === state.nowId) return;
+        state.nowId = next;
+        if (state.loaded) render(true);
+    });
 
     async function start() {
         setLanguage(document.documentElement.lang);
@@ -696,6 +736,7 @@
             setLanguage(init.language);
             document.documentElement.classList.toggle('reduce-motion', init.reduceMotion === true);
             state.signedIn = init.signedIn === true;
+            state.nowId = typeof init.playing === 'number' && init.playing > 0 ? init.playing : 0;
             if (state.signedIn) await reload(true);
             else state.loaded = true;
         } catch (error) {

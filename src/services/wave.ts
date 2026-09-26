@@ -255,6 +255,45 @@ export function genreKeys(genre: string): string[] {
     return group ? [key, ...group.filter((item) => item !== key)] : [key];
 }
 
+// Одно написание жанра для полки и истории: «Hip-hop & Rap», «hiphoprap» и «rap» это hiphop.
+// Таблица внутри функции: на страницу функция уходит текстом
+export function genreCanon(key: string): string {
+    const same: Record<string, string> = {
+        hiphoprap: 'hiphop', hiphopandrap: 'hiphop', raphiphop: 'hiphop', rapandhiphop: 'hiphop', rap: 'hiphop', rockalternative: 'alternativerock', altrock: 'alternativerock',
+        dnb: 'drumandbass', drumnbass: 'drumandbass', dandb: 'drumandbass', randb: 'rnb', rhythmandblues: 'rnb', randbandsoul: 'rnb', rnbandsoul: 'rnb', lowfi: 'lofi',
+        ukg: 'ukgarage', edm: 'danceandedm', wtchhs: 'witchhouse', witchhaus: 'witchhouse', fonk: 'phonk',
+    };
+    return same[key] ?? key;
+}
+// Ключи жанра для группировки. Составной жанр сайта («Hip Hop/Rap - Trap») режется по « - », /, запятой, ; и |,
+// но не по &: иначе развалятся drum & bass и R&B. Вся строка остаётся ключом, только если это известное написание
+export function genreParts(label: string | null | undefined): string[] {
+    const text = (label ?? '').trim();
+    const keys: string[] = [];
+    const add = (part: string): void => {
+        const key = genreCanon(normalizeTag(part));
+        if (key.length >= 2 && !keys.includes(key)) keys.push(key);
+    };
+    const parts = text.split(/\s+-\s+|[/,;|]+/).filter((part) => part.trim());
+    const whole = normalizeTag(text);
+    if (parts.length < 2 || genreCanon(whole) !== whole) add(text);
+    if (parts.length > 1) for (const part of parts) add(part);
+    return keys;
+}
+// Главный жанр строки для топов: ключ склейки и подпись. У составного жанра главный это поджанр после « - »
+// («Hip Hop/Rap - Trap» это trap), иначе первая часть («Phonk/Fonk» это phonk)
+export function genreMain(label: string | null | undefined): { key: string; label: string } {
+    const text = (label ?? '').replace(/\s+/g, ' ').trim();
+    const whole = normalizeTag(text);
+    if (!whole) return { key: '', label: '' };
+    const canon = genreCanon(whole);
+    if (canon !== whole) return { key: canon, label: text };
+    const sub = text.split(/\s+-\s+/);
+    const first = (sub.length > 1 ? sub[sub.length - 1] : text).split(/[/,;|]+/)[0].trim();
+    const key = genreCanon(normalizeTag(first));
+    return key.length >= 2 ? { key, label: first } : { key: whole, label: text };
+}
+
 // Несколько жанров через запятую, слэш, точку с запятой или черту: «techno / dark techno, industrial».
 // & не разделитель, иначе развалятся drum & bass и r&b
 export function parseGenres(input: string): string[] {
@@ -5145,7 +5184,7 @@ export function installWave(config: WaveConfig, createPlayback: typeof installPl
 
 // Помощники идут на страницу объявлениями рядом со скриптом: так они видны installWave и друг другу
 const pageHelpers = [
-    normalizeTag, tagKeys, genreKeys, parseGenres, formatGenres, genreKeysFor, classifyLink, canonicalUrl, trackMatchesGenre, trackArtist,
+    normalizeTag, tagKeys, genreKeys, genreCanon, genreParts, genreMain, parseGenres, formatGenres, genreKeysFor, classifyLink, canonicalUrl, trackMatchesGenre, trackArtist,
     isWaveEligible, acceptCandidate, pickSpaced, tasteMaps, tasteScore, tasteOrder, tasteReason, applyTasteReasons, shuffleInPlace, topGenres, fillText, reasonText, shapeSamples, shelfGenres,
     artworkUrl, formatTime, playEnd, siteSource, moodTags, trackPath, localDay, countText, tasteGroups, forgottenPicks, artistNames, isNewArtist, spreadBy, pickFinds,
     ...identity.identityHelpers, ...sources.sourceHelpers, installPlaybackPage, installPlaybackRecovery,
