@@ -3,7 +3,7 @@ import { tmpdir } from 'os';
 import { join } from 'path';
 import { DatabaseSync } from 'node:sqlite';
 import { afterEach, expect, it, vi } from 'vitest';
-import { COUNTED_MS, HistoryIndex, ftsQuery, genreKey, localClock, localDayStart, waveBinHours } from './historyIndex';
+import { COUNTED_MS, HistoryIndex, ftsQuery, genreKey, localClock, localDayStart, loopedPlays, waveBinHours } from './historyIndex';
 import type { SignalSource } from './historyIndex';
 import type { PlaySignal } from '../types';
 
@@ -56,8 +56,9 @@ const open = (journal: Journal, directory = dir()): HistoryIndex => {
     indexes.push(index);
     return index;
 };
-/** Колонки схемы 5: индекс прошлой схемы изображается их удалением */
+/** Колонки схем 5 и 6: индекс прошлой схемы изображается их удалением */
 const V5 = ['why', 'origin', 'seed', 'gen', 'slot', 'score', 'known', 'mode', 'wave_genre', 'lib_mode', 'disliked', 'hidden', 'later_now', 'more_now'];
+const V6 = ['looped', 'tv', 'preset'];
 const downgrade = (directory: string, version: number, columns: string[]): void => {
     const old = new DatabaseSync(join(directory, 'history-' + USER + '.sqlite'));
     for (const column of columns) old.exec('alter table plays drop column ' + column);
@@ -301,7 +302,7 @@ it('индекс второй схемы получает колонки v3 на
     first.sync(USER);
     expect(first.resolve(USER, [11], [{ id: 11, title: 'С сайта' }])).toBe(1);
     first.close();
-    downgrade(directory, 2, ['covered', 'ended_by', 'picked', 'pos', ...V5]);
+    downgrade(directory, 2, ['covered', 'ended_by', 'picked', 'pos', ...V5, ...V6]);
     journal.list.push(signal({ at: T0 + HOUR, id: 12, v: 3, spans: [[0, 50000]], endedBy: 'auto' }));
     const index = open(journal, directory);
     const warn = vi.spyOn(console, 'warn');
@@ -325,7 +326,7 @@ it('индекс третьей схемы получает место оста�
     first.sync(USER);
     expect(first.resolve(USER, [11], [{ id: 11, title: 'С сайта' }])).toBe(1);
     first.close();
-    downgrade(directory, 3, ['pos', ...V5]);
+    downgrade(directory, 3, ['pos', ...V5, ...V6]);
     const index = open(journal, directory);
     expect(index.sync(USER)).toBe(0);
     expect(journal.calls[journal.calls.length - 1]).toBe(0);
@@ -347,7 +348,7 @@ it('индекс четвёртой схемы получает разбор в�
     first.sync(USER);
     expect(first.resolve(USER, [11], [{ id: 11, title: 'С сайта' }])).toBe(1);
     first.close();
-    downgrade(directory, 4, V5);
+    downgrade(directory, 4, [...V5, ...V6]);
     const index = open(journal, directory);
     const warn = vi.spyOn(console, 'warn');
     expect(index.sync(USER)).toBe(0);
@@ -366,6 +367,82 @@ it('индекс четвёртой схемы получает разбор в�
         }),
         expect.objectContaining({ id: 13, origin: 'library', seed: 0, slot: 0, score: null, lib_mode: 'smart' }),
     ]);
+});
+
+it('индекс пятой схемы получает круги повтора, версию модели и пресет на месте: названия остаются', () => {
+    const directory = dir();
+    const journal = new Journal();
+    journal.list = [
+        signal({ v: 4, endedBy: 'auto' }),
+        // Круг повтора до пометки в сигнале: тот же трек сразу после дослушивания
+        signal({ at: T0 + 200000, v: 4, endedBy: 'auto' }),
+        signal({ at: T0 + HOUR, id: 12, v: 4, end: 'skip', heard: 20000, endedBy: 'user', tv: 5, preset: 'calm' }),
+        signal({ at: T0 + HOUR + 20000, id: 12, v: 4, endedBy: 'auto', looped: true }),
+    ];
+    const first = open(journal, directory);
+    first.sync(USER);
+    expect(first.resolve(USER, [11], [{ id: 11, title: 'С сайта' }])).toBe(1);
+    first.close();
+    downgrade(directory, 5, V6);
+    const index = open(journal, directory);
+    const warn = vi.spyOn(console, 'warn');
+    expect(index.sync(USER)).toBe(0);
+    expect(warn).not.toHaveBeenCalled();
+    expect(index.day(USER, T0, T0 + HOUR).map((row) => row.title)).toEqual(['С сайта', 'С сайта']);
+    expect(index.tastePlays(USER, 0).map((play) => [play.id, play.looped])).toEqual([[11, false], [11, true], [12, false], [12, true]]);
+    index.close();
+    const db = new DatabaseSync(join(directory, 'history-' + USER + '.sqlite'));
+    const rows = db.prepare('select id, ' + V6.join(', ') + ' from plays order by at').all();
+    const version = db.prepare('pragma user_version').get();
+    db.close();
+    expect(rows).toEqual([
+        expect.objectContaining({ id: 11, looped: 0, tv: null, preset: null }),
+        expect.objectContaining({ id: 11, looped: 1, tv: null, preset: null }),
+        expect.objectContaining({ id: 12, looped: 0, tv: 5, preset: 'calm' }),
+        expect.objectContaining({ id: 12, looped: 1, tv: null, preset: null }),
+    ]);
+    expect(version).toEqual(expect.objectContaining({ user_version: 6 }));
+});
+
+it('круг повтора: пометка сигнала или тот же трек сразу после своего дослушивания', () => {
+    const list = [
+        signal(),
+        signal({ at: T0 + 210000 }),
+        // Через два часа это новое прослушивание, после пропуска тоже
+        signal({ at: T0 + 2 * HOUR }),
+        signal({ at: T0 + 3 * HOUR, end: 'skip', heard: 5000, endedBy: 'user' }),
+        signal({ at: T0 + 3 * HOUR + 6000 }),
+        signal({ at: T0 + 4 * HOUR, id: 12, looped: true }),
+    ];
+    const loops = loopedPlays(list);
+    expect(list.map((item) => loops.has(item))).toEqual([false, true, false, false, false, true]);
+    // Порядок журнала не важен: круги ищутся по времени начала
+    expect(loopedPlays([list[1], list[0]]).has(list[1])).toBe(true);
+});
+
+it('круги повтора в замер не идут, смена с порога идёт ранним пропуском, но история и счётчики её не показывают', () => {
+    const wave = (patch: Partial<PlaySignal>): PlaySignal => signal({ v: 4, endedBy: 'auto', title: 'Круг', why: 'tasteArtist', origin: 'similar', ...patch });
+    const journal = new Journal();
+    journal.list = [
+        wave({ at: T0, id: 21 }),
+        wave({ at: T0 + 200000, id: 21, looped: true }),
+        wave({ at: T0 + 400000, id: 21, looped: true }),
+        wave({ at: T0 + HOUR, id: 22, title: 'Порог', why: 'genreFresh', origin: 'genreFresh', end: 'skip', heard: 400, pos: 400, endedBy: 'user' }),
+        // Запись до v4: неподменённая причина и есть исходная, подменённая неизвестна
+        signal({ at: T0 + 2 * HOUR, id: 23, v: 3, endedBy: 'auto', why: 'tasteTag' }),
+        signal({ at: T0 + 3 * HOUR, id: 24, v: 3, endedBy: 'auto', why: 'similar' }),
+    ];
+    const index = open(journal);
+    index.sync(USER);
+    const q = index.waveQuality(USER, T0, T0 + DAY);
+    expect(q?.wave).toMatchObject({ plays: 4, early: 1, done: 3 });
+    expect(q?.reasons.map((slice) => [slice.key, slice.plays])).toEqual([['genreFresh', 1], ['similar', 1], ['tasteArtist', 1], ['tasteTag', 1]]);
+    expect(q?.origins.map((slice) => [slice.key, slice.plays])).toEqual([['similar', 2], ['', 1], ['genreFresh', 1]]);
+    expect(index.day(USER, T0, T0 + DAY).map((row) => row.id)).toEqual([24, 23, 21, 21, 21]);
+    expect(index.search(USER, 'порог')).toEqual([]);
+    expect(index.search(USER, 'круг')).toHaveLength(3);
+    expect(index.neighbors(USER, T0 + 2 * HOUR, T0 + 3 * HOUR)).toEqual({ before: T0 + 400000, after: T0 + 3 * HOUR });
+    expect(index.overview(USER, T0, T0 + DAY)?.total).toBe(5);
 });
 
 it('строка журнала дня отдаёт место остановки и кто сменил трек', () => {

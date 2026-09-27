@@ -1,6 +1,6 @@
 import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from 'fs';
 import { join } from 'path';
-import { COUNTED_MS, localDayStart, type HistoryIndex, type TastePlay } from './historyIndex';
+import { COUNTED_MS, HEARD_MIN_MS, localDayStart, type HistoryIndex, type TastePlay } from './historyIndex';
 import type { TasteLibrary, TasteUpload } from './recommendStore';
 import { copyKey, familyKey, nameKey, parseTrackTitle, trackCredits, type TrackCredit } from './trackIdentity';
 import { genreCanon, normalizeTag, tagShares, type WaveTrack } from './wave';
@@ -73,7 +73,9 @@ export function playWeights(play: Pick<TastePlay, 'heard' | 'dur' | 'end' | 'lik
     // Кусок на повторе: слышно заметно больше, чем покрыто. Это интерес, а не частичный уход
     const looped = typeof play.covered === 'number' && play.heard > play.covered + 10000;
     let base: Weights | null;
-    if (play.heard < COUNTED_MS) base = chosen ? EARLY_SKIP : null;
+    // Смена с порога, раньше секунды: так же листают очередь к нужному треку, это не оценка трека
+    if (play.heard < HEARD_MIN_MS) base = null;
+    else if (play.heard < COUNTED_MS) base = chosen ? EARLY_SKIP : null;
     else if (full && !chosen) base = FULL;
     else if (most) base = MOST;
     else base = chosen && !looped ? PARTIAL : null;
@@ -187,7 +189,9 @@ export function buildTaste(
     const labels = new Map<string, string>();
     const names = new Map<number, { name: string; artwork: string; path: string }>();
     const lastCounted = new Map<number, number>();
-    const counted = plays.filter((play) => play.heard >= COUNTED_MS).length;
+    // Треки, чья серия кругов повтора уже получила голос переслушивания
+    const looping = new Set<number>();
+    const counted = plays.filter((play) => play.heard >= COUNTED_MS && !play.looped).length;
     const confidence = counted < P.confidentPlays ? 0.5 : 1;
 
     const originOf = (at: number, record: string, manual: boolean, daily: boolean, undated = false): Origin => {
@@ -254,13 +258,17 @@ export function buildTaste(
         // «Моя музыка» играет собранное самим человеком, это собственный выбор без скидки (Э7)
         const positive = play.source.startsWith('wave:') && play.source !== 'wave:library' && !play.picked ? P.wavePositive : 1;
         const origin = originOf(play.at, item.record, play.likedNow || play.picked, true);
-        // Само прослушивание насыщается по суткам, лайк во время него явное действие и идёт целиком
-        const weights = playWeights({ heard: play.heard, dur: play.dur, end: play.end, likedNow: false, covered: play.covered, endedBy: play.endedBy });
+        // Само прослушивание насыщается по суткам, лайк во время него явное действие и идёт целиком.
+        // Круг повтора не прослушивание заново: артист и теги за него ничего не получают
+        const weights = play.looped ? null : playWeights({ heard: play.heard, dur: play.dur, end: play.end, likedNow: false, covered: play.covered, endedBy: play.endedBy });
         if (weights) apply(weights, play.id, play.artist, item, positive, origin);
         if (play.likedNow) apply(LIKE, play.id, play.artist, item, positive, { ...origin, daily: false });
+        if (!play.looped) looping.delete(play.id);
         if (play.heard < COUNTED_MS) continue;
         const previous = lastCounted.get(play.id);
-        if (previous !== undefined && play.at - previous <= P.replayDays * DAY) push('tracks', String(play.id), positive, origin);
+        // Переслушивание плюсует трек; серия кругов повтора подряд даёт один голос, а не голос за круг
+        if (previous !== undefined && play.at - previous <= P.replayDays * DAY && !(play.looped && looping.has(play.id))) push('tracks', String(play.id), positive, origin);
+        if (play.looped) looping.add(play.id);
         lastCounted.set(play.id, play.at);
     }
     const marked = new Set<number>();

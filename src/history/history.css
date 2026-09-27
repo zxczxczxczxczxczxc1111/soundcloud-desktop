@@ -689,6 +689,10 @@ h2 {
     border-radius: 3px 3px 0 0;
     background: var(--mark);
 }
+/* Меньше 5 треков: доля ничего не значит, столбик приглушён, как строка таблицы */
+.cc-slot.low i {
+    background: var(--mark-idle);
+}
 .cc-slot:hover i,
 .cc-slot:focus-visible i {
     background: var(--text);

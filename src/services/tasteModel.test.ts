@@ -10,7 +10,7 @@ function play(fields: Partial<TastePlay>): TastePlay {
     clock++;
     return {
         at: NOW - 3600000 + clock, id: 1, artist: 10, heard: 200000, dur: 200000, end: 'done', source: 'site:single', likedNow: false, away: false,
-        covered: null, endedBy: '', picked: false, genre: 'techno', tags: '"dark techno" berlin', title: '', artistName: 'Artist', artwork: '', path: '/artist/one',
+        covered: null, endedBy: '', picked: false, looped: false, genre: 'techno', tags: '"dark techno" berlin', title: '', artistName: 'Artist', artwork: '', path: '/artist/one',
         ...fields,
     };
 }
@@ -55,6 +55,28 @@ it('A21: ошибка и конец очереди не дизлайк, кусо
     // Перемотка вперёд: покрыто меньше слышанного не бывает, берётся меньшее
     expect(playWeights({ heard: 60000, covered: 60000, dur: 200000, end: 'skip', likedNow: false, endedBy: 'user' })).toEqual([-0.2, 0, 0]);
     expect(playWeights({ heard: 170000, covered: 120000, dur: 200000, end: 'done', likedNow: false })).toEqual([0.5, 0.2, 0.1]);
+});
+
+it('смена трека раньше секунды не сигнал, лайк при ней засчитывается', () => {
+    expect(playWeights({ heard: 400, dur: 200000, end: 'skip', likedNow: false, endedBy: 'user' })).toBeNull();
+    expect(playWeights({ heard: 400, dur: 200000, end: 'skip', likedNow: true, endedBy: 'user' })).toEqual([2, 0.8, 0.3]);
+    const profile = buildTaste([...confident, play({ id: 1, heard: 400, end: 'skip', endedBy: 'user' })], [], empty, NOW).profile;
+    expect(weightOf(profile.tracks, 1)).toBeUndefined();
+    expect(weightOf(profile.artists, 10)).toBeUndefined();
+});
+
+it('круг повтора не плюсует артиста и теги, серия кругов подряд даёт один голос переслушивания', () => {
+    const wave = { source: 'wave:similar' };
+    const once = buildTaste([...confident, play({ id: 1, ...wave })], [], empty, NOW).profile;
+    const loops = buildTaste([...confident, play({ id: 1, ...wave }), ...[1, 2, 3].map(() => play({ id: 1, ...wave, looped: true }))], [], empty, NOW).profile;
+    expect(weightOf(loops.artists, 10)).toBeCloseTo(weightOf(once.artists, 10) ?? 0, 6);
+    expect(weightOf(loops.tags, 'techno')).toBeCloseTo(weightOf(once.tags, 'techno') ?? 0, 6);
+    // Прослушивание 0.7 и один голос переслушивания 0.7; за каждый круг вышло бы 2 на потолке суток
+    expect(weightOf(loops.tracks, 1)).toBeCloseTo(blended(1.4, HOUR_AGE), 2);
+    expect(loops.counted).toBe(201);
+    // Отдельное прослушивание после серии снова голосует
+    const again = buildTaste([...confident, play({ id: 1, ...wave, at: NOW - 3 * DAY }), play({ id: 1, ...wave, at: NOW - 3 * DAY + 200000, looped: true }), play({ id: 1, ...wave })], [], empty, NOW).profile;
+    expect(weightOf(again.tracks, 1)).toBeCloseTo(blended(1.4, 3) + blended(1.4, HOUR_AGE), 2);
 });
 
 it('волна ослабляет плюсы, но не минусы; простой системы нейтрален; без уверенности всё вполсилы', () => {

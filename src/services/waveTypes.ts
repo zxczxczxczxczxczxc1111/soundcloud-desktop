@@ -58,6 +58,8 @@ export interface WaveTrace {
     /** Оценка вкуса при упорядочивании; null, пока профиля вкуса нет */
     score: number | null;
     known: boolean;
+    /** Версия модели вкуса, которой посчитана оценка */
+    tv?: number;
 }
 export interface WaveCandidate {
     track: WaveTrack;
@@ -116,6 +118,8 @@ export type WaveTexts = Record<
 
 // Профиль вкуса из main: веса треков, аккаунтов-кураторов, участников, семей версий, тегов и пометок версии
 export interface TasteMaps {
+    /** Версия модели в main; 0, если профиль её не принёс */
+    version: number;
     artists: Map<number, number>;
     credits: Map<string, number>;
     families: Map<string, number>;

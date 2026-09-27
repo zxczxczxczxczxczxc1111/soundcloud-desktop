@@ -58,6 +58,10 @@ function waveTrace(value: Partial<Record<keyof PlaySignal, unknown>>, now: numbe
     if (value.libMode === 'order' || value.libMode === 'shuffle' || value.libMode === 'smart') trace.libMode = value.libMode;
     if (typeof value.laterNow === 'boolean') trace.laterNow = value.laterNow;
     if (typeof value.moreNow === 'boolean') trace.moreNow = value.moreNow;
+    if (typeof value.looped === 'boolean') trace.looped = value.looped;
+    if (typeof value.tv === 'number' && Number.isInteger(value.tv) && value.tv > 0 && value.tv <= 1000) trace.tv = value.tv;
+    const preset = text(value.preset, 20);
+    if (/^[a-z]{1,20}$/.test(preset)) trace.preset = preset;
     return trace;
 }
 

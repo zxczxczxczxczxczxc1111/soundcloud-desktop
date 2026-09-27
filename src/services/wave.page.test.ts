@@ -820,7 +820,7 @@ it('журнал v4: оценка вкуса, «Не сейчас» во вре�
     const site = fakeSite(relatedTracks);
     const waveSignals = { add: vi.fn() };
     // Артист 10 (первый похожий первого зерна) знаком вкусу, остальные нет
-    const waveTaste = { load: vi.fn(async () => ({ artists: [[10, 2]], tags: [], tracks: [] })) };
+    const waveTaste = { load: vi.fn(async () => ({ version: 5, artists: [[10, 2]], tags: [], tracks: [] })) };
     const waveExclusions = { load: vi.fn(async () => ({ tracks: [], artists: [] })), set: vi.fn(async () => true) };
     Object.assign(window, { soundcloudAPI: { waveSignals, waveTaste, waveExclusions, sendTrackMeta: vi.fn() } });
     window.eval(waveScript());
@@ -849,9 +849,10 @@ it('журнал v4: оценка вкуса, «Не сейчас» во вре�
     const signals = waveSignals.add.mock.calls.flatMap(([, list]) => list) as PlaySignal[];
     const wave = signals.filter((signal) => signal.source.startsWith('wave:'));
     expect(signals.find((signal) => signal.id === first)).toEqual(expect.objectContaining({ laterNow: true, moreNow: false }));
-    // Профиль вкуса был: у каждого трека волны оценка и знакомость артиста, знаком только артист 10
+    // Профиль вкуса был: у каждого трека волны оценка, версия модели и знакомость артиста, знаком только артист 10
     for (const signal of wave) {
         expect(typeof signal.score).toBe('number');
+        expect(signal.tv).toBe(5);
         expect(signal.known).toBe(signal.artist === 10);
     }
     expect(signals.find((signal) => signal.id === ourItem.sound.id)).toEqual(expect.objectContaining({ source: 'wave:similar', origin: 'similar', mode: 'similar', slot: expect.any(Number) }));
@@ -896,6 +897,49 @@ it('A21: повтор одного места не растит покрытие
     expect(five).toEqual(expect.objectContaining({ v: 4, end: 'skip', endedBy: 'user', picked: false, spans: [[0, 20000], [100000, 110000]] }));
     expect(five?.heard).toBe(40000);
     expect(signals.find((signal) => signal.id === 6)).toEqual(expect.objectContaining({ end: 'skip', endedBy: 'auto', heard: 5000 }));
+    next.remove();
+});
+
+it('В1.1: круг повтора помечен; смена кнопкой раньше секунды пишется пропуском с порога, смена сайтом нет', async () => {
+    const site = fakeSite(relatedTracks);
+    const bridge = fakeBridge();
+    window.eval(waveScript());
+    await vi.advanceTimersByTimeAsync(100);
+    const item = (id: number): FakeItem => ({ sound: { id, currentTime: () => position, getMediaDuration: () => 200000 }, sourceInfo: { type: 'playlist' } });
+    site.player.playCurrent();
+    position = 0;
+    site.setItems([item(5)], 0);
+    await vi.advanceTimersByTimeAsync(1000);
+    // До конца и сразу сначала: трек на повторе
+    await playFor(198000);
+    position = 0;
+    await vi.advanceTimersByTimeAsync(1000);
+    await playFor(20000);
+    const next = document.createElement('button');
+    next.className = 'playControls skipControl__next';
+    document.body.append(next);
+    next.click();
+    position = 0;
+    site.setItems([item(6)], 0);
+    await vi.advanceTimersByTimeAsync(1000);
+    // Трек 6 сменён кнопкой, не прозвучав и секунды
+    next.click();
+    site.setItems([item(7)], 0);
+    await vi.advanceTimersByTimeAsync(1000);
+    // Трек 7 без звука сменил сам сайт, когда кнопок давно не было
+    await vi.advanceTimersByTimeAsync(5000);
+    site.setItems([item(8)], 0);
+    await vi.advanceTimersByTimeAsync(1000);
+    await vi.advanceTimersByTimeAsync(6000);
+    const signals = bridge.waveSignals.add.mock.calls.flatMap(([, list]) => list) as PlaySignal[];
+    const five = signals.filter((signal) => signal.id === 5);
+    expect(five).toEqual([
+        expect.objectContaining({ end: 'done' }),
+        expect.objectContaining({ end: 'skip', endedBy: 'user', looped: true }),
+    ]);
+    expect(five[0]).not.toHaveProperty('looped');
+    expect(signals.filter((signal) => signal.id === 6)).toEqual([expect.objectContaining({ end: 'skip', endedBy: 'user', heard: 0 })]);
+    expect(signals.some((signal) => signal.id === 7)).toBe(false);
     next.remove();
 });
 

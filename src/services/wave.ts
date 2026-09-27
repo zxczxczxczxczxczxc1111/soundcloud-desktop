@@ -1424,6 +1424,7 @@ export function installWave(config: WaveConfig, createPlayback: typeof installPl
                 const score = tasteScore(candidate.track, current);
                 candidate.trace.score = Math.round(score.score * 100) / 100;
                 candidate.trace.known = score.known;
+                if (current.version) candidate.trace.tv = current.version;
             }
             applyTasteReasons(found, current);
             pool.push(...tasteOrder(found, current));
@@ -1799,6 +1800,7 @@ export function installWave(config: WaveConfig, createPlayback: typeof installPl
         if (trace?.waveGenre) fields.waveGenre = trace.waveGenre;
         if (trace?.libMode) fields.libMode = trace.libMode;
         if (candidate.trace && candidate.trace.score !== null) Object.assign(fields, { score: candidate.trace.score, known: candidate.trace.known });
+        if (candidate.trace?.tv) fields.tv = candidate.trace.tv;
         return fields;
     }
     function beginPlay(sound: SiteSound, picked = false): void {
@@ -1852,10 +1854,11 @@ export function installWave(config: WaveConfig, createPlayback: typeof installPl
     function finishPlay(end?: PlaySignal['end'], byUser = false): void {
         const current = play;
         play = null;
-        // Трек сменили раньше, чем он прозвучал секунду: сигнала нет
-        if (!current || current.signal.heard < 1000) return;
+        if (!current) return;
+        // Меньше секунды: сигнал только о смене человеком, это пропуск с порога. История и счётчики его не показывают
+        if (current.signal.heard < 1000 && (!byUser || end === 'stop')) return;
         const signal = current.signal;
-        signal.end = end ?? playEnd(signal.dur, signal.pos);
+        signal.end = signal.heard < 1000 ? 'skip' : end ?? playEnd(signal.dur, signal.pos);
         signal.likedNow = signal.liked && !current.likedAtStart;
         signal.spans = mergeSpans(current.spans).map(([from, to]) => [Math.round(from), Math.round(to)]);
         if (signal.end !== 'stop') signal.endedBy = byUser ? 'user' : 'auto';
@@ -1870,10 +1873,11 @@ export function installWave(config: WaveConfig, createPlayback: typeof installPl
         const position = positionOf(sound);
         const signal = current.signal;
         if (!signal.dur) signal.dur = durationOf(sound);
-        // Трек на повторе: позиция вернулась в начало после конца, это новое прослушивание
+        // Трек на повторе: позиция вернулась в начало после конца, это новое прослушивание с пометкой повтора
         if (signal.dur && current.lastPosition >= signal.dur - 5000 && position < 5000) {
             finishPlay('done');
             beginPlay(sound);
+            if (play) play.signal.looped = true;
             return;
         }
         const delta = position - current.lastPosition;

@@ -101,6 +101,7 @@
             waveCols: { tracks: 'Треков', early: 'До 0:30', done: 'Дослушано', likes: 'Лайки' },
             waveSource: 'Подборка',
             waveReason: 'Причина',
+            waveOrigin: 'Откуда взят',
             waveSlot: 'Место в выдаче',
             slots: { first: 'Первые три', later: 'С четвёртого' },
             sources: {
@@ -206,6 +207,7 @@
             waveCols: { tracks: 'Tracks', early: 'Before 0:30', done: 'To the end', likes: 'Likes' },
             waveSource: 'Mix',
             waveReason: 'Reason',
+            waveOrigin: 'Found via',
             waveSlot: 'Place in the batch',
             slots: { first: 'First three', later: 'Fourth on' },
             sources: {
@@ -511,7 +513,7 @@
             const day = cap(fmtWd.format(d.from));
             const tipText = d.plays ? T.waveDay(day, share, d.early, d.plays) : T.waveDayIdle(day);
             const height = d.plays ? Math.max(2, share) : 0;
-            return '<div class="cc-slot" tabindex="0" data-tip="' + esc(tipText) + '" aria-label="' + esc(tipText) + '"><i style="height:' + height + '%"></i></div>';
+            return '<div class="cc-slot' + (d.plays && d.plays < 5 ? ' low' : '') + '" tabindex="0" data-tip="' + esc(tipText) + '" aria-label="' + esc(tipText) + '"><i style="height:' + height + '%"></i></div>';
         }).join('');
         const labels = days.map((d, i) => '<span>' + ((last - i) % every === 0 ? esc(d.from === today() ? T.todayLower : fmtShort.format(d.from)) : '') + '</span>').join('');
         return (
@@ -540,7 +542,7 @@
             const share = pct(w.early, w.plays);
             const tipText = w.plays ? T.waveWeek(label(w), share, w.early, w.plays) : T.waveWeekIdle(label(w));
             const height = w.plays ? Math.max(2, share) : 0;
-            return '<div class="cc-slot" tabindex="0" data-tip="' + esc(tipText) + '" aria-label="' + esc(tipText) + '"><i style="height:' + height + '%"></i></div>';
+            return '<div class="cc-slot' + (w.plays && w.plays < 5 ? ' low' : '') + '" tabindex="0" data-tip="' + esc(tipText) + '" aria-label="' + esc(tipText) + '"><i style="height:' + height + '%"></i></div>';
         }).join('');
         const labels = weeks.map((w, i) => '<span>' + ((last - i) % every === 0 ? esc(label(w)) : '') + '</span>').join('');
         return (
@@ -587,7 +589,9 @@
                 waveFigures(q) + (q.days.length ? waveDays(q) : waveWeeks(q)) +
                 '<div class="grid2 wq-part"><div>' + waveTable(T.waveSource, q.sources, (key) => T.sources[key] || key) +
                 waveTable(T.waveSlot, slots, (key) => T.slots[key]) + '</div>' +
-                '<div>' + waveTable(T.waveReason, q.reasons, (key) => T.reasons[key] || key) + '</div></div>';
+                '<div>' + waveTable(T.waveReason, q.reasons, (key) => T.reasons[key] || key) +
+                // Откуда взят трек до подмены причиной по вкусу: «Любимый артист» и «Любимый тег» ставятся лучшим по оценке
+                (q.origins && q.origins.some((s) => s.key && s.plays) ? waveTable(T.waveOrigin, q.origins, (key) => T.reasons[key] || key) : '') + '</div></div>';
         }
         return '<div class="sec wq">' + head + '<div id="wave-quality">' + body + '</div></div>';
     }

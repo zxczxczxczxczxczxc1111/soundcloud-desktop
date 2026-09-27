@@ -123,13 +123,13 @@ it('запись v4: разбор выдачи волны принимается
     const now = Date.UTC(2026, 8, 26, 12);
     const trace = {
         gen: now - 60000, slot: 7, origin: 'similar', seed: 42, score: 1.23456, known: false, mode: 'fresh', waveGenre: 'phonk, drift phonk',
-        libMode: 'smart', laterNow: true, moreNow: false,
+        libMode: 'smart', laterNow: true, moreNow: false, looped: true, tv: 5, preset: 'calm',
     } as const;
     const v4 = validateSignal(signal({ at: now, v: 4, endedBy: 'user', ...trace }), now);
     expect(v4).toEqual(expect.objectContaining({ v: 4, endedBy: 'user', ...trace, score: 1.23 }));
     const junk = validateSignal({
         ...signal({ at: now, v: 4 }), gen: now + 3 * 86400000, slot: -1, origin: 'drop table', seed: 1.5, score: Infinity, known: 'yes', mode: 'wild',
-        waveGenre: '\u0000', libMode: 'random', laterNow: 1, moreNow: 'no',
+        waveGenre: '\u0000', libMode: 'random', laterNow: 1, moreNow: 'no', looped: 'yes', tv: 1.5, preset: 'Calm; drop',
     }, now);
     expect(junk).toEqual(expect.objectContaining({ v: 4, id: 11 }));
     for (const field of Object.keys(trace)) expect(junk).not.toHaveProperty(field);

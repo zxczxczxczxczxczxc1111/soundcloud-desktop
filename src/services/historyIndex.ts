@@ -13,9 +13,14 @@ import { copyKey, nameKey, performerKey, trackCredits } from './trackIdentity';
 // 4: место остановки: «пропущен на» показывает его, а не сколько играло
 // 5: разбор выдачи волны для замера (сигналы v4): причина и исходная причина, зерно, поколение, место, оценка вкуса,
 //    режим, жанр и порядок «Моей музыки», отметки во время трека
-export const HISTORY_SCHEMA = 5;
+// 6: круг повтора трека, версия модели вкуса, пресет настроения
+export const HISTORY_SCHEMA = 6;
 /** Трек засчитывается в топах и счётчиках с 30 секунд реально прозвучавшего звука */
 export const COUNTED_MS = 30000;
+/** Меньше секунды звука: трек сменили с порога. Замер волны это видит, история и счётчики нет */
+export const HEARD_MIN_MS = 1000;
+/** Круг повтора у записей без пометки: тот же трек сразу после дослушивания, с запасом на паузу */
+const LOOP_GAP_MS = 15000;
 const DAY = 86400000;
 const WEEK_HOURS = 168;
 const SQLITE_CORRUPT = 11;
@@ -87,6 +92,8 @@ export interface TastePlay {
     endedBy: 'user' | 'auto' | '';
     /** Запущен кликом по самому треку (v3) */
     picked: boolean;
+    /** Круг повтора: тот же трек сразу после своего конца */
+    looped: boolean;
     genre: string;
     tags: string;
     title: string;
@@ -124,6 +131,8 @@ export interface WaveQuality {
     sources: WaveSlice[];
     /** По причине, которую видел человек */
     reasons: WaveSlice[];
+    /** По исходной причине, до подмены причиной по вкусу; у записей до v4 подменённая причина пустая */
+    origins: WaveSlice[];
     /** Места 1-3 в выдаче против остальных, с сигналов v4 */
     slots: { first: WaveMeasure; later: WaveMeasure };
     artists: number;
@@ -151,9 +160,14 @@ const isId = (value: unknown): value is number => typeof value === 'number' && N
 const isTime = (value: unknown): value is number => typeof value === 'number' && Number.isFinite(value) && value >= 0 && value <= 24 * 3600000;
 /** Колонки схемы 5: у записей до v4 разбора выдачи нет, они остаются пустыми */
 const V5_COLUMNS = ['why text', 'origin text', 'seed integer', 'gen integer', 'slot integer', 'score real', 'known integer', 'mode text', 'wave_genre text', 'lib_mode text', 'disliked integer', 'hidden integer', 'later_now integer', 'more_now integer'];
+/** Колонки схемы 6 */
+const V6_COLUMNS = ['looped integer', 'tv integer', 'preset text'];
 const flag = (value: boolean | undefined): number | null => (value === undefined ? null : value ? 1 : 0);
-// Замер волны. Оценимое прослушивание: известно, кто сменил трек (сигналы с v3), не простой, не закрытие клиента, не смена самим сайтом
-const JUDGED = "p.ended_by is not null and p.away = 0 and p.end != 'stop' and not (p.end = 'skip' and p.ended_by = 'auto')";
+// Замер волны. Оценимое прослушивание: известно, кто сменил трек (сигналы с v3), не простой, не закрытие клиента, не смена самим сайтом,
+// не круг повтора: трек на повторе считается одним прослушиванием
+const JUDGED = "p.ended_by is not null and p.away = 0 and p.end != 'stop' and not (p.end = 'skip' and p.ended_by = 'auto') and coalesce(p.looped, 0) = 0";
+// Строка истории и счётчиков: смена трека с порога в них не видна
+const SHOWN = 'p.heard >= ' + HEARD_MIN_MS;
 // Рекомендация волны: свои треки «Моей музыки» и трек, с которого волну запустил сам человек, не в счёт
 const WAVE = "p.source like 'wave:%' and coalesce(p.why, '') not in ('library', 'seedTrack')";
 const OWN = "(p.source = 'site:user-track_likes' or (p.source = 'wave:library' and p.why = 'library'))";
@@ -191,7 +205,8 @@ const SCHEMA = [
     'create table if not exists meta(key text primary key, value integer not null)',
     "create table if not exists tracks(id integer primary key, artist integer not null default 0, title text not null default '', artist_name text not null default '', path text not null default '', artwork text not null default '', genre text not null default '', tags text not null default '', dur integer not null default 0, resolved integer not null default 0)",
     'create table if not exists plays(at integer not null, id integer not null, artist integer not null, heard integer not null, dur integer not null, end text not null, source text not null, liked integer not null, liked_now integer not null default 0, away integer not null, tz integer, covered integer, ended_by text, picked integer, pos integer, ' +
-        'why text, origin text, seed integer, gen integer, slot integer, score real, known integer, mode text, wave_genre text, lib_mode text, disliked integer, hidden integer, later_now integer, more_now integer, primary key(at, id)) without rowid',
+        'why text, origin text, seed integer, gen integer, slot integer, score real, known integer, mode text, wave_genre text, lib_mode text, disliked integer, hidden integer, later_now integer, more_now integer, ' +
+        'looped integer, tv integer, preset text, primary key(at, id)) without rowid',
     'create index if not exists plays_id on plays(id)',
     'create index if not exists plays_artist on plays(artist, at)',
     'create index if not exists tracks_resolved on tracks(resolved)',
@@ -244,6 +259,17 @@ function performerName(row: Values): string {
     const own = nameKey(str(row.artistName));
     return trackCredits(rowTrack(row)).find((credit) => credit.role === 'artist' && credit.key && credit.key !== own)?.name ?? str(row.artistName);
 }
+/** Круги повтора: пометка из сигнала, у записей без неё тот же трек сразу после своего дослушивания */
+export function loopedPlays(signals: readonly PlaySignal[]): Set<PlaySignal> {
+    const loops = new Set<PlaySignal>();
+    let previous: PlaySignal | undefined;
+    for (const signal of [...signals].sort((a, b) => a.at - b.at)) {
+        const after = previous !== undefined && previous.id === signal.id && previous.end === 'done' && signal.at - previous.at <= Math.max(previous.dur, previous.heard) + LOOP_GAP_MS;
+        if (signal.looped || after) loops.add(signal);
+        previous = signal;
+    }
+    return loops;
+}
 const toMeasure = (row: Values | undefined): WaveMeasure => ({
     plays: num(row?.plays), early: num(row?.early), done: num(row?.done), likes: num(row?.likes), more: num(row?.more), against: num(row?.against),
 });
@@ -286,9 +312,12 @@ export class HistoryIndex {
         let db = new DatabaseSync(this.file(userId));
         try {
             let version = num((db.prepare('pragma user_version').get() as Values | undefined)?.user_version);
-            const added: Record<number, string[]> = { 2: ['covered integer', 'ended_by text', 'picked integer', 'pos integer', ...V5_COLUMNS], 3: ['pos integer', ...V5_COLUMNS], 4: V5_COLUMNS };
+            const added: Record<number, string[]> = {
+                2: ['covered integer', 'ended_by text', 'picked integer', 'pos integer', ...V5_COLUMNS, ...V6_COLUMNS], 3: ['pos integer', ...V5_COLUMNS, ...V6_COLUMNS],
+                4: [...V5_COLUMNS, ...V6_COLUMNS], 5: V6_COLUMNS,
+            };
             if (added[version]) {
-                // Со второй по четвёртую схему колонки добавляются на месте: пересборка потеряла бы названия, добранные у сайта.
+                // Со второй по пятую схему колонки добавляются на месте: пересборка потеряла бы названия, добранные у сайта.
                 // Журнал перечитывается целиком, чтобы старые записи получили место остановки и то, что есть о выдаче волны.
                 // Не вышло: индекс собирается заново ниже, как при любой чужой схеме
                 db.exec('begin');
@@ -383,14 +412,17 @@ export class HistoryIndex {
         const upsert = db.prepare(UPSERT_TRACK);
         const insert = db.prepare(
             'insert or ignore into plays(at, id, artist, heard, dur, end, source, liked, liked_now, away, tz, covered, ended_by, picked, pos, ' +
-                'why, origin, seed, gen, slot, score, known, mode, wave_genre, lib_mode, disliked, hidden, later_now, more_now) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
+                'why, origin, seed, gen, slot, score, known, mode, wave_genre, lib_mode, disliked, hidden, later_now, more_now, looped, tv, preset) ' +
+                'values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
         );
         // Запись из индекса прошлой схемы: пустые колонки дописываются из журнала, заполненные не трогаются
         const fill = db.prepare(
             'update plays set pos = coalesce(pos, ?), why = coalesce(why, ?), origin = coalesce(origin, ?), seed = coalesce(seed, ?), gen = coalesce(gen, ?), slot = coalesce(slot, ?), ' +
                 'score = coalesce(score, ?), known = coalesce(known, ?), mode = coalesce(mode, ?), wave_genre = coalesce(wave_genre, ?), lib_mode = coalesce(lib_mode, ?), ' +
-                'disliked = coalesce(disliked, ?), hidden = coalesce(hidden, ?), later_now = coalesce(later_now, ?), more_now = coalesce(more_now, ?) where at = ? and id = ?',
+                'disliked = coalesce(disliked, ?), hidden = coalesce(hidden, ?), later_now = coalesce(later_now, ?), more_now = coalesce(more_now, ?), ' +
+                'looped = coalesce(looped, ?), tv = coalesce(tv, ?), preset = coalesce(preset, ?) where at = ? and id = ?',
         );
+        const loops = loopedPlays(signals);
         let added = 0;
         let latest = 0;
         db.exec('begin');
@@ -401,6 +433,7 @@ export class HistoryIndex {
                 const wave = [
                     signal.why, signal.origin ?? null, signal.seed ?? null, signal.gen ?? null, signal.slot ?? null, signal.score ?? null, flag(signal.known),
                     signal.mode ?? null, signal.waveGenre ?? null, signal.libMode ?? null, flag(signal.disliked), flag(signal.hiddenArtist), flag(signal.laterNow), flag(signal.moreNow),
+                    loops.has(signal) ? 1 : 0, signal.tv ?? null, signal.preset ?? null,
                 ];
                 const result = insert.run(
                     signal.at, signal.id, signal.artist, signal.heard, signal.dur, signal.end, signal.source,
@@ -470,7 +503,7 @@ export class HistoryIndex {
     public overview(userId: unknown, from: number | null, to: number): HistoryOverview | null {
         if (!isId(userId)) return null;
         return this.guarded(userId, ({ db }) => {
-            const first = (db.prepare('select min(at) as at, count(*) as total from plays').get() as Values | undefined) ?? {};
+            const first = (db.prepare('select min(p.at) as at, count(*) as total from plays p where ' + SHOWN).get() as Values | undefined) ?? {};
             const firstAt = first.at === null || first.at === undefined ? null : num(first.at);
             const start = from ?? (firstAt === null ? localDayStart(to - DAY) : localDayStart(firstAt));
             const range = [start, to] as const;
@@ -611,6 +644,8 @@ export class HistoryIndex {
                 own: measure(OWN + ' and ' + range, start, to),
                 sources: sliced("substr(p.source, 6)"),
                 reasons: sliced("coalesce(p.why, '')"),
+                // У записей до v4 исходной причины нет: неподменённая причина и есть исходная, подменённая неизвестна
+                origins: sliced("case when p.origin is not null then p.origin when p.why in ('tasteArtist', 'tasteTag') then '' else coalesce(p.why, '') end"),
                 slots: {
                     first: measure(WAVE + ' and p.slot between 1 and 3 and ' + range, start, to),
                     later: measure(WAVE + ' and p.slot >= 4 and ' + range, start, to),
@@ -636,7 +671,7 @@ export class HistoryIndex {
         if (!isId(userId)) return [];
         return this.guarded(userId, ({ db }) =>
             (db.prepare(
-                "select p.at, p.id, p.artist, p.heard, p.dur, p.end, p.source, p.liked_now, p.away, p.covered, coalesce(p.ended_by, '') as endedBy, p.picked, " +
+                "select p.at, p.id, p.artist, p.heard, p.dur, p.end, p.source, p.liked_now, p.away, p.covered, coalesce(p.ended_by, '') as endedBy, p.picked, p.looped, " +
                     "coalesce(t.genre, '') as genre, coalesce(t.tags, '') as tags, coalesce(t.title, '') as title, " +
                     "coalesce(t.artist_name, '') as artistName, coalesce(t.artwork, '') as artwork, coalesce(t.path, '') as path " +
                     'from plays p left join tracks t on t.id = p.id where p.at >= ? order by p.at',
@@ -655,6 +690,7 @@ export class HistoryIndex {
                     covered: row.covered === null || row.covered === undefined ? null : num(row.covered),
                     endedBy: endedBy === 'user' || endedBy === 'auto' ? endedBy : '',
                     picked: num(row.picked) === 1,
+                    looped: num(row.looped) === 1,
                     genre: str(row.genre),
                     tags: str(row.tags),
                     title: str(row.title),
@@ -669,14 +705,14 @@ export class HistoryIndex {
     /** Прослушивания за [from, to), новые сверху */
     public day(userId: unknown, from: number, to: number): HistoryRow[] {
         if (!isId(userId)) return [];
-        return this.guarded(userId, ({ db }) => (db.prepare(ROW + ' where p.at >= ? and p.at < ? order by p.at desc limit 2000').all(from, to) as Values[]).map(toRow));
+        return this.guarded(userId, ({ db }) => (db.prepare(ROW + ' where p.at >= ? and p.at < ? and ' + SHOWN + ' order by p.at desc limit 2000').all(from, to) as Values[]).map(toRow));
     }
     /** Ближайшие прослушивания до from и после to: для кнопок «предыдущий» и «следующий день» */
     public neighbors(userId: unknown, from: number, to: number): { before: number | null; after: number | null } {
         if (!isId(userId)) return { before: null, after: null };
         return this.guarded(userId, ({ db }) => {
-            const before = (db.prepare('select max(at) as at from plays where at < ?').get(from) as Values | undefined)?.at;
-            const after = (db.prepare('select min(at) as at from plays where at >= ?').get(to) as Values | undefined)?.at;
+            const before = (db.prepare('select max(p.at) as at from plays p where p.at < ? and ' + SHOWN).get(from) as Values | undefined)?.at;
+            const after = (db.prepare('select min(p.at) as at from plays p where p.at >= ? and ' + SHOWN).get(to) as Values | undefined)?.at;
             return { before: before === null || before === undefined ? null : num(before), after: after === null || after === undefined ? null : num(after) };
         });
     }
@@ -687,12 +723,12 @@ export class HistoryIndex {
             if (fts) {
                 const match = ftsQuery(query);
                 if (!match) return [];
-                return (db.prepare(ROW + ' where p.id in (select rowid from tracks_fts where tracks_fts match ?) order by p.at desc limit ?').all(match, limit) as Values[]).map(toRow);
+                return (db.prepare(ROW + ' where p.id in (select rowid from tracks_fts where tracks_fts match ?) and ' + SHOWN + ' order by p.at desc limit ?').all(match, limit) as Values[]).map(toRow);
             }
             const needle = text(query, 200);
             if (!needle) return [];
             const like = '%' + needle.replace(/[\\%_]/g, (char) => '\\' + char) + '%';
-            return (db.prepare(ROW + " where t.title like ? escape '\\' or t.artist_name like ? escape '\\' order by p.at desc limit ?").all(like, like, limit) as Values[]).map(toRow);
+            return (db.prepare(ROW + " where (t.title like ? escape '\\' or t.artist_name like ? escape '\\') and " + SHOWN + ' order by p.at desc limit ?').all(like, like, limit) as Values[]).map(toRow);
         });
     }
     public close(): void {

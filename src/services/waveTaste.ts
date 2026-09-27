@@ -13,7 +13,7 @@ const { capPerArtist, isWaveEligible, shuffleInPlace, spreadBy, trackArtist } = 
 // Ответ main недоверенный: берутся только пары [id или ключ, конечное число]. Старый профиль без новых частей даёт пустые
 export function tasteMaps(input: unknown): TasteMaps | null {
     if (!input || typeof input !== 'object') return null;
-    const source = input as Record<'artists' | 'credits' | 'families' | 'tags' | 'markers' | 'tracks', unknown>;
+    const source = input as Record<'version' | 'artists' | 'credits' | 'families' | 'tags' | 'markers' | 'tracks', unknown>;
     const isId = (value: unknown): value is number => typeof value === 'number' && Number.isSafeInteger(value) && value > 0;
     const isKey = (value: unknown): value is string => typeof value === 'string' && value.length > 0 && value.length <= 200;
     const pairs = <K>(list: unknown, valid: (value: unknown) => value is K, limit: number): Map<K, number> => {
@@ -24,6 +24,7 @@ export function tasteMaps(input: unknown): TasteMaps | null {
         return map;
     };
     return {
+        version: typeof source.version === 'number' && Number.isInteger(source.version) && source.version > 0 && source.version <= 1000 ? source.version : 0,
         artists: pairs(source.artists, isId, 1000),
         credits: pairs(source.credits, isKey, 1000),
         families: pairs(source.families, isKey, 1000),

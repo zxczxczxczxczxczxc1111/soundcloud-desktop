@@ -10,7 +10,7 @@ import { copyKeys, familyKey, versionKey } from './trackIdentity';
 
 describe('вкус волны', () => {
     const taste = (artists: Array<[number, number]>, tags: Array<[string, number]> = [], tracks: Array<[number, number]> = [], extra: object = {}): TasteMaps =>
-        tasteMaps({ artists, tags, tracks, ...extra }) ?? { artists: new Map(), credits: new Map(), families: new Map(), tags: new Map(), markers: new Map(), tracks: new Map() };
+        tasteMaps({ artists, tags, tracks, ...extra }) ?? { version: 0, artists: new Map(), credits: new Map(), families: new Map(), tags: new Map(), markers: new Map(), tracks: new Map() };
     const item = (id: number, artist: number, extra: Partial<WaveTrack> = {}): WaveCandidate => ({
         track: { id, kind: 'track', user_id: artist, duration: 180000, title: 'T' + id, ...extra },
         reason: { kind: 'similar', seed: 'Seed' },
