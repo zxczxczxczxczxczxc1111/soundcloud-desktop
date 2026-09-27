@@ -108,7 +108,7 @@
             presets: { happy: 'Весёлое', sad: 'Грустное', aggressive: 'Агрессивное', calm: 'Спокойное', energetic: 'Энергичное' },
             sources: {
                 similar: 'Моя волна: похожее', fresh: 'Моя волна: новое', track: 'Волна по треку', artist: 'Волна по артисту', playlist: 'Волна по плейлисту', daily: 'Находки дня',
-                forgotten: 'Давно не слушал', group: 'Твой вкус', tracks: 'Волна по подборке', radar: 'Радар релизов', library: 'В «Моей музыке»',
+                forgotten: 'Давно не слушал', group: 'Твой вкус', tracks: 'Волна по набору', radar: 'Радар релизов', library: 'В «Моей музыке»',
             },
             reasons: {
                 similar: 'Похоже на трек', fresh: 'Новое, похоже на трек', newArtist: 'Новый артист', genreFresh: 'Свежее в жанре', genrePopular: 'Популярное в жанре',

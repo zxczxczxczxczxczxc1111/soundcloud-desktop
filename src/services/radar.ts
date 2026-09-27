@@ -12,13 +12,14 @@ import { RADAR_FRESH_MS } from './radarSchedule';
 const DAY = 86400000;
 
 /** Параметры радара; version растёт при каждом изменении их смысла и попадает в выпуск.
- *  4: потолок аккаунта и в «Новых загрузках» (26.09.2026) */
+ *  4: потолок аккаунта и в «Новых загрузках» (26.09.2026).
+ *  5: прибавка свежести только последним трём дням окна, недобор открытий отдаётся связанным (28.09.2026) */
 export const RADAR_PARAMS = {
-    version: 4,
+    version: 5,
     /** Окно свежести версии, дни до отсечки. Неделя между выпусками (решение владельца 25.09.2026, было 28) */
     windowDays: 7,
-    /** Последние дни окна получают небольшую прибавку (приоритет последней неделе внутри разных вкусов) */
-    recentDays: 7,
+    /** Последние дни окна получают небольшую прибавку. Меньше окна: при равных днях она доставалась всем */
+    recentDays: 3,
     recentBonus: 0.05,
     size: 50,
     /** Потолок одного аккаунта в основном списке (решение владельца 25.09.2026): остальное видно в «Всех найденных» */
@@ -208,16 +209,30 @@ export function selectRadar(candidates: RadarCandidate[], history: string[][], s
 }
 
 /** Основной список выпуска (решение владельца 25.09.2026): сначала записи со связью со вкусом, в конце не больше
- *  discoveries открытий по жанру, которые всегда ниже связанных. Потолок аккаунта общий для обеих частей */
+ *  discoveries открытий по жанру, которые всегда ниже связанных. Потолок аккаунта общий для обеих частей.
+ *  Открытий набралось меньше отложенных под них мест (потолок аккаунта их срезал): места возвращаются связанным.
+ *  Отбор жадный, поэтому первые N записей полного списка связанных совпадают с отбором на N мест */
 export function selectEdition(releases: RadarCandidate[], history: string[][]): RadarPick[] {
     const P = RADAR_PARAMS;
     const open = releases.filter((candidate) => !candidate.linked);
     const reserve = Math.min(P.discoveries, open.length);
-    const linked = selectRadar(releases.filter((candidate) => candidate.linked), history, P.size - reserve, P.perUploader);
+    const linkedAll = selectRadar(releases.filter((candidate) => candidate.linked), history, P.size, P.perUploader);
+    const linked = linkedAll.slice(0, P.size - reserve);
     const used = new Map<number, number>();
     for (const pick of linked) used.set(pick.uploader, (used.get(pick.uploader) ?? 0) + 1);
     const discoveries = selectRadar(open.filter((candidate) => (used.get(candidate.uploader) ?? 0) < P.perUploader), history, Math.min(P.discoveries, P.size - linked.length), P.perUploader);
+    for (const pick of discoveries) used.set(pick.uploader, (used.get(pick.uploader) ?? 0) + 1);
+    for (const pick of linkedAll.slice(linked.length)) {
+        if (linked.length + discoveries.length >= P.size) break;
+        if ((used.get(pick.uploader) ?? 0) >= P.perUploader) continue;
+        linked.push(pick);
+        used.set(pick.uploader, (used.get(pick.uploader) ?? 0) + 1);
+    }
     return [...linked, ...discoveries];
+}
+/** Уже слышанное и лайкнутое в конец выпуска (решение владельца 28.09.2026), порядок внутри частей прежний */
+export function heardLast<T extends { heard: boolean }>(items: T[]): T[] {
+    return [...items.filter((item) => !item.heard), ...items.filter((item) => item.heard)];
 }
 
 /** Слышано ли по доле покрытия: от 70%, у записей короче 30 секунд от 80% */
@@ -586,10 +601,11 @@ export class RadarService {
         const target = typeof period === 'string' && period ? period : editions[0]?.period;
         const edition = target ? this.store.edition(userId, target, revision) : null;
         if (!edition) return { edition: null, editions };
-        // Отметка ставится по прослушиваниям и лайкам после выпуска тоже; сама позиция из выпуска не уходит
+        // Отметка ставится по прослушиваниям и лайкам после выпуска тоже; сама позиция из выпуска не уходит,
+        // а опускается в конец своего списка
         const heard = this.inputs(userId, edition.cutoff - RADAR_PARAMS.windowDays * DAY, now, now, false).heard;
         const mark = (item: RadarItem): RadarItem => ({ ...item, heard: item.heard || heard.has(item.id) });
-        return { edition: { ...edition, items: edition.items.map(mark), uploads: edition.uploads.map(mark) }, editions };
+        return { edition: { ...edition, items: heardLast(edition.items.map(mark)), uploads: heardLast(edition.uploads.map(mark)) }, editions };
     }
     /** «Все найденные»: остальной каталог окна выпуска, включая найденное после него (after), лучшие по оценке */
     public found(userId: unknown, period: unknown, revision?: unknown, now = Date.now()): RadarItem[] {

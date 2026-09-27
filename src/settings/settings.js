@@ -549,7 +549,7 @@ async function initializeSettings() {
             const extra = [
                 account.marks ? tr('отметок волны') + ' ' + backupNumber(account.marks) : '',
                 account.tasteRemoved ? tr('убрано из вкуса') + ' ' + backupNumber(account.tasteRemoved) : '',
-                account.mixes ? withNew(tr('подборок'), account.mixes, account.newMixes) : '',
+                account.mixes ? withNew(tr('сохранённых очередей'), account.mixes, account.newMixes) : '',
                 account.editions ? withNew(tr('выпусков радара'), account.editions, account.newEditions) : '',
                 account.links ? tr('решений о версиях') + ' ' + backupNumber(account.links) : '',
             ].filter(Boolean);
@@ -560,7 +560,7 @@ async function initializeSettings() {
         line(tr('Настроек в копии') + ' ' + backupNumber(summary.settings) + ', ' + tr('поменяется') + ' ' + backupNumber(settingsChanged));
         if (current && summary.accounts.length && !summary.accounts.some((account) => account.id === current))
             line(tr('В копии другой аккаунт, не тот, что открыт сейчас. Его данные лягут отдельно и появятся, когда войдёшь в него'), 'backup-warn');
-        line(tr('История, отметки, подборки и радар сливаются с текущими, ничего не удаляется. Настройки берутся из копии'), 'hint');
+        line(tr('История, отметки, сохранённые очереди и радар сливаются с текущими, ничего не удаляется. Настройки берутся из копии'), 'hint');
     }
     document.getElementById('backupSave').addEventListener('click', async () => {
         setBackupBusy(true);
@@ -682,7 +682,7 @@ async function initializeSettings() {
     }
     if (backupDone && typeof backupDone === 'object') {
         navButtons.find((button) => button.dataset.target === 'backup')?.click();
-        backupStatus.textContent = tr('Восстановлено') + ': ' + tr('прослушиваний') + ' ' + backupNumber(backupDone.plays) + ', ' + tr('подборок') + ' ' + backupNumber(backupDone.mixes) + ', ' +
+        backupStatus.textContent = tr('Восстановлено') + ': ' + tr('прослушиваний') + ' ' + backupNumber(backupDone.plays) + ', ' + tr('сохранённых очередей') + ' ' + backupNumber(backupDone.mixes) + ', ' +
             tr('выпусков радара') + ' ' + backupNumber(backupDone.editions);
         if (backupDone.reload === true) showNetworkNotice();
     }

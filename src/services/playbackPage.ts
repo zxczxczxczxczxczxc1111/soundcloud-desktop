@@ -200,13 +200,13 @@ export function installPlaybackPage(host: PlaybackPageHost): PlaybackPage {
     }
     async function playMix(mix: LocalMix): Promise<void> {
         const request = ++revision;
-        message(text('Загружаю подборку…', 'Loading mix…'));
+        message(text('Загружаю очередь…', 'Loading queue…'));
         const tracks = await host.resolve(mix.tracks.map((track) => track.id));
         if (disposed || request !== revision) return;
         const snapshot: PlaybackSnapshot = { version: 1, at: Date.now(), index: 0, position: 0, paused: false, active: false,
             mode: 'similar', genre: null, seed: null, fallback: true,
             items: mix.tracks.map((track) => ({ track, explicit: true, wave: false })) };
-        if (!host.restore(snapshot, tracks)) throw new Error('Треки подборки недоступны');
+        if (!host.restore(snapshot, tracks)) throw new Error('Треки сохранённой очереди недоступны');
         changed(); message('');
     }
     function renderMixes(): void {
@@ -216,19 +216,19 @@ export function installPlaybackPage(host: PlaybackPageHost): PlaybackPage {
             const row = document.createElement('div'); row.className = 'scq-row';
             const play = button(mix.title + ' · ' + mix.tracks.length, () => { void playMix(mix).catch(fail); }); play.className = 'scq-name';
             let confirmed = false;
-            const remove = iconButton('m6 6 12 12M18 6 6 18', text('Удалить подборку', 'Delete mix'), () => {
-                // Подтверждение относится к конкретной локальной подборке, а не к трекам SoundCloud.
+            const remove = iconButton('m6 6 12 12M18 6 6 18', text('Удалить сохранённую очередь', 'Delete saved queue'), () => {
+                // Подтверждение относится к конкретной сохранённой очереди, а не к трекам SoundCloud.
                 if (!confirmed) { confirmed = true; remove.textContent = text('Удалить?', 'Delete?'); remove.style.width = 'auto'; remove.setAttribute('aria-label', text('Подтвердить удаление', 'Confirm deletion')); return; }
                     remove.disabled = true;
                     void host.user().then(async (id) => {
-                        if (!await host.library?.removeMix(id, mix.id)) throw new Error('Подборка не удалена');
+                        if (!await host.library?.removeMix(id, mix.id)) throw new Error('Сохранённая очередь не удалена');
                         mixes = mixes.filter((item) => item.id !== mix.id); renderMixes();
                     }).catch((error: unknown) => { remove.disabled = false; fail(error); });
             });
             const actions = document.createElement('div'); actions.className = 'scq-actions'; actions.append(remove);
             row.append(play, actions); list.append(row);
         }
-        if (!mixes.length) list.textContent = text('Сохранённых подборок пока нет', 'No saved mixes yet');
+        if (!mixes.length) list.textContent = text('Сохранённых очередей пока нет', 'No saved queues yet');
     }
     function toggle(): void {
         if (dialog?.open) { dialog.close(); return; }
@@ -247,8 +247,8 @@ export function installPlaybackPage(host: PlaybackPageHost): PlaybackPage {
             const status = document.createElement('div'); status.className = 'scq-message'; status.setAttribute('role', 'status');
             const list = document.createElement('div'); list.className = 'scq-list';
             const tools = document.createElement('form'); tools.className = 'scq-tools';
-            const name = document.createElement('input'); name.placeholder = text('Название подборки', 'Mix name'); name.setAttribute('aria-label', name.placeholder); name.maxLength = 100; name.required = true;
-            const saveButton = button(text('Сохранить подборку', 'Save mix'), () => { tools.requestSubmit(); });
+            const name = document.createElement('input'); name.placeholder = text('Название очереди', 'Queue name'); name.setAttribute('aria-label', name.placeholder); name.maxLength = 100; name.required = true;
+            const saveButton = button(text('Сохранить очередь', 'Save queue'), () => { tools.requestSubmit(); });
             saveButton.className = 'scq-save';
             tools.append(name, saveButton);
             tools.addEventListener('submit', (event) => {
@@ -258,10 +258,10 @@ export function installPlaybackPage(host: PlaybackPageHost): PlaybackPage {
                 void host.user().then(async (id) => {
                     if (!host.library) throw new Error('Хранилище недоступно');
                     const mix = await host.library.saveMix(id, name.value, tracks);
-                    mixes.unshift(mix); name.value = ''; renderMixes(); message(text('Подборка сохранена на этом компьютере', 'Mix saved on this computer'));
+                    mixes.unshift(mix); name.value = ''; renderMixes(); message(text('Очередь сохранена на этом компьютере', 'Queue saved on this computer'));
                 }).catch(fail).finally(() => { saveButton.disabled = false; });
             });
-            const heading = document.createElement('h3'); heading.textContent = text('Мои подборки', 'My mixes');
+            const heading = document.createElement('h3'); heading.textContent = text('Сохранённые очереди', 'Saved queues');
             const saved = document.createElement('div'); saved.className = 'scq-mixes';
             dialog.append(header, status, list, tools, heading, saved); document.body.append(dialog);
         }

@@ -129,8 +129,8 @@ window.SETTINGS_EN = {
     'Смена аккаунта перезапускает клиент': 'Switching accounts restarts the client',
 
     'Резервная копия': 'Backup',
-    'История прослушиваний, отметки волны, вкус, подборки, архив радара и настройки в одном файле. Лайки, плейлисты и подписки хранит SoundCloud, вход и пароль прокси в копию не входят':
-        'Listening history, wave marks, taste, mixes, radar archive and settings in one file. Likes, playlists and follows live on SoundCloud; sign-in and the proxy password are not included',
+    'История прослушиваний, отметки волны, вкус, сохранённые очереди, архив радара и настройки в одном файле. Лайки, плейлисты и подписки хранит SoundCloud, вход и пароль прокси в копию не входят':
+        'Listening history, wave marks, taste, saved queues, radar archive and settings in one file. Likes, playlists and follows live on SoundCloud; sign-in and the proxy password are not included',
     'Файл копии': 'Backup file',
     'Лежит только там, куда ты его положишь': 'Stays only where you put it',
     'Сохранить копию…': 'Save backup…',
@@ -171,7 +171,7 @@ window.SETTINGS_EN = {
     'прослушиваний': 'plays',
     'отметок волны': 'wave marks',
     'убрано из вкуса': 'removed from taste',
-    'подборок': 'mixes',
+    'сохранённых очередей': 'saved queues',
     'выпусков радара': 'radar editions',
     'решений о версиях': 'version decisions',
     'В копии только настройки': 'The backup holds only settings',
@@ -179,8 +179,8 @@ window.SETTINGS_EN = {
     'поменяется': 'will change',
     'В копии другой аккаунт, не тот, что открыт сейчас. Его данные лягут отдельно и появятся, когда войдёшь в него':
         'The backup is from another account, not the one signed in now. Its data is kept separately and shows up when you sign in to it',
-    'История, отметки, подборки и радар сливаются с текущими, ничего не удаляется. Настройки берутся из копии':
-        'History, marks, mixes and radar are merged with the current ones, nothing is deleted. Settings are taken from the backup',
+    'История, отметки, сохранённые очереди и радар сливаются с текущими, ничего не удаляется. Настройки берутся из копии':
+        'History, marks, saved queues and radar are merged with the current ones, nothing is deleted. Settings are taken from the backup',
     'Сохраняю копию…': 'Saving backup…',
     'Копия сохранена': 'Backup saved',
     'Копия не сохранена': 'Backup not saved',

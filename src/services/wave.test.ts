@@ -496,6 +496,23 @@ describe('подборки', () => {
         expect(forgottenPicks(liked, new Set(), null, 2).map((entry) => entry.id)).toEqual([6, 4]);
     });
 
+    it('В7: выборка дня в «Давно не слушал»: весь день одна, завтра другая, ценное вероятнее, недавнее и нелюбимое нет', () => {
+        const liked = Array.from({ length: 200 }, (_, i) => track(i + 1));
+        const weights = new Map<number, number>([[1, -1.5], ...Array.from({ length: 20 }, (_, i): [number, number] => [101 + i, 4])]);
+        const pick = (day: string): number[] => forgottenPicks(liked, new Set([2]), weights, 60, day).map((entry) => entry.id);
+        const today = pick('2026-09-28');
+        expect(today).toHaveLength(60);
+        expect(pick('2026-09-28')).toEqual(today);
+        // Порядок входа ничего не решает
+        expect(forgottenPicks(liked.slice().reverse(), new Set([2]), weights, 60, '2026-09-28').map((entry) => entry.id)).toEqual(today);
+        const tomorrow = pick('2026-09-29');
+        expect(tomorrow.filter((id) => today.includes(id)).length).toBeLessThan(45);
+        expect(today).not.toContain(1);
+        expect(today).not.toContain(2);
+        // Двадцать ценных из двухсот: в выборку из 60 их попадает заметно больше средних шести
+        expect(today.filter((id) => id > 100 && id <= 120).length).toBeGreaterThan(9);
+    });
+
     it('A01: находки берут знакомый аккаунт и несколько его песен, без слышанного и недоступного', () => {
         const candidates = [
             track(1, { user_id: 50 }), track(2, { user_id: 60 }), track(3, { user_id: 60 }), track(4, { user_id: 70, title: 'Same' }),

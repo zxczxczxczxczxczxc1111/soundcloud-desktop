@@ -68,7 +68,7 @@
     "headerMaximize": "Развернуть",
     "headerRestore": "Восстановить",
     "headerClose": "Закрыть",
-    "headerQueue": "Очередь и подборки",
+    "headerQueue": "Очередь",
     "headerHistory": "История, Ctrl+H",
     "updateScreenTitle": "Обновление до версии {v}",
     "updateScreenDownloading": "Загружаю: {p}%",

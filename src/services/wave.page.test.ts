@@ -89,6 +89,7 @@ beforeEach(() => {
     position = 0;
     history.replaceState(null, '', '/discover');
     localStorage.clear();
+    sessionStorage.clear();
     document.body.innerHTML = '<div class="l-content"><div class="modular-home-mixed-selection"></div></div>';
     // В jsdom нет раскладки: блок считается видимым, пока он в документе
     Object.defineProperty(HTMLElement.prototype, 'offsetParent', { configurable: true, get(this: HTMLElement) { return this.parentElement; } });
@@ -1407,7 +1408,7 @@ const batchOf = (list: WaveTrack[]) => (query: Record<string, unknown>): WaveTra
 
 it('ошибка подборок видна, повтор восстанавливает полку без перезагрузки страницы', async () => {
     fakeSite(relatedTracks);
-    const snapshot = { day: localDay(Date.now()), v: 3, cards: [{ kind: 'group', title: 'Techno', sub: '', ids: [51], seeds: [], keys: ['techno'], art: [] }] };
+    const snapshot = { day: localDay(Date.now()), v: 4, cards: [{ kind: 'group', title: 'Techno', sub: '', ids: [51], seeds: [], keys: ['techno'], art: [] }] };
     const load = vi.fn().mockRejectedValueOnce(new Error('Offline')).mockResolvedValue({ snapshot, recent: [] });
     Object.assign(window, { soundcloudAPI: { waveShelf: { load, save: vi.fn(async () => true) } } });
     window.eval(waveScript()); await vi.advanceTimersByTimeAsync(100);
@@ -1444,7 +1445,7 @@ it('полка показывает все жанры одной сеткой, �
     const art = ['https://i1.sndcdn.com/artworks-0-t300x300.jpg'];
     const group = (i: number) => ({ kind: 'group', title: 'Genre ' + i, sub: '', ids: [5200 + i], seeds: [], keys: ['g' + i], art });
     const snapshot = {
-        day: localDay(Date.now()), v: 3,
+        day: localDay(Date.now()), v: 4,
         cards: [
             { kind: 'daily', title: '', sub: '', ids: [5101], seeds: [], keys: [], art },
             { kind: 'forgotten', title: '', sub: '', ids: [5102], seeds: [], keys: [], art },
@@ -1468,7 +1469,7 @@ it('полка из снимка дня: находки играют первы�
     const site = fakeSite(relatedTracks, (name, _path, query) => (name === 'trackBatch' ? batchOf(finds)(query) : undefined));
     const art = [0, 1, 2, 3].map((i) => 'https://i1.sndcdn.com/artworks-' + i + '-t300x300.jpg');
     const snapshot = {
-        day: localDay(Date.now()), v: 3,
+        day: localDay(Date.now()), v: 4,
         cards: [
             { kind: 'daily', title: '', sub: '', ids: finds.map((track) => track.id), seeds: [1], keys: [], art },
             { kind: 'group', title: 'Techno and Industrial', sub: 'A, B', ids: [5101, 5102], seeds: [], keys: ['techno'], art: art.slice(0, 1) },
@@ -1523,7 +1524,7 @@ it('раскрытая подборка: треки списком, трек и�
         id: 5001 + i, kind: 'track', user_id: 600 + i, duration: 200000, title: 'Find ' + i, user: { id: 600 + i, username: 'Artist ' + i },
     }));
     const site = fakeSite(relatedTracks, (name, _path, query) => (name === 'trackBatch' ? batchOf(finds)(query) : undefined));
-    const snapshot = { day: localDay(Date.now()), v: 3, cards: [{ kind: 'daily', title: '', sub: '', ids: finds.map((track) => track.id), seeds: [1], keys: [], art: [] }] };
+    const snapshot = { day: localDay(Date.now()), v: 4, cards: [{ kind: 'daily', title: '', sub: '', ids: finds.map((track) => track.id), seeds: [1], keys: [], art: [] }] };
     Object.assign(window, { soundcloudAPI: { waveShelf: { load: vi.fn(async () => ({ snapshot, recent: [] })), save: vi.fn(async () => true) } } });
     window.eval(waveScript());
     await vi.advanceTimersByTimeAsync(100);
@@ -1561,7 +1562,7 @@ it('ссылки в строках и шапке: название на трек
         permalink_url: i === 1 ? 'https://soundcloud.com/artist-1/find-1/s-SeCrEt' : 'https://soundcloud.com/artist-' + i + '/find-' + i,
     }));
     const site = fakeSite(relatedTracks, (name, _path, query) => (name === 'trackBatch' ? batchOf(finds)(query) : undefined));
-    const snapshot = { day: localDay(Date.now()), v: 3, cards: [{ kind: 'daily', title: '', sub: '', ids: finds.map((track) => track.id), seeds: [1], keys: [], art: [] }] };
+    const snapshot = { day: localDay(Date.now()), v: 4, cards: [{ kind: 'daily', title: '', sub: '', ids: finds.map((track) => track.id), seeds: [1], keys: [], art: [] }] };
     Object.assign(window, { soundcloudAPI: { waveShelf: { load: vi.fn(async () => ({ snapshot, recent: [] })), save: vi.fn(async () => true) } } });
     window.eval(waveScript());
     await vi.advanceTimersByTimeAsync(100);
@@ -1612,7 +1613,7 @@ it('повторный запуск карточки играет её цели�
     const finds = Array.from({ length: 12 }, (_, i): WaveTrack => ({ id: 5001 + i, kind: 'track', user_id: 600 + i, duration: 200000, title: 'Find ' + i }));
     const other = Array.from({ length: 12 }, (_, i): WaveTrack => ({ id: 6001 + i, kind: 'track', user_id: 650 + i, duration: 200000, title: 'Other ' + i }));
     const site = fakeSite(relatedTracks, (name, _path, query) => (name === 'trackBatch' ? batchOf([...finds, ...other])(query) : undefined));
-    const snapshot = { day: localDay(Date.now()), v: 3, cards: [
+    const snapshot = { day: localDay(Date.now()), v: 4, cards: [
         { kind: 'daily', title: '', sub: '', ids: finds.map((track) => track.id), seeds: [1], keys: [], art: [] },
         { kind: 'forgotten', title: '', sub: '', ids: other.map((track) => track.id), seeds: [], keys: [], art: [] },
     ] };
@@ -1633,7 +1634,7 @@ it('повторный запуск карточки играет её цели�
 it('«Назад» после перехода по ссылке: раскрытая подборка на месте, список на прежней прокрутке', async () => {
     const finds = Array.from({ length: 12 }, (_, i): WaveTrack => ({ id: 5001 + i, kind: 'track', user_id: 600 + i, duration: 200000, title: 'Find ' + i }));
     fakeSite(relatedTracks, (name, _path, query) => (name === 'trackBatch' ? batchOf(finds)(query) : undefined));
-    const snapshot = { day: localDay(Date.now()), v: 3, cards: [{ kind: 'daily', title: '', sub: '', ids: finds.map((track) => track.id), seeds: [1], keys: [], art: [] }] };
+    const snapshot = { day: localDay(Date.now()), v: 4, cards: [{ kind: 'daily', title: '', sub: '', ids: finds.map((track) => track.id), seeds: [1], keys: [], art: [] }] };
     Object.assign(window, { soundcloudAPI: { waveShelf: { load: vi.fn(async () => ({ snapshot, recent: [] })), save: vi.fn(async () => true) } } });
     window.eval(waveScript());
     await vi.advanceTimersByTimeAsync(100);
@@ -1677,7 +1678,7 @@ it('снимок дня старого формата пересобираетс
     const [userId, saved] = shelf.save.mock.calls[0] as unknown as [number, { day: string; v: number; cards: Array<{ kind: string; title: string; ids: number[] }> }];
     expect(userId).toBe(77);
     expect(saved.day).toBe(localDay(Date.now()));
-    expect(saved.v).toBe(3);
+    expect(saved.v).toBe(4);
     expect(saved.cards.map((card) => card.kind)).toEqual(['daily', 'forgotten', 'group', 'group']);
     expect(saved.cards[0].ids).toHaveLength(30);
     expect(saved.cards[0].ids.every((id) => id > 2000000)).toBe(true);
@@ -1787,6 +1788,12 @@ it('набор через меню: трек в подборку, кнопка �
     choose('pick');
     await vi.advanceTimersByTimeAsync(100);
     expect(document.querySelector('.scw-toast')?.textContent).toBe('Picks: 1 track');
+    expect(document.querySelector('#sc-wave [data-act="pick-start"]')?.textContent).toBe('1 track');
+    // В7: перезагрузка страницы, набор на месте
+    window.dispatchEvent(new Event('pagehide'));
+    document.getElementById('sc-wave')?.remove();
+    window.eval(waveScript());
+    await vi.advanceTimersByTimeAsync(100);
     const section = document.getElementById('sc-wave')!;
     expect(section.querySelector('[data-act="pick-start"]')?.textContent).toBe('1 track');
     rightClick(row.querySelector('.soundTitle__title')!);
@@ -1801,6 +1808,7 @@ it('набор через меню: трек в подборку, кнопка �
     expect(queued.some((item) => Math.floor(item.sound.id / 1000) === 555)).toBe(true);
     expect(section.querySelector('.scw-hint')?.textContent).toBe('Wave from picks: Song');
     expect(section.querySelector('[data-act="pick-start"]')).toBeNull();
+    expect(sessionStorage.getItem('scDesktopWavePicks')).toBeNull();
 });
 
 it('подключает плеер, появившийся после первых двадцати попыток', async () => {
@@ -2216,6 +2224,28 @@ it('Э6: треки своих и сохранённых плейлистов о
     expect(recommend.recordUploads).toHaveBeenCalledWith(77, [{ id: 101, kind: 'track', title: 'A' }, { id: 102, kind: 'track', title: 'B' }]);
     // Списки плейлистов пройдены недавно: заново не обходятся
     expect(calls.some((call) => call[1] === 'playlists' || call[1] === 'likes')).toBe(false);
+});
+
+it('В7: удалённый плейлист (404) обход проверяет раз в неделю, обычный сбой через 10 минут', async () => {
+    const calls: string[] = [];
+    const now = Date.now();
+    const state = (source: string, status: string, error: string, ago: number) => ({ source, status, error, completed: 0, updated: now - ago });
+    const recommend = {
+        syncState: vi.fn(async () => [
+            ...['followings', 'likes', 'playlists', 'playlist-likes'].map((source) => ({ source, status: 'complete', completed: now, updated: now })),
+            state('playlist:8', 'failed', 'timeout', 20 * 60000), state('playlist:9', 'failed', 'missing 404', 20 * 60000), state('playlist:10', 'failed', 'missing 404', 8 * 86400000),
+        ]),
+        libraryMembers: vi.fn(async (_user: number, source: string) => (source === 'playlists' ? [{ key: 'sc:playlist:8' }] : [{ key: 'sc:playlist:9' }, { key: 'sc:playlist:10' }])),
+        syncStart: vi.fn(async (_user: number, source: string) => { calls.push(source); return { run: 1, cursor: null }; }),
+        syncPage: vi.fn(async () => true),
+        syncFinish: vi.fn(async () => ({})),
+        recordUploads: vi.fn(async () => 1),
+    };
+    Object.assign(window, { soundcloudAPI: { recommend } });
+    fakeSite(relatedTracks, (name, path) => (name === 'playlist' ? { id: Number(path.id), tracks: [] } : undefined));
+    window.eval(waveScript());
+    await vi.advanceTimersByTimeAsync(60000);
+    expect(calls).toEqual(['playlist:8', 'playlist:10']);
 });
 
 it('P3: текстовый поиск находит другие версии зерна у любых аккаунтов, версия идёт со своей причиной', async () => {

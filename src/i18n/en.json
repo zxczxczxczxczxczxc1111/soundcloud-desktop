@@ -68,7 +68,7 @@
     "headerMaximize": "Maximize",
     "headerRestore": "Restore",
     "headerClose": "Close",
-    "headerQueue": "Queue and mixes",
+    "headerQueue": "Queue",
     "headerHistory": "History, Ctrl+H",
     "updateScreenTitle": "Updating to version {v}",
     "updateScreenDownloading": "Downloading: {p}%",

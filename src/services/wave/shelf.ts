@@ -13,7 +13,7 @@ import type { SitePlayer, WaveWindow } from '../wave';
 
 const { confirmedCopies } = identity;
 const { canonicalUrl, coversOf, retryDelay } = waveLinks;
-const { capPerArtist, forgottenPicks, isWaveEligible, shuffleInPlace } = wavePicks;
+const { capPerArtist, daySample, forgottenPicks, isWaveEligible, shuffleInPlace } = wavePicks;
 const { pickFinds, tasteGroups, tasteOrder } = waveTaste;
 const { countText, fillText, formatTime, localDay } = waveTexts;
 
@@ -96,9 +96,10 @@ export function installShelf(core: ShelfCore): ShelfSection {
     interface ShelfCard { kind: 'daily' | 'forgotten' | 'group'; title: string; sub: string; ids: number[]; seeds: number[]; keys: string[]; art: string[] }
     interface Shelf { day: string; v: number; cards: ShelfCard[] }
     // Формат сборки полки: 2 это жанры из всех лайков и прослушанного, до восьми, с поджанрами (26.09.2026);
-    // 3 это группа по жанру трека, а не по меткам, и не больше SHELF_ARTIST_CAP треков артиста в карточке (26.09.2026).
+    // 3 это группа по жанру трека, а не по меткам, и не больше SHELF_ARTIST_CAP треков артиста в карточке (26.09.2026);
+    // 4 это выборка дня в «Давно не слушал» и жанрах (28.09.2026).
     // Снимок другого формата собирается заново сразу, а не в полночь
-    const SHELF_FORMAT = 3;
+    const SHELF_FORMAT = 4;
     const SHELF_ARTIST_CAP = 5;
     // Прослушанное от 30 секунд из индекса истории: main отдаёт его вместе со снимком
     interface HeardTrack { id: number; artist: number; title: string; artistName: string; genre: string; tags: string; path: string; artwork: string; dur: number; share?: number }
@@ -112,6 +113,26 @@ export function installShelf(core: ShelfCore): ShelfSection {
     const shelfTracks = new Map<number, WaveTrack>();
     const picks: WaveTrack[] = [];
     const PICKS_MAX = 5;
+    // Набор переживает перезагрузку страницы (F5, Ctrl+R), но не перезапуск клиента: он живёт в sessionStorage вкладки
+    const PICKS_KEY = 'scDesktopWavePicks';
+    try {
+        const saved: unknown = JSON.parse(sessionStorage.getItem(PICKS_KEY) || '[]');
+        if (Array.isArray(saved))
+            for (const value of saved.slice(0, PICKS_MAX)) {
+                const track = value && typeof value === 'object' && isId((value as { id?: unknown }).id) ? (value as WaveTrack) : null;
+                if (track && isWaveEligible(track) && !picks.some((item) => item.id === track.id)) picks.push(track);
+            }
+    } catch (error) {
+        console.warn('Волна: набор не прочитан', error);
+    }
+    function savePicks(): void {
+        try {
+            if (picks.length) sessionStorage.setItem(PICKS_KEY, JSON.stringify(picks));
+            else sessionStorage.removeItem(PICKS_KEY);
+        } catch (error) {
+            console.warn('Волна: набор не сохранён', error);
+        }
+    }
     // Треки раскрытых подборок по номеру карточки; у радара свой такой же список
     const mixLists = new Map<number, WaveTrack[] | 'loading' | 'failed'>();
 
@@ -201,7 +222,7 @@ export function installShelf(core: ShelfCore): ShelfSection {
         // «Давно не слушал» по истории конкретной версии; другая загрузка засчитывается только подтверждённой связью.
         // Лайк за 30 дней не забыт: его слушали, когда лайкали, хоть и не в клиенте, а свежий лайк весит во вкусе
         // больше всех и иначе встал бы в начало подборки
-        const forgotten = forgottenPicks(liked, confirmedCopies([...p.recent, ...recentMain, ...freshLikes], core.copyGroups()), weights, 60);
+        const forgotten = forgottenPicks(liked, confirmedCopies([...p.recent, ...recentMain, ...freshLikes], core.copyGroups()), weights, 60, day);
         if (forgotten.length >= 8) cards.push({ kind: 'forgotten', title: '', sub: '', ids: forgotten.map((track) => track.id), seeds: [], keys: [], art: coversOf(forgotten) });
 
         // До 8 жанров, все видны (решение владельца 26.09.2026). Лайк весит 1 плюс вкус, прослушанное без лайка только
@@ -217,6 +238,7 @@ export function installShelf(core: ShelfCore): ShelfSection {
             return isWaveEligible(track) && !isExcluded(track) ? [{ track, weight }] : [];
         });
         const tasted = [...liked.map((track) => ({ track, weight: 1 + Math.max(0, weights?.get(track.id) ?? 0) })), ...listened];
+        const tastedWeight = new Map(tasted.map((entry) => [entry.track.id, entry.weight]));
         const groups = tasteGroups(tasted, 8, 8);
         const artistTotal = new Map<string, number>();
         for (const { track } of tasted) {
@@ -236,7 +258,9 @@ export function installShelf(core: ShelfCore): ShelfSection {
             const typical = (name: string, count: number): number => (count * count) / (artistTotal.get(name) ?? count);
             const strong = [...artists].filter(([name, count]) => count >= 2 && typical(name, count) >= 1);
             const sub = (strong.length ? strong : [...artists]).sort((x, y) => typical(y[0], y[1]) - typical(x[0], x[1]) || y[1] - x[1]).slice(0, 3).map(([name]) => name);
-            const shown = capPerArtist(group.tracks, SHELF_ARTIST_CAP).slice(0, 60);
+            // Каждый день своя выборка жанра с весом по вкусу, а не одни и те же первые 60 (решение владельца 28.09.2026)
+            const daily = daySample(group.tracks, (track) => track.id, (track) => tastedWeight.get(track.id) ?? 1, group.tracks.length, day + ':' + group.keys.join(','));
+            const shown = capPerArtist(daily, SHELF_ARTIST_CAP).slice(0, 60);
             cards.push({
                 kind: 'group',
                 title: b ? fillText(T.groupAnd, { a, b }) : a,
@@ -360,6 +384,7 @@ export function installShelf(core: ShelfCore): ShelfSection {
         if (!add) {
             const index = pickedIndex(target);
             if (index >= 0) picks.splice(index, 1);
+            savePicks();
             showToast(T.toastUnpicked);
             render();
             return;
@@ -375,10 +400,11 @@ export function installShelf(core: ShelfCore): ShelfSection {
                 return;
             }
             if (!picks.some((item) => item.id === track.id) && picks.length < PICKS_MAX) picks.push(track);
+            savePicks();
             showToast(fillText(T.toastPicked, { count: countText(picks.length, T.tracksCount, T.lang) }));
             render();
         } catch (error) {
-            console.warn('Волна: трек не добавлен в подборку', error);
+            console.warn('Волна: трек не добавлен в набор', error);
             showToast(T.toastFailed);
         }
     }
@@ -386,11 +412,12 @@ export function installShelf(core: ShelfCore): ShelfSection {
     function startPicks(): void {
         if (!picks.length) return;
         const tracks = picks.splice(0);
+        savePicks();
         const titles = tracks.map((track) => (track.title ?? '').trim()).filter(Boolean);
         const title = titles.length > 2 ? titles.slice(0, 2).join(', ') + ' +' + (titles.length - 2) : titles.join(', ');
         const request = core.nextSeedRequest();
         void beginSeed(request, { seed: { kind: 'tracks', title: title || '…', tracks, own: [] }, first: null }).catch((error: unknown) => {
-            console.warn('Волна: волна по подборке не запустилась', error);
+            console.warn('Волна: волна по набору не запустилась', error);
             showToast(T.toastFailed);
         });
     }
@@ -566,6 +593,7 @@ export function installShelf(core: ShelfCore): ShelfSection {
         startPicks,
         clearPicks: () => {
             picks.length = 0;
+            savePicks();
             render();
         },
     };

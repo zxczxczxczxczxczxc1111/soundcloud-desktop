@@ -163,6 +163,7 @@ export function installLibrary(core: LibraryCore): LibrarySection {
     let librarySourcesAt = 0;
     let librarySourcesRefresh = false;
     const savedPlaylists = new Map<number, { at: number; list: LibraryPlaylist }>();
+    const gonePlaylists = new Set<number>();
     function playlistInfo(value: unknown, own: boolean): LibraryPlaylist | null {
         const item = value && typeof value === 'object' ? (value as { id?: unknown; title?: unknown; track_count?: unknown; tracks?: unknown }) : null;
         if (!item || !isId(item.id)) return null;
@@ -220,7 +221,7 @@ export function installLibrary(core: LibraryCore): LibrarySection {
         // Сохранённый плейлист, которого сайт не отдал (удалён или закрыт), в выбор не попадает.
         // Не больше четырёх запросов разом, а не все пятьдесят: порядок списка остаётся порядком сайта
         const ids = saved.slice(0, 50);
-        const stale = ids.filter((id) => Date.now() - (savedPlaylists.get(id)?.at ?? 0) >= LIBRARY_TTL);
+        const stale = ids.filter((id) => !gonePlaylists.has(id) && Date.now() - (savedPlaylists.get(id)?.at ?? 0) >= LIBRARY_TTL);
         let next = 0;
         await Promise.all(Array.from({ length: Math.min(4, stale.length) }, async () => {
             while (next < stale.length && !core.disposed()) {
@@ -231,7 +232,10 @@ export function installLibrary(core: LibraryCore): LibrarySection {
                     else savedPlaylists.delete(id);
                 } catch (error) {
                     savedPlaylists.delete(id);
-                    console.warn('Моя музыка: сохранённый плейлист не загружен', error);
+                    // Удалённый плейлист (404, 410) до перезагрузки страницы больше не спрашивается
+                    const status = error && typeof error === 'object' ? (error as { status?: unknown }).status : 0;
+                    if (status === 404 || status === 410) gonePlaylists.add(id);
+                    else console.warn('Моя музыка: сохранённый плейлист не загружен', error);
                 }
             }
         }));

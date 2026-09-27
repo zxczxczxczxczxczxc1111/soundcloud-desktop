@@ -39,7 +39,7 @@ const { siteRequires } = siteModules;
 const { fillText, reasonText, localDay, countText, formatTime, shapeSamples } = waveTexts;
 const { normalizeTag, tagKeys, tagShares, genreKeys, genreEnglish, genreCanon, genrePhrases, genreParts, genreMain, parseGenres, formatGenres, genreKeysFor, trackMatchesGenre, topGenres } = waveGenres;
 const { classifyLink, canonicalUrl, trackPath, artworkUrl, coversOf, playEnd, siteSource, retryDelay } = waveLinks;
-const { trackArtist, rememberRecent, isWaveEligible, freshEnough, acceptCandidate, pickSpaced, spacingKeys, spacingGap, shuffleInPlace, capPerArtist, forgottenPicks, artistNames, isNewArtist, spreadBy } = wavePicks;
+const { trackArtist, rememberRecent, isWaveEligible, freshEnough, acceptCandidate, pickSpaced, spacingKeys, spacingGap, shuffleInPlace, capPerArtist, forgottenPicks, daySample, artistNames, isNewArtist, spreadBy } = wavePicks;
 const { tasteMaps, tasteScore, tasteOrder, tasteReason, applyTasteReasons, tasteGroups, moodTags, pickFinds } = waveTaste;
 const { moodList, moodDictionary, trackMood, artistMoods, neighborMood, moodScore } = waveMood;
 // Разделы страницы волны в wave/: объявления уходят на страницу рядом с installWave и зовутся по голому имени
@@ -53,7 +53,7 @@ export type { WaveTrack, WaveMode, OpenTrackResult, WaveReason, WaveCandidate, W
 export { WAVE_TEXTS, fillText, reasonText, localDay, countText, formatTime, shapeSamples } from './waveTexts';
 export { normalizeTag, tagKeys, tagShares, genreKeys, genreEnglish, genreCanon, genrePhrases, genreParts, genreMain, parseGenres, formatGenres, genreKeysFor, trackMatchesGenre, topGenres } from './waveGenres';
 export { classifyLink, canonicalUrl, trackPath, artworkUrl, playEnd, siteSource, retryDelay } from './waveLinks';
-export { trackArtist, rememberRecent, isWaveEligible, freshEnough, acceptCandidate, pickSpaced, spacingKeys, spacingGap, shuffleInPlace, capPerArtist, forgottenPicks, artistNames, isNewArtist, spreadBy } from './wavePicks';
+export { trackArtist, rememberRecent, isWaveEligible, freshEnough, acceptCandidate, pickSpaced, spacingKeys, spacingGap, shuffleInPlace, capPerArtist, forgottenPicks, daySample, artistNames, isNewArtist, spreadBy } from './wavePicks';
 export { tasteMaps, tasteScore, tasteOrder, tasteReason, applyTasteReasons, tasteGroups, moodTags, pickFinds } from './waveTaste';
 export { moodList, moodDictionary, trackMood, artistMoods, neighborMood, moodScore } from './waveMood';
 export type { WaveMood, MoodScores, ArtistMoods } from './waveMood';
@@ -891,11 +891,14 @@ export function installWave(config: WaveConfig, createPlayback: typeof installPl
             const user = await ensureUser();
             if (!user || disposed) return;
             const loaded = await bridge.syncState(user);
-            const states = Array.isArray(loaded) ? (loaded as Array<{ source?: unknown; status?: unknown; completed?: unknown; updated?: unknown }>) : [];
+            const states = Array.isArray(loaded) ? (loaded as Array<{ source?: unknown; status?: unknown; completed?: unknown; updated?: unknown; error?: unknown }>) : [];
             const due = (source: string): boolean => {
                 const state = states.find((item) => item.source === source);
                 if (!state) return true;
                 const since = (value: unknown): number => Date.now() - (typeof value === 'number' ? value : 0);
+                // Плейлиста больше нет (404, 410), а сайт держит его номер в сохранённых: проверка раз в неделю,
+                // а не на каждом обходе, вдруг его откроют снова
+                if (state.status === 'failed' && typeof state.error === 'string' && state.error.startsWith('missing')) return since(state.updated) > 7 * 86400000;
                 return state.status === 'complete' ? since(state.completed) > 12 * 3600000 : since(state.updated) > 10 * 60000;
             };
             const bulk = new Set<string>();
@@ -3937,7 +3940,7 @@ export function installWave(config: WaveConfig, createPlayback: typeof installPl
 const pageHelpers = [
     normalizeTag, tagKeys, tagShares, genreKeys, genreEnglish, genreCanon, genrePhrases, genreParts, genreMain, parseGenres, formatGenres, genreKeysFor, classifyLink, canonicalUrl, trackMatchesGenre, trackArtist, rememberRecent, retryDelay,
     isWaveEligible, freshEnough, acceptCandidate, pickSpaced, spacingKeys, spacingGap, tasteMaps, tasteScore, tasteOrder, tasteReason, applyTasteReasons, shuffleInPlace, topGenres, fillText, reasonText, shapeSamples,
-    artworkUrl, coversOf, formatTime, playEnd, siteSource, moodTags, trackPath, localDay, countText, tasteGroups, capPerArtist, forgottenPicks, artistNames, isNewArtist, spreadBy, pickFinds,
+    artworkUrl, coversOf, formatTime, playEnd, siteSource, moodTags, trackPath, localDay, countText, tasteGroups, capPerArtist, forgottenPicks, daySample, artistNames, isNewArtist, spreadBy, pickFinds,
     moodList, moodDictionary, trackMood, artistMoods, neighborMood, moodScore,
     ...identity.identityHelpers, ...sources.sourceHelpers, ...libraryMix.libraryHelpers, siteRequires, installPlaybackPage, installPlaybackRecovery,
     installVersions, installLibrary, installRadar, installShelf, installMenu,

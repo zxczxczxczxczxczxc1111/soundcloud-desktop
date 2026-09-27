@@ -3,9 +3,10 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, expect, it } from 'vitest';
 import {
-    RADAR_PARAMS, RadarService, buildRadar, cleanRadarItem, coverageComplete, creditNames, exclusionFilter, freshness, heardIds, radarCoverage, radarSources,
-    selectEdition, selectRadar, type RadarCandidate, type RadarCoverage, type RadarInput,
+    RADAR_PARAMS, RadarService, buildRadar, cleanRadarItem, coverageComplete, creditNames, exclusionFilter, freshness, heardIds, heardLast, radarCoverage, radarSources,
+    scoreUpload, selectEdition, selectRadar, type RadarCandidate, type RadarCoverage, type RadarInput,
 } from './radar';
+import { tasteMaps } from './wave';
 import { RecommendStore, type StoredUpload } from './recommendStore';
 import { HistoryIndex } from './historyIndex';
 import { WaveSignals } from './waveSignals';
@@ -177,6 +178,29 @@ it('связь плюс 10 открытий (решение владельца 2
     expect(short.map((item) => item.linked)).toEqual([...Array(5).fill(true), ...Array(10).fill(false)]);
 });
 
+it('В7: открытий меньше отложенных мест (потолок аккаунта срезал их): места возвращаются связанным', () => {
+    const linked = Array.from({ length: 50 }, (_, i) => candidate(i + 1, 0.5 - i * 0.001, 'phonk'));
+    // Десять открытий от одного аккаунта: потолок пропускает три, семь мест раньше пропадали
+    const open = Array.from({ length: 10 }, (_, i) => candidate(100 + i, 0.99 - i * 0.001, 'pop', { linked: false, uploader: 999 }));
+    const picked = selectEdition([...open, ...linked], []);
+    expect(picked).toHaveLength(50);
+    expect(picked.filter((item) => !item.linked).map((item) => item.id)).toEqual([100, 101, 102]);
+    expect(picked.slice(0, 47).every((item) => item.linked)).toBe(true);
+    expect(picked.slice(0, 47).map((item) => item.id)).toEqual(Array.from({ length: 47 }, (_, i) => i + 1));
+});
+
+it('В7: слышанное и лайкнутое опускается в конец списка, порядок внутри частей прежний', () => {
+    const items = [1, 2, 3, 4, 5].map((id) => ({ id, heard: id === 1 || id === 4 }));
+    expect(heardLast(items).map((item) => item.id)).toEqual([2, 3, 5, 1, 4]);
+});
+
+it('В7: прибавка свежести только последним трём дням окна, а не всей неделе', () => {
+    const maps = tasteMaps({ artists: [[1, 3]], credits: [], tags: [], families: [], markers: [], tracks: [] })!;
+    const at = (days: number): number => scoreUpload(upload(1, 'Night Drive', 1, 'Artist'), 'release', CUTOFF - days * DAY, maps, new Set(), false, CUTOFF)!.base;
+    expect(at(1) - at(5)).toBeCloseTo(RADAR_PARAMS.recentBonus, 5);
+    expect(at(5)).toBeCloseTo(at(6.5), 5);
+});
+
 it('связь со вкусом: подписка, аккаунт и участник из вкуса связаны; чужой трек по жанру и аккаунт с одним прослушиванием нет', () => {
     const edition = buildRadar(input([
         upload(1, 'Night Drive', 1, 'Artist'),
@@ -328,7 +352,7 @@ it('сборка в worker: до конца обхода ждёт, после п
     }
 });
 
-it('выпуск для страницы: «Уже слышал» на сейчас без перестановки; «Все найденные» без позиций выпуска, найденное позже с отметкой', () => {
+it('выпуск для страницы: «Уже слышал» на сейчас, позиция остаётся в выпуске; «Все найденные» без позиций выпуска, найденное позже с отметкой', () => {
     const directory = mkdtempSync(join(tmpdir(), 'sc-radar-test-'));
     folders.push(directory);
     const store = new RecommendStore(directory);

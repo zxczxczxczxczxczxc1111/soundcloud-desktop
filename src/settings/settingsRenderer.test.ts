@@ -327,7 +327,7 @@ it('резервная копия: сводка перед записью, пр�
     const summary = document.getElementById('backupSummary')?.textContent ?? '';
     expect(summary).toContain('Аккаунт SoundCloud 88');
     expect(summary).toMatch(/Прослушиваний 1\s200 \(новых 30\)/);
-    expect(summary).toContain('Отметок волны 4, подборок 2 (новых 1), выпусков радара 3 (новых 3)');
+    expect(summary).toContain('Отметок волны 4, сохранённых очередей 2 (новых 1), выпусков радара 3 (новых 3)');
     expect(summary).toContain('Настроек в копии 20, поменяется 3');
     expect(summary).toContain('В копии другой аккаунт, не тот, что открыт сейчас');
     expect(invoke).not.toHaveBeenCalledWith('backup-restore', expect.anything());
@@ -354,7 +354,7 @@ it('резервная копия: сводка перед записью, пр�
     document.body.innerHTML = '';
     await openSettings({});
     expect(document.getElementById('backup')?.hidden).toBe(false);
-    expect(document.getElementById('backupStatus')?.textContent).toBe('Восстановлено: прослушиваний 30, подборок 1, выпусков радара 3');
+    expect(document.getElementById('backupStatus')?.textContent).toBe('Восстановлено: прослушиваний 30, сохранённых очередей 1, выпусков радара 3');
     expect(document.getElementById('networkNotice')?.hidden).toBe(false);
     expect(window.sessionStorage.getItem('backupDone')).toBeNull();
 });

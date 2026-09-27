@@ -92,15 +92,37 @@ export function capPerArtist(tracks: WaveTrack[], cap: number): WaveTrack[] {
     });
 }
 
-// «Давно не слушал»: лайки, которых нет среди прослушанного за последние недели. Сначала то, что модель вкуса
-// ценит выше (дослушивал, переслушивал), дальше лайки постарше. liked идёт от новых лайков к старым
-export function forgottenPicks(liked: WaveTrack[], recent: Set<number>, weights: Map<number, number> | null, limit: number): WaveTrack[] {
-    return liked
+// «Давно не слушал»: лайки, которых нет среди прослушанного за последние недели. Без seed сначала то, что модель
+// вкуса ценит выше (дослушивал, переслушивал), дальше лайки постарше; с seed (дата) выборка дня с весом 1 + вкус,
+// чтобы каждый день были не те же 60 треков (решение владельца 28.09.2026). liked идёт от новых лайков к старым
+export function forgottenPicks(liked: WaveTrack[], recent: Set<number>, weights: Map<number, number> | null, limit: number, seed = ''): WaveTrack[] {
+    const entries = liked
         .map((track, order) => ({ track, order, weight: weights?.get(track.id) ?? 0 }))
-        .filter((entry) => entry.weight > -1 && !recent.has(entry.track.id) && isWaveEligible(entry.track))
-        .sort((a, b) => b.weight - a.weight || b.order - a.order)
+        .filter((entry) => entry.weight > -1 && !recent.has(entry.track.id) && isWaveEligible(entry.track));
+    const ordered = seed
+        ? daySample(entries, (entry) => entry.track.id, (entry) => 1 + entry.weight, limit, seed)
+        : entries.sort((a, b) => b.weight - a.weight || b.order - a.order).slice(0, limit);
+    return ordered.map((entry) => entry.track);
+}
+
+// Выборка дня: случайная с весом, одна и та же весь день (seed это дата). Ключ u^(1/w) (Эфраимидис и Спиракис):
+// чем больше вес, тем вероятнее место и выше в порядке. u из хеша зерна и номера, поэтому порядок входа ничего не решает
+export function daySample<T>(items: T[], idOf: (item: T) => number, weightOf: (item: T) => number, limit: number, seed: string): T[] {
+    const unit = (id: number): number => {
+        const text = seed + ':' + id;
+        let hash = 2166136261;
+        for (let i = 0; i < text.length; i++) hash = Math.imul(hash ^ text.charCodeAt(i), 16777619);
+        hash = Math.imul(hash ^ (hash >>> 16), 0x85ebca6b);
+        hash = Math.imul(hash ^ (hash >>> 13), 0xc2b2ae35);
+        hash ^= hash >>> 16;
+        // Строго между 0 и 1: дальше логарифм
+        return ((hash >>> 0) + 1) / 4294967298;
+    };
+    return items
+        .map((item) => ({ item, id: idOf(item), key: Math.log(unit(idOf(item))) / Math.max(1e-6, weightOf(item)) }))
+        .sort((a, b) => b.key - a.key || a.id - b.id)
         .slice(0, limit)
-        .map((entry) => entry.track);
+        .map((entry) => entry.item);
 }
 
 // Ключи имён исполнителей: загрузчик, если выложил своё, и участники из названия и метаданных, кроме авторов песни
