@@ -119,6 +119,8 @@ export interface WaveWindow extends Window {
     __scSaveSession?: () => Promise<void>;
     __scResume?: () => void;
     __scQueue?: () => void;
+    // Горячие клавиши волны из main: лайк, «Не сейчас», «Больше такого», «Встряхнуть»
+    __scWaveKey?: (action: string) => boolean;
     // Кэш средних цветов обложек из плавности сайта (pageMotion), ключ это путь трека
     __scmCoverColor?: (key: string) => string | undefined;
     __scmLearnCover?: (key: string, url: string) => void;
@@ -2574,7 +2576,8 @@ export function installWave(config: WaveConfig, createPlayback: typeof installPl
                 'later-artist': [T.toastLaterArtist, T.toastUnlater],
                 more: [T.toastMore, T.toastUnmore],
             };
-            showToast(toasts[kind][excluded ? 0 : 1]);
+            // «Не сейчас», «Не нравится» и скрытый аккаунт отменяются из плашки: убранный трек уже не вернётся на место, но снова может попасть в волну
+            showToast(toasts[kind][excluded ? 0 : 1], excluded && kind !== 'more' ? () => void setExcluded(kind, target, false) : undefined);
             if (excluded && kind !== 'more') purgeExcluded();
             else render();
         } catch (error) {
@@ -2634,6 +2637,7 @@ export function installWave(config: WaveConfig, createPlayback: typeof installPl
         x: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M19 6.4 17.6 5 12 10.6 6.4 5 5 6.4l5.6 5.6L5 17.6 6.4 19l5.6-5.6 5.6 5.6 1.4-1.4-5.6-5.6z"/></svg>',
         shake: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M17.65 6.35A7.96 7.96 0 0 0 12 4a8 8 0 1 0 7.73 10h-2.08A6 6 0 1 1 12 6c1.66 0 3.14.69 4.22 1.78L13 11h7V4z"/></svg>',
         more: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M11 5h2v6h6v2h-6v6h-2v-6H5v-2h6z"/></svg>',
+        dislike: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M15 3H6c-.83 0-1.54.5-1.84 1.22l-3.02 7.05c-.09.23-.14.47-.14.73v2c0 1.1.9 2 2 2h6.31l-.95 4.57-.03.32c0 .41.17.79.44 1.06L9.83 23l6.59-6.59c.36-.36.58-.86.58-1.41V5c0-1.1-.9-2-2-2zm4 0v12h4V3h-4z"/></svg>',
         // Месяц: трек уснёт на неделю
         later: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12.34 2.02C6.59 1.82 2 6.42 2 12c0 5.52 4.48 10 10 10 3.71 0 6.93-2.02 8.66-5.02-7.51-.25-12.09-8.43-8.32-14.96z"/></svg>',
         // Те же часы, что у кнопки истории в шапке
@@ -2858,6 +2862,10 @@ export function installWave(config: WaveConfig, createPlayback: typeof installPl
         '.scw-menu .scw-mi:focus-visible{outline:2px solid currentColor;outline-offset:-2px}',
         '.scw-toast{position:fixed;left:50%;bottom:72px;z-index:2147483000;transform:translateX(-50%);max-width:420px;padding:8px 12px;border-radius:4px;background:#303030;color:#fff;box-shadow:0 4px 12px rgba(0,0,0,.45);font-size:14px;line-height:20px;pointer-events:none;opacity:0;transition:opacity .15s}',
         '.scw-toast.on{opacity:1}',
+        '.scw-toast.act.on{pointer-events:auto;display:flex;align-items:center;gap:16px}',
+        '.scw-toast .scw-undo{font:inherit;font-weight:600;color:#fff;background:none;border:0;padding:0;cursor:pointer;white-space:nowrap}',
+        '.scw-toast .scw-undo:hover{text-decoration:none;opacity:.8}',
+        '.scw-toast .scw-undo:focus-visible{outline:2px solid #fff;outline-offset:2px}',
         // «Версии этого трека»: окно поверх страницы, вне блока волны, поэтому переменные и сброс кнопок свои
         '.scw-dialog-back{--scw-surface:#303030;--scw-muted:#999;--scw-faint:#757575;--scw-film:rgba(255,255,255,.06);--scw-film-strong:rgba(255,255,255,.1);--scw-tile:rgba(255,255,255,.06);position:fixed;inset:0;z-index:2147482000;display:grid;place-items:center;background:rgba(0,0,0,.6);font-size:14px;line-height:20px}',
         '.scw-dialog{width:min(640px,calc(100vw - 32px));max-height:min(640px,calc(100vh - 64px));display:flex;flex-direction:column;border-radius:8px;background:#1f1f1f;color:#fff;box-shadow:0 12px 40px rgba(0,0,0,.6)}',
@@ -3027,7 +3035,7 @@ export function installWave(config: WaveConfig, createPlayback: typeof installPl
             seg.append(option);
         }
         const shakeButton = button('scw-icon', 'shake', T.shake, 'shake');
-        shakeButton.title = T.shake;
+        shakeButton.title = T.shake + ', Ctrl+S';
         shakeButton.disabled = state === 'loading' || state === 'unavailable';
         const historyButton = button('scw-icon', 'history', T.history, 'history');
         historyButton.title = T.history;
@@ -3208,14 +3216,16 @@ export function installWave(config: WaveConfig, createPlayback: typeof installPl
         const meta = el('div', 'scw-meta');
         if (current) {
             const like = button('scw-like', 'like', T.like, 'heart');
-            like.title = T.like;
+            like.title = T.like + ', Ctrl+L';
             like.setAttribute('aria-pressed', String(currentLiked));
             const later = button('scw-like', 'later', T.later, 'later');
-            later.title = T.later;
+            later.title = T.later + ', Ctrl+D';
+            const dislike = button('scw-like', 'dislike', T.menuDislike, 'dislike');
+            dislike.title = T.menuDislike;
             const more = button('scw-like', 'more', T.more, 'more');
-            more.title = T.more;
+            more.title = T.more + ', Ctrl+M';
             more.setAttribute('aria-pressed', String(moreTracks.has(current.track.id)));
-            meta.append(el('div', 'scw-why', reasonText(current.reason, T)), later, more, like, el('div', 'scw-time'));
+            meta.append(el('div', 'scw-why', reasonText(current.reason, T)), later, dislike, more, like, el('div', 'scw-time'));
         } else if (state === 'empty') {
             if (genre) meta.append(textButton('drop-genre', T.dropGenre));
             if (mode === 'fresh') meta.append(textButton('to-similar', T.toSimilar));
@@ -3553,11 +3563,13 @@ export function installWave(config: WaveConfig, createPlayback: typeof installPl
                 setTimeout(tick, 400);
                 return;
             case 'more':
-            case 'later': {
+            case 'later':
+            case 'dislike': {
                 const current = currentCandidate();
                 if (!current) return;
-                // «Не сейчас» у играющего трека сразу ставит следующий, как «Не нравится»
+                // «Не сейчас» и «Не нравится» у играющего трека сразу ставят следующий
                 if (control.dataset.act === 'later') void setExcluded('later-track', fromTrack(current.track), true);
+                else if (control.dataset.act === 'dislike') void setExcluded('track', fromTrack(current.track), true);
                 else void setExcluded('more', fromTrack(current.track), !moreTracks.has(current.track.id));
                 return;
             }
@@ -3623,19 +3635,63 @@ export function installWave(config: WaveConfig, createPlayback: typeof installPl
     const toastBox = el('div', 'scw-toast');
     toastBox.setAttribute('role', 'status');
     let toastTimer: ReturnType<typeof setTimeout> | undefined;
-    function showToast(text: string): void {
+    // undo: кнопка «Отменить» в плашке; с ней плашка висит дольше и ловит нажатия
+    function showToast(text: string, undo?: () => void): void {
         ensureStyle();
         toastBox.textContent = text;
+        toastBox.classList.toggle('act', !!undo);
+        if (undo) {
+            const cancel = el('button', 'scw-undo', T.undo);
+            cancel.type = 'button';
+            cancel.addEventListener('click', () => {
+                toastBox.classList.remove('on');
+                undo();
+            }, { once: true });
+            toastBox.append(cancel);
+        }
         if (!toastBox.isConnected) document.body.append(toastBox);
         toastBox.classList.add('on');
         if (toastTimer !== undefined) clearTimeout(toastTimer);
-        toastTimer = setTimeout(() => toastBox.classList.remove('on'), 3500);
+        toastTimer = setTimeout(() => toastBox.classList.remove('on'), undo ? 6000 : 3500);
     }
 
     // Цель меню из трека волны: пункты меню и кнопки «Не сейчас», «Больше такого» в блоке
     function fromTrack(track: WaveTrack): MenuTarget {
         return { kind: 'track', url: track.permalink_url ?? '', artistUrl: track.user?.permalink_url ?? '', track };
     }
+    // Горячие клавиши из main (Ctrl+L, Ctrl+D, Ctrl+M, Ctrl+S): то же, что кнопки блока, для играющего трека.
+    // Лайк ставит кнопка сайта, плашка подтверждает, что вышло: окно могло быть не на главной
+    host.__scWaveKey = (action: string): boolean => {
+        const sound = player?.getCurrentSound();
+        const track: WaveTrack | null = currentCandidate()?.track ?? (sound ? { ...(sound.attributes ?? {}), id: sound.id } : null);
+        const title = (track?.title ?? '').trim() || '…';
+        switch (action) {
+            case 'like': {
+                const node = likeButton();
+                if (!(node instanceof HTMLElement) || !track) return false;
+                node.click();
+                setTimeout(() => {
+                    tick();
+                    const liked = likeButton()?.classList.contains('sc-button-selected') ?? false;
+                    showToast(fillText(liked ? T.toastLiked : T.toastUnliked, { title }));
+                }, 400);
+                return true;
+            }
+            case 'later':
+                if (!track) return false;
+                void setExcluded('later-track', fromTrack(track), true);
+                return true;
+            case 'more':
+                if (!track) return false;
+                void setExcluded('more', fromTrack(track), !moreTracks.has(track.id));
+                return true;
+            case 'shake':
+                if (state === 'loading' || state === 'unavailable') return false;
+                shake();
+                return true;
+        }
+        return false;
+    };
 
     // Сайт ставит главную наверх уже после того, как блок встал, а ленту под ним дорисовывает частями:
     // место возвращается несколько раз за 3 секунды и отпускается, как только человек сам взялся за прокрутку
@@ -3817,6 +3873,7 @@ export function installWave(config: WaveConfig, createPlayback: typeof installPl
         delete host.__scResolveTracks;
         delete host.__scWhoAmI;
         delete host.__scQueue;
+        delete host.__scWaveKey;
         delete host.__scSaveSession;
         delete host.__scResume;
         delete host.__scRadarCollect;

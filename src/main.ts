@@ -1229,6 +1229,15 @@ function initializeShortcuts() {
     shortcutService.register('discordIncognito', 'CommandOrControl+Shift+N', 'Discord Incognito', () =>
         setDiscordIncognito(store.get('discordIncognito', false) !== true, true),
     );
+    // Волна: лайк, «Не сейчас», «Больше такого», «Встряхнуть» для играющего трека. Ctrl+F, N, B и P заняты переходами
+    const waveKey = (action: string) => () => {
+        if (contentView && !contentView.webContents.isDestroyed())
+            void contentView.webContents.executeJavaScript('window.__scWaveKey ? window.__scWaveKey(' + JSON.stringify(action) + ') : false').catch(console.error);
+    };
+    shortcutService.register('waveLike', 'CommandOrControl+L', 'Like', waveKey('like'));
+    shortcutService.register('waveLater', 'CommandOrControl+D', 'Not now', waveKey('later'));
+    shortcutService.register('waveMore', 'CommandOrControl+M', 'More like this', waveKey('more'));
+    shortcutService.register('waveShake', 'CommandOrControl+S', 'Shake up', waveKey('shake'));
 
     if (devMode) {
         shortcutService.register('devTools', 'F12', 'Open Developer Tools', () => {

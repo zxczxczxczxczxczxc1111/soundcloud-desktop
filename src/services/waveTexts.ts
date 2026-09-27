@@ -73,6 +73,7 @@ export const WAVE_TEXTS: Record<'ru' | 'en', WaveTexts> = {
         presets: 'Настроение', presetAll: 'Всё', moodHappy: 'Весёлое', moodSad: 'Грустное', moodAggressive: 'Агрессивное', moodCalm: 'Спокойное',
         moodEnergetic: 'Энергичное', hintPreset: ', настроение: {mood}', presetShort: 'Подходящего в твоём вкусе мало, добавляю ближайшее',
         whyMoodTag: 'Автор отметил: {tag}',
+        undo: 'Отменить', toastLiked: 'Лайк: {title}', toastUnliked: 'Лайк снят: {title}',
     },
     en: {
         wave: 'My Wave', similar: 'Similar', fresh: 'New', anyGenre: 'Any genre', genreInput: 'Genres, comma separated', fromLikes: 'From your likes',
@@ -144,6 +145,7 @@ export const WAVE_TEXTS: Record<'ru' | 'en', WaveTexts> = {
         presets: 'Mood', presetAll: 'All', moodHappy: 'Happy', moodSad: 'Sad', moodAggressive: 'Aggressive', moodCalm: 'Calm',
         moodEnergetic: 'Energetic', hintPreset: ', mood: {mood}', presetShort: 'Few matches in your taste, adding the closest ones',
         whyMoodTag: 'Tagged {tag} by the author',
+        undo: 'Undo', toastLiked: 'Liked: {title}', toastUnliked: 'Unliked: {title}',
     },
 };
 

@@ -663,6 +663,58 @@ it('В3: у волны от трека ряда пресетов нет, пре�
     expect(site.api.callEndpoint.mock.calls.some(([name]) => name === 'recentTracks')).toBe(false);
 });
 
+it('В7: «Не нравится» в блоке волны ставит следующий трек, плашка с «Отменить» снимает отметку', async () => {
+    const site = fakeSite(relatedTracks);
+    const bridge = fakeExclusions();
+    window.eval(waveScript());
+    await vi.advanceTimersByTimeAsync(100);
+    document.querySelector<HTMLButtonElement>('#sc-wave .scw-play')!.click();
+    await vi.advanceTimersByTimeAsync(1100);
+    const first = site.player.getCurrentSound()!.id;
+    const labels = [...document.querySelectorAll<HTMLElement>('#sc-wave .scw-meta .scw-like')].map((node) => node.dataset.act);
+    expect(labels).toEqual(['later', 'dislike', 'more', 'like']);
+    document.querySelector<HTMLElement>('#sc-wave [data-act="dislike"]')!.click();
+    await vi.advanceTimersByTimeAsync(100);
+    expect(bridge.set).toHaveBeenCalledWith(77, 'track', expect.objectContaining({ id: first }), true);
+    expect(site.player.getCurrentSound()!.id).not.toBe(first);
+    const toast = document.querySelector<HTMLElement>('.scw-toast')!;
+    expect(toast.classList.contains('on')).toBe(true);
+    expect(toast.textContent).toBe('This track won’t play in My WaveUndo');
+    toast.querySelector<HTMLButtonElement>('.scw-undo')!.click();
+    await vi.advanceTimersByTimeAsync(100);
+    expect(bridge.set).toHaveBeenLastCalledWith(77, 'track', expect.objectContaining({ id: first }), false);
+    expect(toast.textContent).toBe('This track can play in My Wave again');
+    expect(toast.querySelector('.scw-undo')).toBeNull();
+});
+
+it('В7: горячие клавиши волны: «Не сейчас», «Больше такого», «Встряхнуть» и лайк кнопкой сайта', async () => {
+    const site = fakeSite(relatedTracks);
+    const bridge = fakeExclusions();
+    document.body.insertAdjacentHTML('beforeend', '<div class="playControls"><button class="playbackSoundBadge__like"></button></div>');
+    const siteLike = document.querySelector<HTMLButtonElement>('.playbackSoundBadge__like')!;
+    siteLike.addEventListener('click', () => siteLike.classList.toggle('sc-button-selected'));
+    window.eval(waveScript());
+    await vi.advanceTimersByTimeAsync(100);
+    const key = (window as unknown as { __scWaveKey(action: string): boolean }).__scWaveKey;
+    expect(key('later')).toBe(false);
+    document.querySelector<HTMLButtonElement>('#sc-wave .scw-play')!.click();
+    await vi.advanceTimersByTimeAsync(1100);
+    const first = site.player.getCurrentSound()!.id;
+    expect(key('more')).toBe(true);
+    await vi.advanceTimersByTimeAsync(100);
+    expect(bridge.set).toHaveBeenLastCalledWith(77, 'more', expect.objectContaining({ id: first }), true);
+    expect(key('like')).toBe(true);
+    await vi.advanceTimersByTimeAsync(500);
+    expect(siteLike.classList.contains('sc-button-selected')).toBe(true);
+    expect(document.querySelector('.scw-toast')?.textContent).toMatch(/^Liked: /);
+    expect(key('later')).toBe(true);
+    await vi.advanceTimersByTimeAsync(100);
+    expect(bridge.set).toHaveBeenLastCalledWith(77, 'later-track', expect.objectContaining({ id: first }), true);
+    expect(site.player.getCurrentSound()!.id).not.toBe(first);
+    expect(key('shake')).toBe(true);
+    expect(key('nothing')).toBe(false);
+});
+
 it('волна от трека скрытого артиста подбирает похожих, сам артист в неё не попадает', async () => {
     const site = fakeSite((seed) => [...relatedTracks(seed), { id: seed * 1000 + 900, kind: 'track', user_id: 900, duration: 200000, title: 'Art ' + seed }], siteExtra);
     fakeExclusions([], [{ id: 900, title: 'Art', url: 'https://soundcloud.com/art' }]);
@@ -823,7 +875,7 @@ it('«Не нравится» уводит трек из очереди, игр�
     // Артист трека уходит и с «Не нравится»: по нему модель вкуса учится минусом
     expect(bridge.set).toHaveBeenCalledWith(77, 'track', expect.objectContaining({ id: disliked, artistId: expect.any(Number) }), true);
     expect(site.player.getQueue().slice().some((item) => item.sound.id === disliked)).toBe(false);
-    expect(document.querySelector('.scw-toast')?.textContent).toBe('This track won’t play in My Wave');
+    expect(document.querySelector('.scw-toast')?.textContent).toBe('This track won’t play in My WaveUndo');
 
     const playing = site.player.getCurrentSound()!.id;
     rightClick(section.querySelector('.scw-track')!);
@@ -862,7 +914,7 @@ it('«Не сейчас» у играющего трека ставит след
     await vi.advanceTimersByTimeAsync(100);
     expect(bridge.set).toHaveBeenCalledWith(77, 'later-track', expect.objectContaining({ id: playing.id }), true);
     expect(site.player.getCurrentSound()!.id).not.toBe(playing.id);
-    expect(document.querySelector('.scw-toast')?.textContent).toBe('This track won’t play in My Wave for a week');
+    expect(document.querySelector('.scw-toast')?.textContent).toBe('This track won’t play in My Wave for a weekUndo');
 
     const next = site.player.getCurrentSound()!.id;
     section.querySelector<HTMLButtonElement>('[data-act="more"]')!.click();
@@ -883,7 +935,7 @@ it('лайк в блоке или в плеере сайта зажигает с
     section.querySelector<HTMLButtonElement>('.scw-play')!.click();
     await vi.advanceTimersByTimeAsync(100);
     // Подсказка при наведении у всех трёх кнопок ряда, у сердца её не было
-    expect(['like', 'later', 'more'].map((act) => section.querySelector<HTMLElement>('[data-act="' + act + '"]')?.title)).toEqual(['Like', 'Not now', 'More like this']);
+    expect(['like', 'later', 'more'].map((act) => section.querySelector<HTMLElement>('[data-act="' + act + '"]')?.title)).toEqual(['Like, Ctrl+L', 'Not now, Ctrl+D', 'More like this, Ctrl+M']);
 
     section.querySelector<HTMLButtonElement>('[data-act="like"]')!.click();
     await vi.advanceTimersByTimeAsync(500);

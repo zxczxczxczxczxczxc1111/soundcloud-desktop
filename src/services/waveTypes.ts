@@ -118,7 +118,8 @@ export type WaveTexts = Record<
     | 'library' | 'libraryLikes' | 'libraryOrder' | 'libraryShuffle' | 'librarySmart' | 'libraryOrderTip' | 'libraryShuffleTip' | 'librarySmartTip'
     | 'libraryPlay' | 'libraryPick' | 'libraryLoading' | 'libraryFailed' | 'libraryBuilding' | 'libraryEmpty' | 'libraryList' | 'libraryMore'
     | 'libraryModes' | 'librarySources' | 'libraryPlaying' | 'libraryPaused' | 'libraryPlaylists' | 'libraryHere' | 'libraryOf' | 'whyLibrary' | 'whyLibraryLikes' | 'seedLibrary'
-    | 'presets' | 'presetAll' | 'moodHappy' | 'moodSad' | 'moodAggressive' | 'moodCalm' | 'moodEnergetic' | 'hintPreset' | 'presetShort' | 'whyMoodTag',
+    | 'presets' | 'presetAll' | 'moodHappy' | 'moodSad' | 'moodAggressive' | 'moodCalm' | 'moodEnergetic' | 'hintPreset' | 'presetShort' | 'whyMoodTag'
+    | 'undo' | 'toastLiked' | 'toastUnliked',
     string
 >;
 
