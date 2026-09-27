@@ -3031,6 +3031,7 @@ export function installWave(config: WaveConfig, createPlayback: typeof installPl
             option.type = 'button';
             option.setAttribute('role', 'radio');
             option.setAttribute('aria-checked', String(mode === value));
+            option.tabIndex = mode === value ? 0 : -1;
             option.dataset.mode = value;
             seg.append(option);
         }
@@ -3095,6 +3096,7 @@ export function installWave(config: WaveConfig, createPlayback: typeof installPl
             chip.type = 'button';
             chip.setAttribute('role', 'radio');
             chip.setAttribute('aria-checked', String((preset ?? 'all') === value));
+            chip.tabIndex = (preset ?? 'all') === value ? 0 : -1;
             chip.dataset.preset = value;
             row.append(chip);
         }
@@ -3597,6 +3599,21 @@ export function installWave(config: WaveConfig, createPlayback: typeof installPl
         render();
     }
     function onKey(event: KeyboardEvent): void {
+        // Переключатели (режим волны, настроение, режим «Моей музыки») листаются стрелками, Home и End: фокус и выбор вместе
+        const radio = event.target instanceof HTMLElement && event.target.getAttribute('role') === 'radio' ? event.target : null;
+        const group = radio?.closest('[role="radiogroup"]');
+        const step = ({ ArrowRight: 1, ArrowDown: 1, ArrowLeft: -1, ArrowUp: -1 } as Record<string, number>)[event.key];
+        if (radio && group && (step || event.key === 'Home' || event.key === 'End')) {
+            event.preventDefault();
+            const radios = [...group.querySelectorAll<HTMLElement>('[role="radio"]')];
+            const at = radios.indexOf(radio);
+            const next = radios[event.key === 'Home' ? 0 : event.key === 'End' ? radios.length - 1 : (at + step + radios.length) % radios.length];
+            if (next && next !== radio) {
+                next.focus();
+                next.click();
+            }
+            return;
+        }
         if (event.key === 'Escape' && popOpen) {
             event.stopPropagation();
             popOpen = false;

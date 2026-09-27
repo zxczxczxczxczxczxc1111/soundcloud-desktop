@@ -69,20 +69,22 @@ export function spreadArtists<T>(list: T[], artistOf: (item: T) => number): T[] 
 
 /**
  * Порядок пула по режиму. «По порядку»: как собран, источники в порядке выбора, внутри родной порядок.
- * «Перемешать» и «Умное»: случайный порядок без одного артиста подряд, слышанное за 3 дня (heard) не играет;
- * если правило выбило весь пул, он играет без него. Похожие в «Умное» подмешивает волна, не пул
+ * «Перемешать» и «Умное»: случайный порядок без одного артиста подряд, слышанное за 3 дня (heard) в конце,
+ * тоже перемешанное (решение владельца 28.09.2026). Похожие в «Умное» подмешивает волна, не пул
  */
 export function libraryOrder<T extends { id: number }>(
     pool: LibraryEntry<T>[], mode: LibraryMode, artistOf: (track: T) => number, heard: (track: T) => boolean, random: () => number,
 ): LibraryEntry<T>[] {
     if (mode === 'order') return pool.slice();
-    const fresh = pool.filter((entry) => !heard(entry.track));
-    const list = fresh.length ? fresh : pool.slice();
-    for (let i = list.length - 1; i > 0; i--) {
-        const j = Math.floor(random() * (i + 1));
-        [list[i], list[j]] = [list[j], list[i]];
-    }
-    return spreadArtists(list, (entry) => artistOf(entry.track));
+    // Каждая часть разводится по артистам отдельно: иначе обмен у стыка поднял бы слышанное вперёд
+    const mixed = (list: LibraryEntry<T>[]): LibraryEntry<T>[] => {
+        for (let i = list.length - 1; i > 0; i--) {
+            const j = Math.floor(random() * (i + 1));
+            [list[i], list[j]] = [list[j], list[i]];
+        }
+        return spreadArtists(list, (entry) => artistOf(entry.track));
+    };
+    return [...mixed(pool.filter((entry) => !heard(entry.track))), ...mixed(pool.filter((entry) => heard(entry.track)))];
 }
 
 // Всё, что уходит на страницу: waveScript кладёт объявления рядом с волной

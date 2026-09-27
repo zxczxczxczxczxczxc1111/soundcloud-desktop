@@ -449,6 +449,8 @@ export function installShelf(core: ShelfCore): ShelfSection {
             const play = button('scw-card-play', 'shelf-play', shown ? T.pause : T.mixPlay, shown ? 'pause' : 'play');
             play.dataset.card = String(index);
             play.setAttribute('aria-pressed', String(playing));
+            // Кнопок «Слушать» на полке десяток: чтение с экрана называет, какую подборку она включит
+            play.setAttribute('aria-label', (shown ? T.pause : T.mixPlay) + ': ' + title);
             over.append(play);
             node.append(over);
         }

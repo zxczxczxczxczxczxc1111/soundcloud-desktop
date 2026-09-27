@@ -294,6 +294,8 @@ it('ПКМ по треку в списке: меню и волна от этог
     expect(menuActs()).toEqual(['wave-track', 'wave-artist', 'queue-next', 'queue-last', 'pick', 'more', 'later', 'dislike', 'versions', 'hide-family', 'hide-artist']);
     choose('wave-track');
     expect(document.querySelector('.scw-menu')).toBeNull();
+    // Трек из списка сайта волне ещё не знаком: плашка без названия, сразу, до ответа сайта
+    expect(document.querySelector('.scw-toast.on')?.textContent).toBe('Building a wave…');
     await vi.advanceTimersByTimeAsync(100);
     const queued = site.player.replaceQueue.mock.calls[site.player.replaceQueue.mock.calls.length - 1][0] as FakeItem[];
     expect(queued[0].sound.id).toBe(555);
@@ -329,9 +331,50 @@ it('меню мышью без фокуса на пункте, стрелки и
     key('Escape');
     expect(document.querySelector('.scw-menu')).toBeNull();
 
+    // После меню мышью фокус никуда не возвращается: сайт обвёл бы рамкой
+    expect(document.activeElement).not.toBe(title);
+
     // Клавиша меню или Shift+F10: координат нет, фокус сразу на первом пункте
+    (title as HTMLElement).focus();
     title.dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, cancelable: true }));
     expect((document.activeElement as HTMLElement).dataset.menu).toBe('wave-track');
+    // Escape и выбор пункта возвращают фокус туда, откуда меню открыто
+    key('Escape');
+    expect(document.activeElement).toBe(title);
+    title.dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, cancelable: true }));
+    key('ArrowDown');
+    (document.activeElement as HTMLElement).click();
+    expect(document.querySelector('.scw-menu')).toBeNull();
+    expect(document.activeElement).toBe(title);
+});
+
+it('В7: переключатели листаются стрелками, Home и End, в порядке Tab только выбранный', async () => {
+    fakeSite(relatedTracks);
+    window.eval(waveScript());
+    await vi.advanceTimersByTimeAsync(100);
+    const section = document.getElementById('sc-wave')!;
+    const press = (name: string): void => void document.activeElement!.dispatchEvent(new KeyboardEvent('keydown', { key: name, bubbles: true, cancelable: true }));
+    const focused = (): HTMLElement => document.activeElement as HTMLElement;
+    const similar = section.querySelector<HTMLElement>('[data-mode="similar"]')!;
+    expect([similar.tabIndex, section.querySelector<HTMLElement>('[data-mode="fresh"]')!.tabIndex]).toEqual([0, -1]);
+    similar.focus();
+    press('ArrowRight');
+    expect(focused().dataset.mode).toBe('fresh');
+    expect(focused().getAttribute('aria-checked')).toBe('true');
+    expect(focused().tabIndex).toBe(0);
+    press('ArrowRight');
+    expect(focused().dataset.mode).toBe('similar');
+    expect(focused().getAttribute('aria-checked')).toBe('true');
+
+    section.querySelector<HTMLElement>('[data-preset="all"]')!.focus();
+    press('End');
+    expect(focused().dataset.preset).toBe('energetic');
+    expect(focused().getAttribute('aria-checked')).toBe('true');
+    press('ArrowLeft');
+    expect(focused().dataset.preset).toBe('calm');
+    press('Home');
+    expect(focused().dataset.preset).toBe('all');
+    expect(section.querySelectorAll('[data-preset][tabindex="0"]')).toHaveLength(1);
 });
 
 it('волна по треку, который уже играет: он доигрывает, волна встаёт за ним', async () => {
@@ -1451,6 +1494,8 @@ it('полка из снимка дня: находки играют первы�
     expect(cards[0].querySelectorAll('.scw-quad > span')).toHaveLength(4);
     expect(cards[1].querySelector('.scw-t2')?.textContent).toBe('A, B');
     expect(section.querySelector('.scw-seg')).not.toBeNull();
+    // Чтение с экрана называет, какую подборку включит кнопка
+    expect(section.querySelector('[data-act="shelf-play"][data-card="1"]')?.getAttribute('aria-label')).toBe('Play mix: Techno and Industrial');
 
     section.querySelector<HTMLButtonElement>('[data-act="shelf-play"][data-card="0"]')!.click();
     await vi.advanceTimersByTimeAsync(100);
@@ -2772,7 +2817,103 @@ it('Э7: раздел над подборками, выбор источнико
     expect(document.querySelector('#sc-wave [data-act="lib-play"]')?.getAttribute('aria-label')).toBe('Pause');
 });
 
-it('Э7: перемешивание без слышанного за 3 дня (клиент и история сайта) и без «Не нравится», артист не подряд', async () => {
+it('В7: смена режима, пока собирается план, и сразу «Слушать» играет новый режим без ложного «SoundCloud не ответил»', async () => {
+    const base = libraryExtra();
+    const site = fakeSite(relatedTracks, (name, path, query) =>
+        name === 'playlist' && Number(path.id) === 8 ? new Promise((resolve) => setTimeout(() => resolve(base(name, path, query)), 3000)) : base(name, path, query));
+    Object.assign(window, { soundcloudAPI: { waveLibrary: libraryBridge({ mode: 'shuffle', pick: { 77: ['likes', 'playlist:8'] } }) } });
+    window.eval(waveScript());
+    await vi.advanceTimersByTimeAsync(2000);
+    // Список открыт: план под «Перемешать» собирается, плейлист отвечает три секунды
+    document.querySelector<HTMLButtonElement>('#sc-wave [data-act="lib-list"]')!.click();
+    await vi.advanceTimersByTimeAsync(100);
+    libMode('order').click();
+    document.querySelector<HTMLButtonElement>('#sc-wave [data-act="lib-play"]')!.click();
+    await vi.advanceTimersByTimeAsync(8000);
+    expect(document.querySelector('.scw-toast')?.textContent).not.toBe('Didn’t work: SoundCloud didn’t respond');
+    expect(queuedIds(site).slice(0, 4)).toEqual([301, 302, 303, 304]);
+});
+
+it('В7: сохранённые плейлисты грузятся не больше четырёх разом, порядок списка как у сайта', async () => {
+    const base = libraryExtra();
+    const saved = Array.from({ length: 10 }, (_, i) => 20 + i);
+    let open = 0;
+    let most = 0;
+    fakeSite(relatedTracks, (name, path, query) => {
+        const id = Number(path.id);
+        if (name === 'playlistLikesIds') return { collection: saved };
+        if (name !== 'playlist' || !saved.includes(id)) return base(name, path, query);
+        open++;
+        most = Math.max(most, open);
+        // Дальние отвечают раньше ближних: порядок списка не должен от этого зависеть
+        return new Promise((resolve) => setTimeout(() => { open--; resolve({ id, title: 'S' + id, track_count: 1 }); }, 1000 - (id - 20) * 50));
+    });
+    Object.assign(window, { soundcloudAPI: { waveLibrary: libraryBridge() } });
+    window.eval(waveScript());
+    await vi.advanceTimersByTimeAsync(2000);
+    libChip('likes');
+    await vi.advanceTimersByTimeAsync(5000);
+    expect(most).toBe(4);
+    const names = [...document.querySelectorAll<HTMLElement>('#sc-wave [data-act="lib-source"] .scw-lib-name')].map((node) => node.textContent);
+    expect(names).toEqual(['Likes', 'Mine', ...saved.map((id) => 'S' + id)]);
+});
+
+it('В7: новый плейлист виден в «Источниках» без перезапуска: список старше минуты перечитывается фоном', async () => {
+    const base = libraryExtra();
+    let own = [{ id: 8, title: 'Mine', track_count: 3 }];
+    const calls: string[] = [];
+    fakeSite(relatedTracks, (name, path, query) => {
+        calls.push(name + ':' + String(path.id ?? ''));
+        return name === 'userPlaylistsWithoutAlbums' ? { collection: own } : base(name, path, query);
+    });
+    Object.assign(window, { soundcloudAPI: { waveLibrary: libraryBridge() } });
+    window.eval(waveScript());
+    await vi.advanceTimersByTimeAsync(2000);
+    const names = (): Array<string | null> => [...document.querySelectorAll<HTMLElement>('#sc-wave [data-act="lib-source"]')].map((node) => node.textContent);
+    const sources = (): void => document.querySelector<HTMLButtonElement>('#sc-wave [data-act="lib-sources"]')!.click();
+    sources();
+    await vi.advanceTimersByTimeAsync(500);
+    expect(names()).toEqual(['Likes12', 'Mine3', 'Saved2']);
+    sources();
+    own = [{ id: 8, title: 'Mine', track_count: 4 }, { id: 10, title: 'Fresh', track_count: 1 }];
+    // Меньше минуты: список не перечитывается
+    sources();
+    await vi.advanceTimersByTimeAsync(500);
+    expect(names()).toEqual(['Likes12', 'Mine3', 'Saved2']);
+    sources();
+    await vi.advanceTimersByTimeAsync(61000);
+    calls.length = 0;
+    sources();
+    // Старый список сразу, новый после ответа сайта; сохранённый плейлист моложе 10 минут второй раз не спрашивается
+    expect(names()).toEqual(['Likes12', 'Mine3', 'Saved2']);
+    await vi.advanceTimersByTimeAsync(500);
+    expect(names()).toEqual(['Likes12', 'Mine4', 'Fresh1', 'Saved2']);
+    expect(calls).not.toContain('playlist:9');
+});
+
+it('В7: статус «Моей музыки» одним правилом: всё доступное и отдельно недоступное с подсказкой, без «N из M»', async () => {
+    const base = libraryExtra();
+    const extra = [libTrack(371, { policy: 'SNIP' }), libTrack(372, { policy: 'SNIP' }), libTrack(373, { policy: 'BLOCK' })];
+    const site = fakeSite(relatedTracks, (name, path, query) => name === 'playlist' && Number(path.id) === 9
+        ? { id: 9, title: 'Saved', track_count: 5, tracks: [libTrack(361), libTrack(362), ...extra] }
+        : base(name, path, query));
+    Object.assign(window, { soundcloudAPI: { waveLibrary: libraryBridge({ mode: 'order', pick: { 77: ['playlist:9'] } }) } });
+    window.eval(waveScript());
+    await vi.advanceTimersByTimeAsync(2000);
+    const status = (): HTMLElement => document.querySelector<HTMLElement>('#sc-wave .scw-lib .scw-mix-title > span')!;
+    document.querySelector<HTMLButtonElement>('#sc-wave [data-act="lib-list"]')!.click();
+    await vi.advanceTimersByTimeAsync(500);
+    expect(status().textContent).toBe('2 tracks, 3 unavailable');
+    expect(status().querySelector<HTMLElement>('.scw-lib-off')?.dataset.tip).toBe('Go+ previews and tracks blocked in your country: SoundCloud won’t play them in full');
+    document.querySelector<HTMLButtonElement>('#sc-wave [data-act="lib-play"]')!.click();
+    await vi.advanceTimersByTimeAsync(2000);
+    site.setItems(site.player.getQueue().slice(), 1);
+    await vi.advanceTimersByTimeAsync(1100);
+    // Сыгранное не вычитается
+    expect(status().textContent).toBe('Playing, 2 tracks, 3 unavailable');
+});
+
+it('Э7: в перемешивании слышанное за 3 дня (клиент и история сайта) в конце, «Не нравится» нет, артист не подряд', async () => {
     const now = Date.now();
     const site = fakeSite(relatedTracks, libraryExtra([{ id: 302, at: now - 3600000 }, { id: 311, at: now - 5 * 86400000 }]));
     const bridge = libraryBridge({ mode: 'shuffle', pick: { 77: ['likes', 'playlist:8'] } }, [301]);
@@ -2784,10 +2925,12 @@ it('Э7: перемешивание без слышанного за 3 дня (�
     expect(bridge.heard).toHaveBeenCalledWith(77);
     site.setItems(site.player.getQueue().slice(), 7);
     await vi.advanceTimersByTimeAsync(1100);
-    // 301 слышан в клиенте, 302 на сайте час назад, 304 «Не нравится»; 311 слышан пять дней назад и играет
+    // 301 слышан в клиенте, 302 на сайте час назад: оба в конце; 304 «Не нравится»; 311 слышан пять дней назад и играет
     const allowed = [303, 305, 306, 307, 308, 309, 310, 311, 312, 351, 352];
     const own = queuedIds(site).slice(0, allowed.length);
     expect([...own].sort((a, b) => a - b)).toEqual(allowed);
+    expect(queuedIds(site).slice(allowed.length, allowed.length + 2).sort((a, b) => a - b)).toEqual([301, 302]);
+    expect(queuedIds(site)).not.toContain(304);
     const artists = own.map((id) => 500 + id);
     for (let i = 1; i < artists.length; i++) expect(artists[i]).not.toBe(artists[i - 1]);
 });
@@ -3031,8 +3174,8 @@ it('«Моя музыка»: смена режима сразу после пе�
     window.eval(waveScript());
     await vi.advanceTimersByTimeAsync(3000);
     expect(queuedIds(site).slice(0, 3)).toEqual([301, 302, 303]);
-    // Сессия встала на паузе: статус не говорит «Играет»; впереди хвост сессии, и видно, что это не весь выбор
-    expect(document.querySelector('#sc-wave .scw-lib .scw-mix-title span')?.textContent).toBe('Paused, 3 of 12 tracks');
+    // Сессия встала на паузе: статус не говорит «Играет»; число это весь выбор, а не хвост сессии
+    expect(document.querySelector('#sc-wave .scw-lib .scw-mix-title span')?.textContent).toBe('Paused, 12 tracks');
     libMode('order').click();
     await vi.advanceTimersByTimeAsync(2000);
     // Играет 301: впереди весь несыгранный пул по порядку, а не прежний хвост сессии

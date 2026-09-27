@@ -86,6 +86,8 @@ export function installLibrary(core: LibraryCore): LibrarySection {
     let librarySources: LibraryPlaylist[] | 'loading' | 'failed' | null = null;
     let libraryPlan: { key: string; at: number; used: boolean; pool: LibraryEntry<WaveTrack>[]; entries: LibraryEntry<WaveTrack>[] } | null = null;
     let libraryPlanPromise: Promise<void> | null = null;
+    // Выбор и режим, под которые собирается libraryPlanPromise
+    let libraryPlanFor = '';
     let libraryPlanFailed = false;
     let libraryListOpen = false;
     let librarySourcesOpen = false;
@@ -99,6 +101,8 @@ export function installLibrary(core: LibraryCore): LibrarySection {
     const libraryFrom = new Map<number, string>();
     // Ключ источника трека пула ('likes' или 'playlist:<id>'): отметка «сейчас играет отсюда» в выборе
     const librarySourceOf = new Map<number, string>();
+    // Недоступное на этом аккаунте в выборе (ключ это источники через запятую): пометка в статусе
+    const libraryBlocked = new Map<string, number>();
     const playlistCache = new Map<number, { at: number; title: string; tracks: WaveTrack[] }>();
     const LIBRARY_TTL = 10 * 60000;
     const pickedSources = (): string[] => (core.userId() ? myMusic.pick[String(core.userId())] : undefined) ?? ['likes'];
@@ -153,47 +157,86 @@ export function installLibrary(core: LibraryCore): LibrarySection {
         const counted = countText(playlists, T.libraryPlaylists, T.lang);
         return pick.includes('likes') ? fillText(T.groupAnd, { a: T.libraryLikes, b: counted }) : counted;
     }
-    // Плейлисты аккаунта для выбора: свои без альбомов и сохранённые (альбомы среди них), названия у сайта на сессию
+    // Плейлисты аккаунта для выбора: свои без альбомов и сохранённые (альбомы среди них). Открытые «Источники»
+    // перечитывают список фоном, если ему больше минуты: новый плейлист виден без перезапуска клиента.
+    // Сохранённый плейлист сайт отдаёт по одному, поэтому загруженный держится 10 минут
+    let librarySourcesAt = 0;
+    let librarySourcesRefresh = false;
+    const savedPlaylists = new Map<number, { at: number; list: LibraryPlaylist }>();
+    function playlistInfo(value: unknown, own: boolean): LibraryPlaylist | null {
+        const item = value && typeof value === 'object' ? (value as { id?: unknown; title?: unknown; track_count?: unknown; tracks?: unknown }) : null;
+        if (!item || !isId(item.id)) return null;
+        const count = typeof item.track_count === 'number' ? item.track_count : Array.isArray(item.tracks) ? item.tracks.length : 0;
+        return { id: item.id, title: (typeof item.title === 'string' ? item.title.trim() : '') || '…', count, own };
+    }
     function ensureLibrarySources(): void {
         if (librarySources !== null) return;
         librarySources = 'loading';
-        void (async () => {
-            const user = await ensureUser();
-            if (!user) throw new Error('Пользователь не определён');
-            const lists: LibraryPlaylist[] = [];
-            const info = (value: unknown, own: boolean): void => {
-                const item = value && typeof value === 'object' ? (value as { id?: unknown; title?: unknown; track_count?: unknown; tracks?: unknown }) : null;
-                if (!item || !isId(item.id) || lists.some((list) => list.id === item.id)) return;
-                const count = typeof item.track_count === 'number' ? item.track_count : Array.isArray(item.tracks) ? item.tracks.length : 0;
-                lists.push({ id: item.id, title: (typeof item.title === 'string' ? item.title.trim() : '') || '…', count, own });
-            };
-            let query: Record<string, string | number> | null = { limit: 50 };
-            for (let page = 0; query && page < 10 && !core.disposed(); page++) {
-                const body = await call('userPlaylistsWithoutAlbums', { id: user }, query);
-                for (const item of collection(body)) info(item, true);
-                query = nextQuery(body);
-            }
-            const saved: number[] = [];
-            query = { limit: 200 };
-            for (let page = 0; query && page < 5 && !core.disposed(); page++) {
-                const body = await call('playlistLikesIds', {}, query);
-                for (const value of collection(body)) {
-                    const id = typeof value === 'number' ? value : (value as { id?: unknown } | null)?.id;
-                    if (isId(id) && !saved.includes(id)) saved.push(id);
-                }
-                query = nextQuery(body);
-            }
-            // Сохранённый плейлист, которого сайт не отдал (удалён или закрыт), в выбор не попадает
-            const bodies = await Promise.all(saved.slice(0, 50).map((id) => call('playlist', { id }, {}).catch((error: unknown) => {
-                console.warn('Моя музыка: сохранённый плейлист не загружен', error);
-                return null;
-            })));
-            for (const body of bodies) info(body, false);
+        fetchLibrarySources().then((lists) => {
             librarySources = lists;
-        })().catch((error: unknown) => {
+            librarySourcesAt = Date.now();
+        }, (error: unknown) => {
             librarySources = 'failed';
             console.warn('Моя музыка: плейлисты не загружены', error);
         }).finally(render);
+    }
+    // Старый список остаётся на экране, пока идёт новый; не перечитался: остаётся старый. Перерисовка только
+    // при разнице, лишняя сняла бы подсказку под мышью
+    function refreshLibrarySources(): void {
+        if (!Array.isArray(librarySources) || librarySourcesRefresh || Date.now() - librarySourcesAt < 60000) return;
+        librarySourcesRefresh = true;
+        const before = JSON.stringify(librarySources);
+        fetchLibrarySources().then((lists) => {
+            librarySources = lists;
+            librarySourcesAt = Date.now();
+            if (JSON.stringify(lists) !== before) render();
+        }, (error: unknown) => console.warn('Моя музыка: список плейлистов не обновлён', error)).finally(() => {
+            librarySourcesRefresh = false;
+        });
+    }
+    async function fetchLibrarySources(): Promise<LibraryPlaylist[]> {
+        const user = await ensureUser();
+        if (!user) throw new Error('Пользователь не определён');
+        const lists: LibraryPlaylist[] = [];
+        const info = (list: LibraryPlaylist | null | undefined): void => {
+            if (list && !lists.some((other) => other.id === list.id)) lists.push(list);
+        };
+        let query: Record<string, string | number> | null = { limit: 50 };
+        for (let page = 0; query && page < 10 && !core.disposed(); page++) {
+            const body = await call('userPlaylistsWithoutAlbums', { id: user }, query);
+            for (const item of collection(body)) info(playlistInfo(item, true));
+            query = nextQuery(body);
+        }
+        const saved: number[] = [];
+        query = { limit: 200 };
+        for (let page = 0; query && page < 5 && !core.disposed(); page++) {
+            const body = await call('playlistLikesIds', {}, query);
+            for (const value of collection(body)) {
+                const id = typeof value === 'number' ? value : (value as { id?: unknown } | null)?.id;
+                if (isId(id) && !saved.includes(id)) saved.push(id);
+            }
+            query = nextQuery(body);
+        }
+        // Сохранённый плейлист, которого сайт не отдал (удалён или закрыт), в выбор не попадает.
+        // Не больше четырёх запросов разом, а не все пятьдесят: порядок списка остаётся порядком сайта
+        const ids = saved.slice(0, 50);
+        const stale = ids.filter((id) => Date.now() - (savedPlaylists.get(id)?.at ?? 0) >= LIBRARY_TTL);
+        let next = 0;
+        await Promise.all(Array.from({ length: Math.min(4, stale.length) }, async () => {
+            while (next < stale.length && !core.disposed()) {
+                const id = stale[next++];
+                try {
+                    const list = playlistInfo(await call('playlist', { id }, {}), false);
+                    if (list) savedPlaylists.set(id, { at: Date.now(), list });
+                    else savedPlaylists.delete(id);
+                } catch (error) {
+                    savedPlaylists.delete(id);
+                    console.warn('Моя музыка: сохранённый плейлист не загружен', error);
+                }
+            }
+        }));
+        for (const id of ids) info(savedPlaylists.get(id)?.list);
+        return lists;
     }
     const playlistName = (id: number): string =>
         (Array.isArray(librarySources) ? librarySources.find((list) => list.id === id)?.title : undefined) ?? playlistCache.get(id)?.title ?? '';
@@ -268,9 +311,17 @@ export function installLibrary(core: LibraryCore): LibrarySection {
             sources.push({ key, name: list.title || playlistName(id) || '…', tracks: list.tracks });
         }
         const pool = libraryPool(sources, libraryKeeps, copyKeys, copyKey, trackArtist);
-        // Трек из нескольких источников пул берёт из первого по выбору, отметка тоже
+        // Трек из нескольких источников пул берёт из первого по выбору, отметка тоже.
+        // Отрывки Go+ и закрытое в стране считаются для статуса: сайт показывает их в числе плейлиста
         const keys = new Map<number, string>();
-        for (const source of sources) for (const track of source.tracks) if (!keys.has(track.id)) keys.set(track.id, source.key);
+        let blocked = 0;
+        for (const source of sources)
+            for (const track of source.tracks) {
+                if (keys.has(track.id)) continue;
+                keys.set(track.id, source.key);
+                if (track.policy === 'SNIP' || track.policy === 'BLOCK') blocked++;
+            }
+        libraryBlocked.set(pick.join(','), blocked);
         for (const entry of pool) {
             libraryFrom.set(entry.track.id, entry.from);
             librarySourceOf.set(entry.track.id, keys.get(entry.track.id) ?? '');
@@ -289,8 +340,10 @@ export function installLibrary(core: LibraryCore): LibrarySection {
         const plan = libraryPlan;
         const alive = !!plan && Date.now() - plan.at < LIBRARY_TTL;
         if (plan && alive && plan.key === key && !(fresh && plan.used)) return Promise.resolve();
-        if (libraryPlanPromise) return libraryPlanPromise;
+        // Идёт сборка под прежний выбор или режим: дождаться её и собрать свой, а не отдать чужой план
+        if (libraryPlanPromise) return libraryPlanFor === key ? libraryPlanPromise : libraryPlanPromise.then(() => ensureLibraryPlan(fresh));
         libraryPlanFailed = false;
+        libraryPlanFor = key;
         const run = (async () => {
             const samePool = !!plan && alive && plan.key.startsWith(pick.join(',') + '|');
             const pool = samePool && plan ? plan.pool : await collectLibrary(pick);
@@ -313,19 +366,28 @@ export function installLibrary(core: LibraryCore): LibrarySection {
     }
     // Волна от своей музыки: пул впереди похожего; fromId играет первым, дальше показанный план с него по кругу
     async function startLibrary(fromId = 0): Promise<void> {
-        const pick = pickedSources();
-        if (!pick.length) {
+        if (!pickedSources().length) {
             showToast(T.libraryPick);
             return;
         }
         const request = core.nextSeedRequest();
         try {
             await Promise.all([ensureProfile(), ensureExclusions()]);
-            await ensureLibraryPlan(!fromId);
-            const plan = libraryPlan;
+            // Выбор или режим сменились, пока собирался план: план собирается под новые, это не сбой сайта
+            let plan: typeof libraryPlan = null;
+            for (let attempt = 0; attempt < 3 && !plan; attempt++) {
+                await ensureLibraryPlan(!fromId && attempt === 0);
+                if (request !== core.seedRequest() || core.disposed()) return;
+                if (libraryPlanFailed) break;
+                plan = libraryPlan?.key === planKey(pickedSources(), myMusic.mode) ? libraryPlan : null;
+            }
+            const pick = pickedSources();
             const mode = myMusic.mode;
-            if (request !== core.seedRequest() || core.disposed()) return;
-            if (!plan || plan.key !== planKey(pick, mode)) {
+            if (!pick.length) {
+                showToast(T.libraryPick);
+                return;
+            }
+            if (!plan) {
                 showToast(T.toastFailed);
                 return;
             }
@@ -506,14 +568,22 @@ export function installLibrary(core: LibraryCore): LibrarySection {
         play.disabled = !pick.length && !mine;
         const titles = el('div', 'scw-mix-title');
         const plan = shownPlan();
-        // Сколько сыграет список и сколько всего в выборе: перемешивание пропускает слышанное за три дня, после
-        // перезапуска и смены выбора в плане только оставшееся. Иначе «11 треков» спорили бы с 34 у плейлиста
-        const planned = plan ? plan.entries.filter((entry) => libraryKeeps(entry.track)).length : 0;
+        // Одно правило статуса (замечание владельца 28.09.2026): всё, что можно сыграть в выборе, и отдельно
+        // недоступное на этом аккаунте с подсказкой. Сыгранное не вычитается: «54 из 72» спорило бы с числом плейлиста
         const total = plan ? plan.pool.filter((entry) => libraryKeeps(entry.track)).length : 0;
-        const count = !plan ? '' : planned === total ? countText(total, T.tracksCount, T.lang)
-            : fillText(T.libraryOf, { planned: countText(planned, T.tracksCount, T.lang), total: String(total), n: String(planned), all: countText(total, T.tracksCount, T.lang) });
+        const blocked = plan ? libraryBlocked.get(plan.key.split('|')[0]) ?? 0 : 0;
         const now = playing ? T.libraryPlaying : T.libraryPaused;
-        const status = el('span', '', rebuilding || libraryPlanPromise ? T.libraryBuilding : mine ? (count ? now + ', ' + count : now) : count);
+        const status = el('span', '');
+        if (rebuilding || libraryPlanPromise) status.textContent = T.libraryBuilding;
+        else {
+            status.textContent = [mine ? now : '', plan ? countText(total, T.tracksCount, T.lang) : ''].filter(Boolean).join(', ');
+            if (plan && blocked) {
+                const off = el('span', 'scw-lib-off', countText(blocked, T.libraryUnavailable, T.lang));
+                off.dataset.tip = T.libraryUnavailableTip;
+                off.setAttribute('aria-description', T.libraryUnavailableTip);
+                status.append(', ', off);
+            }
+        }
         status.setAttribute('role', 'status');
         // Все источники сняты во время игры: доигрывает прежний выбор, пока не выбран новый
         const title = pick.length ? libraryTitle(pick) : mine ? core.seed()?.title ?? '' : '';
@@ -527,6 +597,7 @@ export function installLibrary(core: LibraryCore): LibrarySection {
             option.type = 'button';
             option.setAttribute('role', 'radio');
             option.setAttribute('aria-checked', String(myMusic.mode === value));
+            option.tabIndex = myMusic.mode === value ? 0 : -1;
             option.setAttribute('aria-description', tip);
             option.dataset.act = 'lib-mode';
             option.dataset.lmode = value;
@@ -594,7 +665,10 @@ export function installLibrary(core: LibraryCore): LibrarySection {
             }
             case 'lib-sources':
                 librarySourcesOpen = !librarySourcesOpen;
-                if (librarySourcesOpen) countLikes();
+                if (librarySourcesOpen) {
+                    countLikes();
+                    refreshLibrarySources();
+                }
                 render();
                 return;
             case 'lib-list':

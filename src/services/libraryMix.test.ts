@@ -46,11 +46,13 @@ it('артисты разносятся, пока есть кем разбави
     expect(spreadArtists([item(1, 7), item(2, 8), item(3, 7), item(4, 7)], artistOf).map((track) => track.id)).toEqual([1, 2, 3, 4]);
 });
 
-it('порядок: «По порядку» как собран, перемешивание без слышанного за 3 дня, а если выбито всё, то со слышанным', () => {
+it('порядок: «По порядку» как собран, в перемешивании слышанное за 3 дня уходит в конец, а не выпадает', () => {
     const pool = entries(Array.from({ length: 12 }, (_, i) => item(i + 1, i % 3)));
     expect(libraryOrder(pool, 'order', (track) => track.artist, () => true, Math.random).map((entry) => entry.track.id)).toEqual(pool.map((entry) => entry.track.id));
     const shuffled = libraryOrder(pool, 'shuffle', (track) => track.artist, (track) => track.id <= 3, seeded(7)).map((entry) => entry.track);
-    expect(shuffled.map((track) => track.id).sort((a, b) => a - b)).toEqual([4, 5, 6, 7, 8, 9, 10, 11, 12]);
-    for (let i = 1; i < shuffled.length; i++) expect(shuffled[i].artist).not.toBe(shuffled[i - 1].artist);
+    expect(shuffled.slice(0, 9).map((track) => track.id).sort((a, b) => a - b)).toEqual([4, 5, 6, 7, 8, 9, 10, 11, 12]);
+    expect(shuffled.slice(9).map((track) => track.id).sort((a, b) => a - b)).toEqual([1, 2, 3]);
+    for (let i = 1; i < 9; i++) expect(shuffled[i].artist).not.toBe(shuffled[i - 1].artist);
+    // Слышано всё: весь пул перемешан, ничего не теряется
     expect(libraryOrder(pool, 'smart', (track) => track.artist, () => true, seeded(3))).toHaveLength(12);
 });

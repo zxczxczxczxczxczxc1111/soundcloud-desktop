@@ -106,6 +106,9 @@ export function installMenu(core: MenuCore): MenuSection {
     }
     async function startSeed(kind: WaveLinkKind, target: MenuTarget): Promise<void> {
         const request = core.nextSeedRequest();
+        // Треки артиста и плейлиста грузятся секунды: плашка сразу, название, если оно уже известно
+        const name = (kind === 'track' ? target.track?.title : kind === 'artist' && target.kind === 'track' ? target.track?.user?.username : '')?.trim();
+        showToast(name ? T.seedCollecting.replace('{title}', name) : T.seedCollectingAny);
         try {
             await Promise.all([ensureProfile(), ensureExclusions()]);
             const loaded = await loadSeed(kind, target);
@@ -277,12 +280,21 @@ export function installMenu(core: MenuCore): MenuSection {
 
     let menu: HTMLElement | null = null;
     let menuFor: MenuTarget | null = null;
+    let menuReturn: HTMLElement | null = null;
     function closeMenu(): void {
         menu?.remove();
         menu = null;
         menuFor = null;
+        menuReturn = null;
+    }
+    // Escape, Tab и выбор пункта возвращают фокус туда, откуда меню открыто; клик мимо фокус не трогает
+    function closeMenuBack(): void {
+        const back = menuReturn;
+        closeMenu();
+        if (back?.isConnected) back.focus({ preventScroll: true });
     }
     function openMenu(target: MenuTarget, x: number, y: number, byKeyboard: boolean): void {
+        const from = document.activeElement;
         closeMenu();
         ensureStyle();
         const root = el('div', 'dropdownMenu g-z-index-overlay scw-menu');
@@ -306,7 +318,7 @@ export function installMenu(core: MenuCore): MenuSection {
         root.addEventListener('click', (event) => {
             const item = event.target instanceof Element ? event.target.closest<HTMLElement>('[data-menu]') : null;
             const chosen = menuFor;
-            closeMenu();
+            closeMenuBack();
             if (item?.dataset.menu && chosen) runMenu(item.dataset.menu, chosen);
         });
         root.addEventListener('keydown', (event) => {
@@ -320,7 +332,7 @@ export function installMenu(core: MenuCore): MenuSection {
                 buttons[next]?.focus();
             } else if (event.key === 'Escape' || event.key === 'Tab') {
                 event.preventDefault();
-                closeMenu();
+                closeMenuBack();
             }
         });
         document.body.append(root);
@@ -332,6 +344,8 @@ export function installMenu(core: MenuCore): MenuSection {
         root.style.transformOrigin = Math.max(0, x - left) + 'px ' + (above ? 'bottom' : 'top');
         menu = root;
         menuFor = target;
+        // Только для открытого с клавиатуры: после ПКМ возвращённый фокус сайт обводит рамкой
+        menuReturn = byKeyboard && from instanceof HTMLElement && from !== document.body ? from : null;
         // Фокус на пункте после ПКМ Chrome считает видимым, и сайт рисует ему синюю рамку
         if (byKeyboard) root.querySelector<HTMLElement>('[data-menu]')?.focus();
         else root.focus({ preventScroll: true });
@@ -369,7 +383,7 @@ export function installMenu(core: MenuCore): MenuSection {
         if (menu && !(event.target instanceof Node && menu.contains(event.target))) closeMenu();
     };
     const onDocumentKey = (event: KeyboardEvent): void => {
-        if (event.key === 'Escape' && menu) closeMenu();
+        if (event.key === 'Escape' && menu) closeMenuBack();
     };
     const onPageMenu = (event: MouseEvent): void => onContextMenu(event);
 
