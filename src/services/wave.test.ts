@@ -4,7 +4,7 @@ import {
     moodTags, normalizeTag, trackPath, parseGenres, pickSpaced, spacingKeys, spacingGap, freshEnough, reasonText, shapeSamples, topGenres, trackMatchesGenre,
     applyTasteReasons, tagKeys, tasteMaps, tasteOrder, tasteReason, tasteScore, type TasteMaps, type WaveCandidate, type WaveFilter, type WaveTrack,
     countText, forgottenPicks, localDay, pickFinds, tasteGroups, capPerArtist, artistNames, isNewArtist, spreadBy, genreCanon, genreParts, genreMain,
-    rememberRecent, retryDelay,
+    rememberRecent, retryDelay, genreEnglish, tagShares,
 } from './wave';
 import { copyKeys, familyKey, versionKey } from './trackIdentity';
 
@@ -139,8 +139,47 @@ describe('жанр', () => {
     it('сравнивает без регистра, пробелов и знаков, знает синонимы', () => {
         expect(normalizeTag('Witch-House ')).toBe('witchhouse');
         expect(normalizeTag('Drum & Bass')).toBe('drumandbass');
-        expect(genreKeys('witch house')).toEqual(['witchhouse', 'wtchhs', 'witchhaus']);
+        expect(genreKeys('witch house')).toEqual(['witchhouse']);
+        expect(genreKeys('wtchhs')).toEqual(['witchhouse']);
         expect(genreKeys('  ')).toEqual([]);
+    });
+    it('В2.7: rock находит Alternative Rock, hip hop находит Rap, phonk находит Fonk, bass не находит Drum & Bass', () => {
+        const match = (genre: string, input: string, tags = ''): boolean => trackMatchesGenre(track(1, { genre, tag_list: tags }), genreKeysFor(input));
+        expect(match('Alternative Rock', 'rock')).toBe(true);
+        expect(match('Hard Rock', 'rock')).toBe(true);
+        expect(match('Rap', 'hip hop')).toBe(true);
+        expect(match('Hip Hop', 'rap')).toBe(true);
+        expect(match('Hip-hop & Rap', 'rap')).toBe(true);
+        expect(match('Russian Rap', 'hip hop')).toBe(true);
+        expect(match('Trap', 'rap')).toBe(false);
+        expect(match('Fonk', 'phonk')).toBe(true);
+        expect(match('Brazilian Phonk', 'phonk')).toBe(true);
+        expect(match('Drum & Bass', 'bass')).toBe(false);
+        expect(match('Drum and Bass', 'bass')).toBe(false);
+        expect(match('Future Bass', 'bass')).toBe(true);
+        expect(match('Drum & Bass', 'dnb')).toBe(true);
+        expect(match('Dance & EDM', 'edm')).toBe(true);
+        expect(match('Dance & EDM', 'dance')).toBe(true);
+        expect(match('R&B & Soul', 'soul')).toBe(true);
+        expect(match('R&B & Soul', 'r&b')).toBe(true);
+        expect(match('Rock & Roll', 'roll')).toBe(false);
+        expect(match('Electronic', 'lofi', '"lo fi" beats')).toBe(true);
+        expect(match('Witch House', 'house')).toBe(false);
+        expect(match('Tech House', 'house')).toBe(true);
+    });
+    it('В2.7: русские названия жанров сопоставляются с метками, на сайт уходят по-английски', () => {
+        const match = (genre: string, input: string): boolean => trackMatchesGenre(track(1, { genre }), genreKeysFor(input));
+        expect(match('Hip-hop & Rap', 'рэп')).toBe(true);
+        expect(match('Phonk', 'фонк')).toBe(true);
+        expect(match('Electronic', 'электроника')).toBe(true);
+        expect(match('Drum & Bass', 'драм-н-бейс')).toBe(true);
+        expect(match('Русский рэп', 'hip hop')).toBe(true);
+        expect(match('Trap', 'рэп')).toBe(false);
+        expect(genreEnglish('Рэп')).toBe('rap');
+        expect(genreEnglish('драм-н-бейс')).toBe('drum & bass');
+        expect(genreEnglish('witch house')).toBe('witch house');
+        expect(genreCanon('рэп')).toBe('hiphop');
+        expect(tagShares('Электроника', 'фонк')).toEqual([['electronic', 1], ['phonk', 0.5]]);
     });
     it('ищет в жанре и тегах, короткий ключ только целиком', () => {
         const keys = genreKeys('witch house');
@@ -191,7 +230,7 @@ describe('жанр', () => {
         expect(parseGenres(' / , ')).toEqual([]);
         expect(formatGenres(parseGenres('techno,dark techno'))).toBe('techno / dark techno');
         const keys = genreKeysFor('techno / witch house');
-        expect(keys).toEqual(['techno', 'witchhouse', 'wtchhs', 'witchhaus']);
+        expect(keys).toEqual(['techno', 'witchhouse']);
         expect(trackMatchesGenre(track(1, { genre: 'wtchhs' }), keys)).toBe(true);
         expect(trackMatchesGenre(track(2, { genre: 'Techno' }), keys)).toBe(true);
         expect(trackMatchesGenre(track(3, { genre: 'House' }), keys)).toBe(false);

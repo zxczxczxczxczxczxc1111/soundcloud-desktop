@@ -841,6 +841,24 @@ it('несколько жанров через запятую: подбор по
     expect(section.querySelector('.scw-hint')?.textContent).toBe('Similar to what you play and like, in techno / dark techno');
 });
 
+it('В2.7: жанр по-русски подписан как введён, а на сайт уходит по-английски', async () => {
+    const site = fakeSite(relatedTracks);
+    window.eval(waveScript());
+    await vi.advanceTimersByTimeAsync(100);
+    const section = document.getElementById('sc-wave')!;
+    section.querySelector<HTMLElement>('[data-act="genre"]')!.click();
+    const input = section.querySelector<HTMLInputElement>('[data-role="genre-input"]')!;
+    input.value = 'рэп, фонк';
+    input.dispatchEvent(new Event('input', { bubbles: true }));
+    // Список подсказок перерисовывается вместе с полем: Enter идёт в новое
+    section.querySelector<HTMLInputElement>('[data-role="genre-input"]')!.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }));
+    await vi.advanceTimersByTimeAsync(100);
+    const tags = site.api.callEndpoint.mock.calls.filter(([name]) => name === 'recentTracks').map(([, path]) => (path as { tag?: string }).tag);
+    expect(tags).toEqual(expect.arrayContaining(['rap', 'phonk']));
+    expect(tags).not.toContain('рэп');
+    expect(section.querySelector('.scw-genre .scw-label')?.textContent).toBe('рэп / фонк');
+});
+
 it('написания одного жанра в выпадающем списке одной строкой', async () => {
     fakeSite(relatedTracks);
     localStorage.setItem('scDesktopWave', JSON.stringify({ recentGenres: ['witch house', 'witchhouse', 'wtchhs', 'techno'] }));

@@ -35,7 +35,7 @@ const { classifyFailure, createDispatcher, createSearchCache, likeItems, entityI
 const { siteRequires } = siteModules;
 // Чистые функции волны разложены по файлам. Здесь они разбираются в константы по той же причине: installWave зовёт их по голому имени
 const { fillText, reasonText, localDay, countText, formatTime, shapeSamples } = waveTexts;
-const { normalizeTag, tagKeys, tagShares, genreKeys, genreCanon, genreParts, genreMain, parseGenres, formatGenres, genreKeysFor, trackMatchesGenre, topGenres } = waveGenres;
+const { normalizeTag, tagKeys, tagShares, genreKeys, genreEnglish, genreCanon, genrePhrases, genreParts, genreMain, parseGenres, formatGenres, genreKeysFor, trackMatchesGenre, topGenres } = waveGenres;
 const { classifyLink, canonicalUrl, trackPath, artworkUrl, coversOf, playEnd, siteSource, retryDelay } = waveLinks;
 const { trackArtist, rememberRecent, isWaveEligible, freshEnough, acceptCandidate, pickSpaced, spacingKeys, spacingGap, shuffleInPlace, capPerArtist, forgottenPicks, artistNames, isNewArtist, spreadBy } = wavePicks;
 const { tasteMaps, tasteScore, tasteOrder, tasteReason, applyTasteReasons, tasteGroups, moodTags, pickFinds } = waveTaste;
@@ -48,7 +48,7 @@ const { installMenu } = menuSectionModule;
 // Прежние импорты из wave.ts остаются рабочими
 export type { WaveTrack, WaveMode, OpenTrackResult, WaveReason, WaveCandidate, WaveFilter, WaveLinkKind, WaveTexts, TasteMaps, TasteScore, TasteGroup } from './waveTypes';
 export { WAVE_TEXTS, fillText, reasonText, localDay, countText, formatTime, shapeSamples } from './waveTexts';
-export { normalizeTag, tagKeys, tagShares, genreKeys, genreCanon, genreParts, genreMain, parseGenres, formatGenres, genreKeysFor, trackMatchesGenre, topGenres } from './waveGenres';
+export { normalizeTag, tagKeys, tagShares, genreKeys, genreEnglish, genreCanon, genrePhrases, genreParts, genreMain, parseGenres, formatGenres, genreKeysFor, trackMatchesGenre, topGenres } from './waveGenres';
 export { classifyLink, canonicalUrl, trackPath, artworkUrl, playEnd, siteSource, retryDelay } from './waveLinks';
 export { trackArtist, rememberRecent, isWaveEligible, freshEnough, acceptCandidate, pickSpaced, spacingKeys, spacingGap, shuffleInPlace, capPerArtist, forgottenPicks, artistNames, isNewArtist, spreadBy } from './wavePicks';
 export { tasteMaps, tasteScore, tasteOrder, tasteReason, applyTasteReasons, tasteGroups, moodTags, pickFinds } from './waveTaste';
@@ -1288,8 +1288,10 @@ export function installWave(config: WaveConfig, createPlayback: typeof installPl
     function rerankPool(): void {
         if (pool.length > 1) pool = tasteOrder(pool, taste ?? EMPTY_TASTE, Math.random, sessionScore);
     }
-    async function genrePage(source: 'recent' | 'search', tag: string): Promise<WaveTrack[]> {
+    // Русское название жанра («рэп», «фонк») уходит на сайт по-английски: метки там почти все латиницей
+    async function genrePage(source: 'recent' | 'search', label: string): Promise<WaveTrack[]> {
         const own = generation;
+        const tag = genreEnglish(label);
         const cursor = cursors.get(source + ':' + tag) ?? { query: null, done: false };
         if (cursor.done) return [];
         const body = source === 'recent'
@@ -3648,7 +3650,7 @@ export function installWave(config: WaveConfig, createPlayback: typeof installPl
 
 // Помощники идут на страницу объявлениями рядом со скриптом: так они видны installWave и друг другу
 const pageHelpers = [
-    normalizeTag, tagKeys, tagShares, genreKeys, genreCanon, genreParts, genreMain, parseGenres, formatGenres, genreKeysFor, classifyLink, canonicalUrl, trackMatchesGenre, trackArtist, rememberRecent, retryDelay,
+    normalizeTag, tagKeys, tagShares, genreKeys, genreEnglish, genreCanon, genrePhrases, genreParts, genreMain, parseGenres, formatGenres, genreKeysFor, classifyLink, canonicalUrl, trackMatchesGenre, trackArtist, rememberRecent, retryDelay,
     isWaveEligible, freshEnough, acceptCandidate, pickSpaced, spacingKeys, spacingGap, tasteMaps, tasteScore, tasteOrder, tasteReason, applyTasteReasons, shuffleInPlace, topGenres, fillText, reasonText, shapeSamples,
     artworkUrl, coversOf, formatTime, playEnd, siteSource, moodTags, trackPath, localDay, countText, tasteGroups, capPerArtist, forgottenPicks, artistNames, isNewArtist, spreadBy, pickFinds,
     ...identity.identityHelpers, ...sources.sourceHelpers, ...libraryMix.libraryHelpers, siteRequires, installPlaybackPage, installPlaybackRecovery,

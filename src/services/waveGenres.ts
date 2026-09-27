@@ -37,22 +37,28 @@ export function tagShares(genre: string | null | undefined, tagList: string | nu
     return [...genres.map((key): [string, number] => [key, 1 / genres.length]), ...tags.map((key): [string, number] => [key, tagTotal / tags.length])];
 }
 
+// Ключ жанра из ввода в том же написании, что у склейки: «hip hop», «rap» и «рэп» это hiphop
 export function genreKeys(genre: string): string[] {
-    const groups = [
-        ['witchhouse', 'wtchhs', 'witchhaus'],
-        ['drumandbass', 'dnb', 'drumnbass', 'dandb'],
-        ['rnb', 'randb', 'rhythmandblues'],
-        ['lofi', 'lowfi'],
-        ['ukgarage', 'ukg'],
-        ['hiphop', 'hiphoprap'],
-    ];
-    const key = normalizeTag(genre);
-    if (!key) return [];
-    const group = groups.find((list) => list.includes(key));
-    return group ? [key, ...group.filter((item) => item !== key)] : [key];
+    const key = genreCanon(normalizeTag(genre));
+    return key ? [key] : [];
 }
 
-// Одно написание жанра для полки и истории: «Hip-hop & Rap», «hiphoprap» и «rap» это hiphop.
+// Русские названия основных жанров по-английски: для поиска SoundCloud и склейки. Незнакомое возвращается как есть
+export function genreEnglish(label: string): string {
+    const ru: Record<string, string> = {
+        рэп: 'rap', реп: 'rap', хипхоп: 'hip hop', трэп: 'trap', треп: 'trap', фонк: 'phonk', дрилл: 'drill', дрил: 'drill',
+        электроника: 'electronic', электронная: 'electronic', электроннаямузыка: 'electronic', электро: 'electro', хаус: 'house', дипхаус: 'deep house',
+        техно: 'techno', транс: 'trance', дабстеп: 'dubstep', драмнбейс: 'drum & bass', драмнбэйс: 'drum & bass', драмэндбейс: 'drum & bass', днб: 'drum & bass',
+        рок: 'rock', альтернатива: 'alternative', альтрок: 'alternative rock', альтернативныйрок: 'alternative rock', инди: 'indie', поп: 'pop',
+        метал: 'metal', металл: 'metal', панк: 'punk', джаз: 'jazz', блюз: 'blues', соул: 'soul', фанк: 'funk', диско: 'disco', рнб: 'r&b',
+        эмбиент: 'ambient', амбиент: 'ambient', лоуфай: 'lofi', лофай: 'lofi', классика: 'classical', классическая: 'classical', кантри: 'country',
+        регги: 'reggae', реггетон: 'reggaeton', шугейз: 'shoegaze', синтвейв: 'synthwave', витчхаус: 'witch house', гараж: 'uk garage', укгараж: 'uk garage',
+        эдм: 'edm', танцевальная: 'dance', саундтрек: 'soundtrack', чилл: 'chill', чиллаут: 'chillout', гиперпоп: 'hyperpop',
+    };
+    return ru[normalizeTag(label)] ?? label;
+}
+
+// Одно написание жанра для полки, истории и фильтра по жанру: «Hip-hop & Rap», «hiphoprap», «rap» и «рэп» это hiphop.
 // Таблица внутри функции: на страницу функция уходит текстом
 export function genreCanon(key: string): string {
     const same: Record<string, string> = {
@@ -60,7 +66,25 @@ export function genreCanon(key: string): string {
         dnb: 'drumandbass', drumnbass: 'drumandbass', dandb: 'drumandbass', randb: 'rnb', rhythmandblues: 'rnb', randbandsoul: 'rnb', rnbandsoul: 'rnb', lowfi: 'lofi',
         ukg: 'ukgarage', edm: 'danceandedm', wtchhs: 'witchhouse', witchhaus: 'witchhouse', fonk: 'phonk',
     };
-    return same[key] ?? key;
+    // Русское название проверяется, только если в ключе есть не латиница: таблица строится на каждый вызов
+    const base = /[^a-z0-9]/.test(key) ? normalizeTag(genreEnglish(key)) : key;
+    return same[base] ?? base;
+}
+
+// Части жанра для фильтра: режется по « - », /, запятой, ;, | и +, по & только известные пары сайта
+// («Hip-hop & Rap», «Dance & EDM», «R&B & Soul»), иначе bass нашёлся бы в Drum & Bass
+export function genrePhrases(label: string): string[] {
+    const pairs = ['hiphopandrap', 'danceandedm', 'randbandsoul', 'jazzandblues', 'folkandsingersongwriter'];
+    const phrases: string[] = [];
+    for (const part of label.split(/\s+-\s+|[/,;|+]+/)) {
+        const text = part.trim();
+        if (!text) continue;
+        phrases.push(text);
+        if (!pairs.includes(normalizeTag(text))) continue;
+        const halves = text.split(/\s+&\s+/);
+        for (const half of halves.length > 1 ? halves : text.split('&')) if (half.trim()) phrases.push(half.trim());
+    }
+    return phrases;
 }
 
 // Ключи жанра для группировки. Составной жанр сайта («Hip Hop/Rap - Trap») режется по « - », /, запятой, ; и |,
@@ -122,15 +146,24 @@ export function genreKeysFor(genre: string | null): string[] {
 // у нишевых жанров (witch house, phonk) в поле жанра часто стоит просто Electronic
 export function trackMatchesGenre(track: WaveTrack, keys: string[], strict = false): boolean {
     if (!keys.length) return true;
-    const parts: string[] = [];
-    const genre = track.genre ?? '';
-    parts.push(normalizeTag(genre));
-    for (const part of genre.split(/[/,&|+;]/)) parts.push(normalizeTag(part));
-    if (!strict || !parts.some(Boolean)) for (const match of (track.tag_list ?? '').matchAll(/"([^"]+)"|(\S+)/g)) parts.push(normalizeTag(match[1] ?? match[2] ?? ''));
-    // Короткий ключ только целиком: rap не должен находиться в trap. Длинный ищется и внутри (darkwitchhouse это witch house),
-    // кроме жанров, которые только звучат похоже: witch house не house
-    const unlike: Record<string, string[]> = { house: ['witchhouse', 'wtchhs'] };
-    return parts.some((part) => part && keys.some((key) => part === key || (key.length >= 5 && part.includes(key) && !(unlike[key] ?? []).some((other) => part.includes(other)))));
+    const wanted = [...new Set(keys.map((key) => genreCanon(normalizeTag(key))).filter(Boolean))];
+    const phrases = genrePhrases(track.genre ?? '');
+    if (!strict || !phrases.length) for (const match of (track.tag_list ?? '').matchAll(/"([^"]+)"|(\S+)/g)) phrases.push(...genrePhrases(match[1] ?? match[2] ?? ''));
+    // Ключ и часть сравниваются в одном написании (hip hop находит Rap, phonk находит Fonk). Короткий ключ совпадает с частью
+    // целиком или с её словом (rock в Alternative Rock, но rap не в Trap), длинный ищется и внутри (darkwitchhouse это witch house).
+    // У части с & слов нет, и жанры, которые только звучат похоже, не совпадают: witch house не house, drum and bass не bass
+    const unlike: Record<string, string[]> = { house: ['witchhouse'], bass: ['drumandbass'] };
+    return phrases.some((phrase) => {
+        const whole = genreCanon(normalizeTag(phrase));
+        if (!whole) return false;
+        const words = phrase.includes('&') ? [] : phrase.split(/\s+/).map(normalizeTag).filter(Boolean);
+        const pieces = [...words, ...words.slice(1).map((word, i) => words[i] + word)].map(genreCanon);
+        return wanted.some((key) => {
+            if (whole === key) return true;
+            if ((unlike[key] ?? []).some((other) => whole.includes(other))) return false;
+            return (key.length >= 5 && whole.includes(key)) || pieces.includes(key);
+        });
+    });
 }
 
 // Самые частые жанры лайков для выпадающего списка, в том написании, что встречается чаще
