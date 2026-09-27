@@ -70,6 +70,9 @@ export const WAVE_TEXTS: Record<'ru' | 'en', WaveTexts> = {
         libraryList: 'Список треков', libraryMore: 'Показать ещё', libraryModes: 'Порядок',
         librarySources: 'Источники', libraryPlaying: 'Играет', libraryPaused: 'На паузе', libraryPlaylists: 'плейлист|плейлиста|плейлистов', libraryHere: 'Сейчас играет отсюда', libraryOf: '{planned} из {total}',
         whyLibrary: 'Из плейлиста {name}', whyLibraryLikes: 'Из твоих лайков', seedLibrary: 'Моя музыка: {seed}',
+        presets: 'Настроение', presetAll: 'Всё', moodHappy: 'Весёлое', moodSad: 'Грустное', moodAggressive: 'Агрессивное', moodCalm: 'Спокойное',
+        moodEnergetic: 'Энергичное', hintPreset: ', настроение: {mood}', presetShort: 'Подходящего в твоём вкусе мало, добавляю ближайшее',
+        whyMoodTag: 'Автор отметил: {tag}',
     },
     en: {
         wave: 'My Wave', similar: 'Similar', fresh: 'New', anyGenre: 'Any genre', genreInput: 'Genres, comma separated', fromLikes: 'From your likes',
@@ -138,6 +141,9 @@ export const WAVE_TEXTS: Record<'ru' | 'en', WaveTexts> = {
         libraryList: 'Track list', libraryMore: 'Show more', libraryModes: 'Order',
         librarySources: 'Sources', libraryPlaying: 'Playing', libraryPaused: 'Paused', libraryPlaylists: 'playlist|playlists|playlists', libraryHere: 'Playing from here', libraryOf: '{n} of {all}',
         whyLibrary: 'From playlist {name}', whyLibraryLikes: 'From your likes', seedLibrary: 'My music: {seed}',
+        presets: 'Mood', presetAll: 'All', moodHappy: 'Happy', moodSad: 'Sad', moodAggressive: 'Aggressive', moodCalm: 'Calm',
+        moodEnergetic: 'Energetic', hintPreset: ', mood: {mood}', presetShort: 'Few matches in your taste, adding the closest ones',
+        whyMoodTag: 'Tagged {tag} by the author',
     },
 };
 
@@ -163,6 +169,7 @@ export function reasonText(reason: WaveReason, texts: WaveTexts): string {
         case 'forgotten': return texts.whyForgotten;
         case 'group': return fillText(texts.whyGroup, { name: reason.name });
         case 'version': return fillText(texts.whyVersion, { seed: reason.seed });
+        case 'moodTag': return fillText(texts.whyMoodTag, { tag: reason.tag });
         case 'radar': return reason.why || texts.whyRadar;
         case 'library': return reason.name ? fillText(texts.whyLibrary, { name: reason.name }) : texts.whyLibraryLikes;
     }

@@ -582,6 +582,87 @@ it('В2.13: жанр без зёрен по полю жанра берёт зё�
     expect(related.every((id) => [1, 2, 3].includes(id))).toBe(true);
 });
 
+it('В3: ряд пресетов под шапкой, выбранный подсвечен и запоминается, подсказка называет настроение', async () => {
+    fakeSite(relatedTracks);
+    window.eval(waveScript());
+    await vi.advanceTimersByTimeAsync(100);
+    const section = document.getElementById('sc-wave')!;
+    const chips = (): HTMLElement[] => [...section.querySelectorAll<HTMLElement>('.scw-moods [data-preset]')];
+    expect(chips().map((chip) => chip.textContent)).toEqual(['All', 'Happy', 'Sad', 'Aggressive', 'Calm', 'Energetic']);
+    expect(chips().filter((chip) => chip.getAttribute('aria-checked') === 'true').map((chip) => chip.dataset.preset)).toEqual(['all']);
+    section.querySelector<HTMLElement>('[data-preset="sad"]')!.click();
+    await vi.advanceTimersByTimeAsync(100);
+    expect(chips().filter((chip) => chip.getAttribute('aria-checked') === 'true').map((chip) => chip.dataset.preset)).toEqual(['sad']);
+    expect(JSON.parse(localStorage.getItem('scDesktopWave') ?? '{}').preset).toBe('sad');
+    expect(section.querySelector('.scw-hint')?.textContent).toBe('Similar to what you play and like, mood: sad');
+    section.querySelector<HTMLElement>('[data-preset="all"]')!.click();
+    await vi.advanceTimersByTimeAsync(100);
+    expect(JSON.parse(localStorage.getItem('scDesktopWave') ?? '{}').preset).toBeNull();
+});
+
+it('В3: пресет берёт подходящее настроению, ищет по меткам настроения, остальное идёт добивкой с честной строкой', async () => {
+    localStorage.setItem('scDesktopWave', JSON.stringify({ preset: 'sad' }));
+    const mixed = (seed: number): WaveTrack[] => Array.from({ length: 8 }, (_, i) => ({ id: seed * 1000 + i, kind: 'track', user_id: seed * 10 + i, duration: 200000, title: 'Rel ' + seed + '-' + i, genre: i < 3 ? 'Emo' : 'Techno' }));
+    const site = fakeSite(mixed);
+    window.eval(waveScript());
+    await vi.advanceTimersByTimeAsync(100);
+    document.querySelector<HTMLButtonElement>('#sc-wave .scw-play')!.click();
+    await vi.advanceTimersByTimeAsync(1100);
+    const calls = site.api.callEndpoint.mock.calls;
+    expect(calls.filter(([name]) => name === 'searchCategory').map(([, , query]) => (query as Record<string, string>)['filter.genre_or_tag'])).toEqual(expect.arrayContaining(['sad', 'sad rap', 'melancholic']));
+    expect(calls).toContainEqual(['recentTracks', { tag: 'sad' }, { limit: 50 }]);
+    const genres = site.player.getQueue().slice().map((item) => (item.sound as unknown as { attributes: WaveTrack }).attributes.genre);
+    // Сначала всё грустное, техно только добивкой после него
+    const firstTechno = genres.indexOf('Techno');
+    expect(firstTechno).toBeGreaterThan(0);
+    expect(genres.slice(0, firstTechno).every((genre) => genre === 'Emo')).toBe(true);
+    expect(genres.slice(firstTechno).every((genre) => genre === 'Techno')).toBe(true);
+    expect(document.querySelector('#sc-wave .scw-hint')?.textContent).toBe('Similar to what you play and like, mood: sad. Few matches in your taste, adding the closest ones');
+});
+
+it('В3: ранний пропуск в пресете опускает аккаунт и теги именно в этом пресете, сигнал пишет пресет', async () => {
+    localStorage.setItem('scDesktopWave', JSON.stringify({ preset: 'sad' }));
+    const sad = (seed: number): WaveTrack[] => Array.from({ length: 8 }, (_, i) => ({ id: seed * 1000 + i, kind: 'track', user_id: seed * 10 + i, duration: 200000, title: 'Rel ' + seed + '-' + i, genre: 'Emo' }));
+    const site = fakeSite(sad);
+    const bridge = fakeBridge();
+    window.eval(waveScript());
+    await vi.advanceTimersByTimeAsync(100);
+    document.querySelector<HTMLButtonElement>('#sc-wave .scw-play')!.click();
+    await vi.advanceTimersByTimeAsync(1100);
+    const skippedArtist = (site.player.getCurrentSound() as unknown as { attributes: WaveTrack }).attributes.user_id;
+    const next = nextButton();
+    await skipNow(site, next);
+    await vi.advanceTimersByTimeAsync(6000);
+    const marks = JSON.parse(localStorage.getItem('scDesktopWaveMoods') ?? '{}') as Record<string, { a: Record<string, number>; t: Record<string, number> }>;
+    expect(marks.sad.a[String(skippedArtist)]).toBe(1);
+    expect(marks.sad.t.emo).toBeCloseTo(1);
+    expect(marks.calm).toBeUndefined();
+    const signals = bridge.waveSignals.add.mock.calls.flatMap(([, list]) => list) as PlaySignal[];
+    expect(signals.find((signal) => signal.end === 'skip')).toEqual(expect.objectContaining({ preset: 'sad', endedBy: 'user' }));
+    next.remove();
+});
+
+it('В3: у волны от трека ряда пресетов нет, пресет её не фильтрует', async () => {
+    localStorage.setItem('scDesktopWave', JSON.stringify({ preset: 'sad' }));
+    const site = fakeSite(relatedTracks, siteExtra);
+    fakeExclusions();
+    const row = listRow();
+    window.eval(waveScript());
+    await vi.advanceTimersByTimeAsync(100);
+    // Предпросмотр обычной волны при загрузке идёт с пресетом; дальше считается только волна от трека
+    site.api.callEndpoint.mockClear();
+    rightClick(row.querySelector('.soundTitle__title')!);
+    choose('wave-track');
+    await vi.advanceTimersByTimeAsync(100);
+    expect(document.querySelector('#sc-wave .scw-moods')).toBeNull();
+    const queued = site.player.replaceQueue.mock.calls[site.player.replaceQueue.mock.calls.length - 1][0] as FakeItem[];
+    // Похожие без жанра и меток настроения всё равно играют, без добивки
+    expect(queued.length).toBeGreaterThan(3);
+    // Текстовый поиск версий зерна идёт как обычно, поиска по меткам настроения нет
+    expect(site.api.callEndpoint.mock.calls.some(([, , query]) => 'filter.genre_or_tag' in (query as object))).toBe(false);
+    expect(site.api.callEndpoint.mock.calls.some(([name]) => name === 'recentTracks')).toBe(false);
+});
+
 it('волна от трека скрытого артиста подбирает похожих, сам артист в неё не попадает', async () => {
     const site = fakeSite((seed) => [...relatedTracks(seed), { id: seed * 1000 + 900, kind: 'track', user_id: 900, duration: 200000, title: 'Art ' + seed }], siteExtra);
     fakeExclusions([], [{ id: 900, title: 'Art', url: 'https://soundcloud.com/art' }]);

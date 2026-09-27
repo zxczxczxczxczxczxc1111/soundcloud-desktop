@@ -104,6 +104,8 @@
             waveOrigin: 'Откуда взят',
             waveSlot: 'Место в выдаче',
             slots: { first: 'Первые три', later: 'С четвёртого' },
+            wavePreset: 'Настроение',
+            presets: { happy: 'Весёлое', sad: 'Грустное', aggressive: 'Агрессивное', calm: 'Спокойное', energetic: 'Энергичное' },
             sources: {
                 similar: 'Моя волна: похожее', fresh: 'Моя волна: новое', track: 'Волна по треку', artist: 'Волна по артисту', playlist: 'Волна по плейлисту', daily: 'Находки дня',
                 forgotten: 'Давно не слушал', group: 'Твой вкус', tracks: 'Волна по подборке', radar: 'Радар релизов', library: 'В «Моей музыке»',
@@ -112,6 +114,7 @@
                 similar: 'Похоже на трек', fresh: 'Новое, похоже на трек', newArtist: 'Новый артист', genreFresh: 'Свежее в жанре', genrePopular: 'Популярное в жанре',
                 genreSimilar: 'Жанр и похожее', artistTrack: 'Треки артиста', mood: 'В духе трека', tasteArtist: 'Любимый артист', tasteTag: 'Любимый тег',
                 daily: 'Находка дня', forgotten: 'Давно не звучал', group: 'Твой вкус', version: 'Другая версия', radar: 'Радар релизов', restored: 'Сохранённая очередь',
+                moodTag: 'Метка настроения',
                 '': 'Не записана',
             },
         },
@@ -210,6 +213,8 @@
             waveOrigin: 'Found via',
             waveSlot: 'Place in the batch',
             slots: { first: 'First three', later: 'Fourth on' },
+            wavePreset: 'Mood',
+            presets: { happy: 'Happy', sad: 'Sad', aggressive: 'Aggressive', calm: 'Calm', energetic: 'Energetic' },
             sources: {
                 similar: 'My Wave: Similar', fresh: 'My Wave: New', track: 'Wave from track', artist: 'Wave from artist', playlist: 'Wave from playlist', daily: 'Daily finds',
                 forgotten: 'Not played in a while', group: 'Your taste', tracks: 'Wave from picks', radar: 'Release Radar', library: 'Inside My music',
@@ -218,6 +223,7 @@
                 similar: 'Similar to a track', fresh: 'New, similar to a track', newArtist: 'New artist', genreFresh: 'Fresh in genre', genrePopular: 'Popular in genre',
                 genreSimilar: 'Genre and similar', artistTrack: 'Artist’s tracks', mood: 'In the spirit of a track', tasteArtist: 'Favourite artist', tasteTag: 'Favourite tag',
                 daily: 'Daily find', forgotten: 'Not played in a while', group: 'Your taste', version: 'Another version', radar: 'Release Radar', restored: 'Saved queue',
+                moodTag: 'Mood tag',
                 '': 'Not recorded',
             },
         },
@@ -588,7 +594,8 @@
             body =
                 waveFigures(q) + (q.days.length ? waveDays(q) : waveWeeks(q)) +
                 '<div class="grid2 wq-part"><div>' + waveTable(T.waveSource, q.sources, (key) => T.sources[key] || key) +
-                waveTable(T.waveSlot, slots, (key) => T.slots[key]) + '</div>' +
+                waveTable(T.waveSlot, slots, (key) => T.slots[key]) +
+                (q.presets ? waveTable(T.wavePreset, q.presets, (key) => T.presets[key] || key) : '') + '</div>' +
                 '<div>' + waveTable(T.waveReason, q.reasons, (key) => T.reasons[key] || key) +
                 // Откуда взят трек до подмены причиной по вкусу: «Любимый артист» и «Любимый тег» ставятся лучшим по оценке
                 (q.origins && q.origins.some((s) => s.key && s.plays) ? waveTable(T.waveOrigin, q.origins, (key) => T.reasons[key] || key) : '') + '</div></div>';

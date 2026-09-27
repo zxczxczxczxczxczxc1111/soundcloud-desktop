@@ -21,6 +21,8 @@ import * as waveGenres from './waveGenres';
 import * as waveLinks from './waveLinks';
 import * as wavePicks from './wavePicks';
 import * as waveTaste from './waveTaste';
+import * as waveMood from './waveMood';
+import type { WaveMood, MoodScores, ArtistMoods } from './waveMood';
 import * as versionsSection from './wave/versions';
 import * as librarySectionModule from './wave/library';
 import * as radarSectionModule from './wave/radar';
@@ -39,6 +41,7 @@ const { normalizeTag, tagKeys, tagShares, genreKeys, genreEnglish, genreCanon, g
 const { classifyLink, canonicalUrl, trackPath, artworkUrl, coversOf, playEnd, siteSource, retryDelay } = waveLinks;
 const { trackArtist, rememberRecent, isWaveEligible, freshEnough, acceptCandidate, pickSpaced, spacingKeys, spacingGap, shuffleInPlace, capPerArtist, forgottenPicks, artistNames, isNewArtist, spreadBy } = wavePicks;
 const { tasteMaps, tasteScore, tasteOrder, tasteReason, applyTasteReasons, tasteGroups, moodTags, pickFinds } = waveTaste;
+const { moodList, moodDictionary, trackMood, artistMoods, neighborMood, moodScore } = waveMood;
 // Разделы страницы волны в wave/: объявления уходят на страницу рядом с installWave и зовутся по голому имени
 const { installVersions } = versionsSection;
 const { installLibrary } = librarySectionModule;
@@ -52,6 +55,8 @@ export { normalizeTag, tagKeys, tagShares, genreKeys, genreEnglish, genreCanon, 
 export { classifyLink, canonicalUrl, trackPath, artworkUrl, playEnd, siteSource, retryDelay } from './waveLinks';
 export { trackArtist, rememberRecent, isWaveEligible, freshEnough, acceptCandidate, pickSpaced, spacingKeys, spacingGap, shuffleInPlace, capPerArtist, forgottenPicks, artistNames, isNewArtist, spreadBy } from './wavePicks';
 export { tasteMaps, tasteScore, tasteOrder, tasteReason, applyTasteReasons, tasteGroups, moodTags, pickFinds } from './waveTaste';
+export { moodList, moodDictionary, trackMood, artistMoods, neighborMood, moodScore } from './waveMood';
+export type { WaveMood, MoodScores, ArtistMoods } from './waveMood';
 
 export interface SiteSound {
     id: number;
@@ -183,21 +188,43 @@ export function installWave(config: WaveConfig, createPlayback: typeof installPl
     let mode: WaveMode = 'similar';
     let genre: string | null = null;
     let recentGenres: string[] = [];
+    // Пресет настроения (В3): null это «Всё»
+    let preset: WaveMood | null = null;
     try {
-        const saved = JSON.parse(localStorage.getItem(STORE_KEY) || '{}') as { mode?: unknown; genre?: unknown; recentGenres?: unknown };
+        const saved = JSON.parse(localStorage.getItem(STORE_KEY) || '{}') as { mode?: unknown; genre?: unknown; recentGenres?: unknown; preset?: unknown };
         if (saved.mode === 'fresh') mode = 'fresh';
         if (typeof saved.genre === 'string') genre = formatGenres(parseGenres(saved.genre)) || null;
         if (Array.isArray(saved.recentGenres)) recentGenres = saved.recentGenres.filter((item): item is string => typeof item === 'string').slice(0, 6);
+        preset = moodList().find((mood) => mood === saved.preset) ?? null;
     } catch (error) {
         console.warn('Волна: настройки не прочитаны', error);
     }
     const saveSettings = (): void => {
         try {
-            localStorage.setItem(STORE_KEY, JSON.stringify({ mode, genre, recentGenres }));
+            localStorage.setItem(STORE_KEY, JSON.stringify({ mode, genre, recentGenres, preset }));
         } catch (error) {
             console.warn('Волна: настройки не сохранены', error);
         }
     };
+    // Свой вкус в пресете: ранние пропуски внутри пресета копятся по аккаунту и тегам именно для него и переживают перезапуск
+    const MOODS_KEY = 'scDesktopWaveMoods';
+    type PresetMarks = { a: Record<string, number>; t: Record<string, number> };
+    let presetMarks: Partial<Record<WaveMood, PresetMarks>> = {};
+    try {
+        const saved = JSON.parse(localStorage.getItem(MOODS_KEY) || '{}') as Record<string, unknown>;
+        const numbers = (value: unknown): Record<string, number> => {
+            const out: Record<string, number> = {};
+            if (value && typeof value === 'object') for (const [key, count] of Object.entries(value).slice(0, 400)) if (typeof count === 'number' && Number.isFinite(count) && count > 0) out[key.slice(0, 80)] = Math.min(count, 10);
+            return out;
+        };
+        for (const mood of moodList()) {
+            const entry = saved[mood] as { a?: unknown; t?: unknown } | undefined;
+            if (entry && typeof entry === 'object') presetMarks[mood] = { a: numbers(entry.a), t: numbers(entry.t) };
+        }
+    } catch (error) {
+        console.warn('Волна: отметки пресетов не прочитаны', error);
+        presetMarks = {};
+    }
 
     let profile: Profile | null = null;
     let profilePromise: Promise<Profile> | null = null;
@@ -224,7 +251,7 @@ export function installWave(config: WaveConfig, createPlayback: typeof installPl
     const known = new Map<number, WaveCandidate>();
     // Паспорт элемента очереди волны для журнала: поколение, место в выдаче и откуда волна в момент постановки.
     // Трек волны остаётся треком волны и после её конца, а не пишется историей сайта
-    interface QueueTrace { gen: number; slot: number; source: string; mode: WaveMode; waveGenre: string; libMode?: LibraryMode }
+    interface QueueTrace { gen: number; slot: number; source: string; mode: WaveMode; waveGenre: string; libMode?: LibraryMode; preset?: WaveMood }
     const itemTrace = new WeakMap<SiteQueueItem, QueueTrace>();
     let generationAt = Date.now();
     let givenInGeneration = 0;
@@ -1278,7 +1305,104 @@ export function installWave(config: WaveConfig, createPlayback: typeof installPl
         let delta = sessionArtists.get(trackArtist(track)) ?? 0;
         for (const [key, share] of tagShares(track.genre, track.tag_list, [track.user?.username])) delta += share * (sessionTags.get(key) ?? 0);
         const from = candidate.trace?.seed ?? 0;
-        return from ? delta + (sessionSeeds.get(from) ?? 0) : delta;
+        return (from ? delta + (sessionSeeds.get(from) ?? 0) : delta) - presetPenalty(track);
+    }
+    // Пресет действует только у обычной волны: у волны от трека, артиста или подборки своё настроение
+    const activePreset = (): WaveMood | null => (seed ? null : preset);
+    // Настроение трека один раз на трек: словарь разбирается регулярными выражениями
+    const moodCache = new Map<number, MoodScores>();
+    function moodOf(track: WaveTrack): MoodScores {
+        let scores = moodCache.get(track.id);
+        if (!scores) {
+            scores = trackMood(track);
+            if (moodCache.size > 5000) moodCache.clear();
+            moodCache.set(track.id, scores);
+        }
+        return scores;
+    }
+    // Перенос настроения от исполнителя: по лайкам, истории сайта и всему, что пришло из похожих в этой волне
+    const moodSample: WaveTrack[] = [];
+    const moodSampleIds = new Set<number>();
+    let artistMoodMap: Map<number, ArtistMoods> | null = null;
+    let artistMoodIds = new Set<number>();
+    function noteMoodSample(tracks: WaveTrack[]): void {
+        for (const track of tracks) {
+            if (moodSampleIds.has(track.id) || moodSample.length >= 4000) continue;
+            moodSampleIds.add(track.id);
+            moodSample.push(track);
+            artistMoodMap = null;
+        }
+    }
+    // Насколько трек подходит пресету, 0-1; без пресета подходит всё
+    function presetScore(track: WaveTrack, neighbors: MoodScores | null): number {
+        const mood = activePreset();
+        if (!mood) return 1;
+        if (!artistMoodMap) {
+            const sample = [...(profile?.likedTracks ?? []), ...(profile?.history ?? []), ...moodSample];
+            artistMoodMap = artistMoods(sample, moodOf);
+            artistMoodIds = new Set(sample.map((item) => item.id));
+        }
+        return moodScore(moodOf(track)[mood], artistMoodMap.get(trackArtist(track)), neighbors?.[mood] ?? 0, mood, artistMoodIds.has(track.id));
+    }
+    // Своё в пресете: аккаунт и теги, рано пропущенные внутри этого пресета, опускаются в нём и дальше
+    function presetPenalty(track: WaveTrack): number {
+        const mood = activePreset();
+        const marks = mood ? presetMarks[mood] : undefined;
+        if (!marks) return 0;
+        let penalty = 0.5 * Math.min(2, marks.a[String(trackArtist(track))] ?? 0);
+        for (const [key, share] of tagShares(track.genre, track.tag_list, [track.user?.username])) penalty += share * 0.5 * Math.min(2, marks.t[key] ?? 0);
+        return penalty;
+    }
+    function notePresetSkip(track: WaveTrack): void {
+        const mood = activePreset();
+        if (!mood) return;
+        const marks = presetMarks[mood] ?? { a: {}, t: {} };
+        // Не больше 300 ключей: при переполнении уходят самые слабые
+        const bumped = (map: Record<string, number>, key: string, value: number): Record<string, number> => {
+            const next = { ...map, [key]: Math.min(10, (map[key] ?? 0) + value) };
+            const entries = Object.entries(next);
+            return entries.length > 300 ? Object.fromEntries(entries.sort((x, y) => y[1] - x[1]).slice(0, 300)) : next;
+        };
+        const artist = trackArtist(track);
+        let a = marks.a;
+        let t = marks.t;
+        if (artist) a = bumped(a, String(artist), 1);
+        for (const [key, share] of tagShares(track.genre, track.tag_list, [track.user?.username])) t = bumped(t, key, share);
+        presetMarks = { ...presetMarks, [mood]: { a, t } };
+        try {
+            localStorage.setItem(MOODS_KEY, JSON.stringify(presetMarks));
+        } catch (error) {
+            console.warn('Волна: отметка пресета не сохранена', error);
+        }
+    }
+    // Не подошедшее пресету: добивка ближайшими по настроению, когда подходящего мало (В3)
+    let moodReserve: Array<{ candidate: WaveCandidate; score: number }> = [];
+    let moodRounds = 0;
+    let moodShort = false;
+    // Найденное за проход делится на подходящее пресету и добивку. Соседи считаются по зерну, у поиска по меткам соседей нет
+    function splitByMood(found: WaveCandidate[], observed: WaveTrack[], observedBy: Map<number, WaveTrack[]>): WaveCandidate[] {
+        noteMoodSample(observed);
+        const neighbors = new Map<number, MoodScores>();
+        const matched: WaveCandidate[] = [];
+        const reserve: WaveCandidate[] = [];
+        for (const candidate of found) {
+            const from = candidate.trace?.seed ?? 0;
+            let near = neighbors.get(from);
+            if (!near) {
+                near = neighborMood(from ? observedBy.get(from) ?? [] : [], moodOf);
+                neighbors.set(from, near);
+            }
+            const score = presetScore(candidate.track, near);
+            if (score >= 0.5) matched.push(candidate);
+            else {
+                reserve.push(candidate);
+                moodReserve.push({ candidate, score });
+            }
+        }
+        if (taste) traceScores(reserve, taste);
+        moodReserve.sort((a, b) => b.score - a.score);
+        if (moodReserve.length > 300) moodReserve = moodReserve.slice(0, 300);
+        return matched;
     }
     // Ранний пропуск (sign -1) или лайк и «Больше такого» (sign 1): аккаунт на единицу, теги на половину доли, зерно на половину
     function adjustSession(candidate: WaveCandidate, sign: 1 | -1): void {
@@ -1366,7 +1490,11 @@ export function installWave(config: WaveConfig, createPlayback: typeof installPl
         }
         const tags = !seed && genre ? parseGenres(genre) : [];
         const keys = tags.length ? genreKeysFor(genre) : [];
-        const seeds = seedsFor(keys);
+        const mood = activePreset();
+        // Пресет: зёрна с этим настроением идут первыми, остальные за ними; поиск SoundCloud по меткам настроения
+        const moodSearch = mood ? moodDictionary()[mood].search : [];
+        const listed = seedsFor(keys);
+        const seeds = mood ? [...listed.filter((track) => presetScore(track, null) >= 0.5), ...listed.filter((track) => presetScore(track, null) < 0.5)] : listed;
         let picked: WaveTrack[];
         // Набор из меню: похожие на каждый трек набора с первого же раза
         if (seed) picked = seeds.slice(0, seed.kind === 'tracks' ? 5 : 3);
@@ -1388,9 +1516,14 @@ export function installWave(config: WaveConfig, createPlayback: typeof installPl
         for (const track of picked) usedSeeds.add(track.id);
         // Всё, что пришло из похожих и станции, включая отсеянное: по нему считается настроение запасного пути
         const observed: WaveTrack[] = [];
+        // Соседи по зерну: похожие на одно зерно голосуют за настроение друг друга
+        const observedBy = new Map<number, WaveTrack[]>();
         // Похожее на from: причина по жанру или режиму; у волны от трека найденное становится зерном дальше
         const take = (track: WaveTrack, from: WaveTrack): void => {
             observed.push(track);
+            const near = observedBy.get(from.id);
+            if (near) near.push(track);
+            else observedBy.set(from.id, [track]);
             if (!trackMatchesGenre(track, keys)) return;
             const seedTitle = (from.title ?? '').trim() || '…';
             const matched = tags.find((tag) => trackMatchesGenre(track, genreKeys(tag)));
@@ -1426,6 +1559,16 @@ export function installWave(config: WaveConfig, createPlayback: typeof installPl
                         accept(found, { track, reason: { kind: source === 'recent' ? 'genreFresh' : 'genrePopular', genre: tag } }, filter);
                     }
                 }).catch((error: unknown) => { failures++; console.warn('Волна: жанр не загружен', error); }));
+        // Метки настроения: популярное по каждой, свежее по первой. Выбранный жанр действует и здесь
+        for (const [index, tag] of moodSearch.entries())
+            for (const source of index === 0 ? (['recent', 'search'] as const) : (['search'] as const))
+                tasks.push(genrePage(source, tag).then((tracks) => {
+                    if (disposed || own !== generation) return;
+                    for (const track of tracks) {
+                        if ((source === 'recent' && !freshEnough(track)) || !trackMatchesGenre(track, keys)) continue;
+                        accept(found, { track, reason: { kind: 'moodTag', tag } }, filter);
+                    }
+                }).catch((error: unknown) => { failures++; console.warn('Волна: метка настроения не загружена', error); }));
         // Текстовый поиск по одному зерну за проход, четверть запросов прохода: другие версии зерна и песни его
         // участников у любых аккаунтов, загрузчик запрос не ограничивает. Версии зерна идут со своей причиной
         const probe = picked.length ? picked[searchTurn % picked.length] : undefined;
@@ -1491,21 +1634,27 @@ export function installWave(config: WaveConfig, createPlayback: typeof installPl
             if (own !== generation) return 0;
         }
         if (tasks.length && failures === tasks.length && !found.length) throw new Error('Источники волны не ответили');
+        // Пресет: в пул идёт подходящее настроению (от 0,5), остальное ждёт в добивке по убыванию оценки
+        const matched = mood ? splitByMood(found, observed, observedBy) : found;
         // По вкусу, если профиль есть; без него как раньше, перемешиванием
         const current = taste;
         if (current) {
-            traceScores(found, current);
-            applyTasteReasons(found, current);
-            pool.push(...tasteOrder(found, current, Math.random, sessionScore));
-        } else pool.push(...shuffleInPlace(found));
-        const pagesLeft = (list: string[]): boolean => list.some((tag) => (['recent', 'search'] as const).some((source) => !cursors.get(source + ':' + tag)?.done));
-        const sourcesLeft = seedsFor(keys).length > 0 || stationRoots().length > 0 || pagesLeft(tags) || pagesLeft(fallbackMood ?? []);
+            traceScores(matched, current);
+            applyTasteReasons(matched, current);
+            pool.push(...tasteOrder(matched, current, Math.random, sessionScore));
+        } else pool.push(...shuffleInPlace(matched));
+        const pagesLeft = (list: string[]): boolean => list.some((tag) => (['recent', 'search'] as const).some((source) => !cursors.get(source + ':' + genreEnglish(tag))?.done));
+        const moodLeft = moodSearch.some((tag, index) => (index === 0 ? ['recent', 'search'] : ['search']).some((source) => !cursors.get(source + ':' + genreEnglish(tag))?.done));
+        const sourcesLeft = seedsFor(keys).length > 0 || stationRoots().length > 0 || pagesLeft(tags) || pagesLeft(fallbackMood ?? []) || moodLeft;
+        if (mood) moodRounds++;
         if (!found.length && !sourcesLeft) exhausted = true;
         return found.length;
     }
     // Сколько треков можно взять сейчас: подборка вперемешку с найденным тратится не быстрее найденного
+    // Добивка пресета засчитывается после двух проходов: подходящего не хватило, дальше сбор не гоняется впустую
     const ready = (): number => pool.length + (seed?.order === 'blend' ? Math.min(ownQueue.length, pool.length + 1)
-        : seed?.order === 'smart' ? Math.min(ownQueue.length, 3 * (pool.length + 1)) : ownQueue.length);
+        : seed?.order === 'smart' ? Math.min(ownQueue.length, 3 * (pool.length + 1)) : ownQueue.length)
+        + (activePreset() && moodRounds >= 2 ? moodReserve.length : 0);
     function ensurePool(need: number): Promise<void> {
         if (ready() >= need || exhausted) return Promise.resolve();
         if (!gathering) {
@@ -1543,6 +1692,16 @@ export function installWave(config: WaveConfig, createPlayback: typeof installPl
             recentKeys.push(spacingKeys(item.track));
             if (recentKeys.length > 6) recentKeys.shift();
         }
+        // Подходящего пресету не хватило: ближайшие по настроению, и в шапке честная строка об этом
+        while (picked.length < count && activePreset() && moodReserve.length) {
+            const next = moodReserve.shift();
+            if (!next) break;
+            moodShort = true;
+            pooled.add(next.candidate);
+            picked.push(next.candidate);
+            recentKeys.push(spacingKeys(next.candidate.track));
+            if (recentKeys.length > 6) recentKeys.shift();
+        }
         return picked;
     }
     function resetGeneration(): void {
@@ -1558,6 +1717,9 @@ export function installWave(config: WaveConfig, createPlayback: typeof installPl
         ownRun = 0;
         artistFallbackDone = false;
         fallbackMood = null;
+        moodReserve = [];
+        moodRounds = 0;
+        moodShort = false;
         seenCount = 0;
         artistCount = 0;
         usedSeeds.clear();
@@ -1569,9 +1731,10 @@ export function installWave(config: WaveConfig, createPlayback: typeof installPl
     }
 
     function queueTrace(slot: number): QueueTrace {
+        const mood = activePreset();
         return {
             gen: generationAt, slot, source: 'wave:' + (seed ? seed.kind : mode), mode: seed?.mode ?? mode, waveGenre: seed ? '' : genre ?? '',
-            libMode: seed?.kind === 'library' ? seed.library?.mode : undefined,
+            libMode: seed?.kind === 'library' ? seed.library?.mode : undefined, ...(mood ? { preset: mood } : {}),
         };
     }
     function makeItems(list: WaveCandidate[]): SiteQueueItem[] {
@@ -1855,8 +2018,10 @@ export function installWave(config: WaveConfig, createPlayback: typeof installPl
         state = 'playing';
         render();
     }
-    function applySettings(nextMode: WaveMode, nextGenre: string | null): void {
+    // Режим, жанр и пресет действуют со следующего трека: текущий доигрывает, впереди новая подборка
+    function applySettings(nextMode: WaveMode, nextGenre: string | null, nextPreset: WaveMood | null = preset): void {
         mode = nextMode;
+        preset = nextPreset;
         genre = nextGenre ? formatGenres(parseGenres(nextGenre)) || null : null;
         if (genre) recentGenres = [genre, ...recentGenres.filter((item) => item !== genre)].slice(0, 6);
         saveSettings();
@@ -1965,6 +2130,7 @@ export function installWave(config: WaveConfig, createPlayback: typeof installPl
         if (trace) Object.assign(fields, { gen: trace.gen, slot: trace.slot, mode: trace.mode });
         if (trace?.waveGenre) fields.waveGenre = trace.waveGenre;
         if (trace?.libMode) fields.libMode = trace.libMode;
+        if (trace?.preset) fields.preset = trace.preset;
         if (candidate.trace && candidate.trace.score !== null) Object.assign(fields, { score: candidate.trace.score, known: candidate.trace.known });
         if (candidate.trace?.tv) fields.tv = candidate.trace.tv;
         return fields;
@@ -2104,6 +2270,7 @@ export function installWave(config: WaveConfig, createPlayback: typeof installPl
                 pool = pool.filter(kept);
                 ownQueue = ownQueue.filter(kept);
                 adjustSession(previous, -1);
+                notePresetSkip(previous.track);
                 skipRun++;
             } else if (previous && currentPosition >= 30000) skipRun = 0;
             jumped = false;
@@ -2652,6 +2819,9 @@ export function installWave(config: WaveConfig, createPlayback: typeof installPl
         '#sc-wave .scw-chip{height:28px;padding:0 12px;border-radius:14px;background:var(--scw-surface);color:var(--scw-muted);font-weight:600;white-space:nowrap}',
         '#sc-wave .scw-chip:hover{color:inherit}',
         '#sc-wave .scw-chip[aria-pressed="true"]{background:var(--scw-btn);color:var(--scw-btn-ink)}',
+        // Пресеты настроения под шапкой волны: выбранный подсвечен, без галочек
+        '.scw-moods{display:flex;gap:8px;flex-wrap:wrap;margin:-4px 0 16px}',
+        '#sc-wave .scw-moods .scw-chip[aria-checked="true"]{background:var(--scw-btn);color:var(--scw-btn-ink)}',
         '#sc-wave .scw-btn:disabled{opacity:.5;cursor:default}',
         '.scw-select{height:32px;max-width:220px;padding:0 8px;border-radius:4px;border:0;background:var(--scw-surface);color:inherit;font:inherit;cursor:pointer}',
         '.scw-row-e{display:flex;align-items:center;gap:6px;min-width:0}',
@@ -2812,11 +2982,14 @@ export function installWave(config: WaveConfig, createPlayback: typeof installPl
         row.append(cover, text, end);
         return { row, end };
     }
+    const moodLabel = (mood: WaveMood): string => ({ happy: T.moodHappy, sad: T.moodSad, aggressive: T.moodAggressive, calm: T.moodCalm, energetic: T.moodEnergetic })[mood];
     const hintText = (): string => {
         if (seed) return seedText(seed, false);
         const genres = genre ? parseGenres(genre) : [];
         const tail = genres.length ? fillText(genres.length > 1 ? T.hintGenres : T.hintGenre, { genre: formatGenres(genres) }) : '';
-        return (mode === 'similar' ? T.hintSimilar : T.hintFresh) + tail;
+        const mood = preset ? fillText(T.hintPreset, { mood: moodLabel(preset).toLowerCase() }) : '';
+        const base = (mode === 'similar' ? T.hintSimilar : T.hintFresh) + tail + mood;
+        return preset && moodShort && active ? base + '. ' + T.presetShort : base;
     };
     const isVisible = (): boolean => !!section && section.isConnected && section.offsetParent !== null;
 
@@ -2902,6 +3075,23 @@ export function installWave(config: WaveConfig, createPlayback: typeof installPl
         head.append(titles, controls);
         return head;
     }
+    // Пресеты настроения: «Всё» и пять настроений. У волны от трека, артиста или подборки ряда нет
+    function renderMoods(): HTMLElement | null {
+        if (seed) return null;
+        const row = el('div', 'scw-moods');
+        row.setAttribute('role', 'radiogroup');
+        row.setAttribute('aria-label', T.presets);
+        const options: Array<[string, string]> = [['all', T.presetAll], ...moodList().map((mood): [string, string] => [mood, moodLabel(mood)])];
+        for (const [value, label] of options) {
+            const chip = el('button', 'scw-chip', label);
+            chip.type = 'button';
+            chip.setAttribute('role', 'radio');
+            chip.setAttribute('aria-checked', String((preset ?? 'all') === value));
+            chip.dataset.preset = value;
+            row.append(chip);
+        }
+        return row;
+    }
     function renderPop(): HTMLElement {
         const pop = el('div', 'scw-pop');
         pop.setAttribute('role', 'dialog');
@@ -2979,7 +3169,7 @@ export function installWave(config: WaveConfig, createPlayback: typeof installPl
         if (!section) return;
         hideTip();
         const focusedNode = document.activeElement instanceof HTMLElement && section.contains(document.activeElement) ? document.activeElement : null;
-        const focused = focusedNode ? focusedNode.dataset.act ?? focusedNode.dataset.mode ?? focusedNode.dataset.role ?? '' : '';
+        const focused = focusedNode ? focusedNode.dataset.act ?? focusedNode.dataset.mode ?? focusedNode.dataset.role ?? focusedNode.dataset.preset ?? '' : '';
         // У карточек полки одни действия на всех: фокус возвращается по номеру карточки, в строке списка по треку и месту в строке
         const focusedCard = focusedNode?.dataset.card;
         // Источник и режим «Моей музыки» делят одно действие на все кнопки: фокус возвращается по ключу кнопки
@@ -2994,6 +3184,8 @@ export function installWave(config: WaveConfig, createPlayback: typeof installPl
         section.setAttribute('aria-label', T.wave);
         section.append(renderHead());
         if (popOpen) section.append(renderPop());
+        const moods = renderMoods();
+        if (moods) section.append(moods);
         const body = el('div', 'scw-body');
         const info = el('div', 'scw-info');
         const top = el('div', 'scw-top');
@@ -3058,7 +3250,7 @@ export function installWave(config: WaveConfig, createPlayback: typeof installPl
                 ? section.querySelector<HTMLElement>('[data-act="' + focused + '"][data-card="' + focusedCard + '"]')
                 : focusedSource !== undefined
                     ? section.querySelector<HTMLElement>('[data-act="' + focused + '"][data-source="' + focusedSource + '"],[data-act="' + focused + '"][data-lmode="' + focusedSource + '"]')
-                    : section.querySelector<HTMLElement>('[data-act="' + focused + '"],[data-mode="' + focused + '"],[data-role="' + focused + '"]');
+                    : section.querySelector<HTMLElement>('[data-act="' + focused + '"],[data-mode="' + focused + '"],[data-role="' + focused + '"],[data-preset="' + focused + '"]');
             again?.focus();
             if (again instanceof HTMLInputElement) again.setSelectionRange(again.value.length, again.value.length);
         }
@@ -3256,9 +3448,14 @@ export function installWave(config: WaveConfig, createPlayback: typeof installPl
             else void shelfSection.start(openCard, id);
             return;
         }
-        const control = target.closest<HTMLElement>('[data-act], [data-mode], [data-genre]');
+        const control = target.closest<HTMLElement>('[data-act], [data-mode], [data-genre], [data-preset]');
         if (!control) {
             if (popOpen && !target.closest('.scw-pop')) { popOpen = false; render(); }
+            return;
+        }
+        if (control.dataset.preset !== undefined) {
+            const next = moodList().find((mood) => mood === control.dataset.preset) ?? null;
+            if (next !== preset) applySettings(mode, genre, next);
             return;
         }
         if (control.dataset.mode) {
@@ -3667,6 +3864,7 @@ const pageHelpers = [
     normalizeTag, tagKeys, tagShares, genreKeys, genreEnglish, genreCanon, genrePhrases, genreParts, genreMain, parseGenres, formatGenres, genreKeysFor, classifyLink, canonicalUrl, trackMatchesGenre, trackArtist, rememberRecent, retryDelay,
     isWaveEligible, freshEnough, acceptCandidate, pickSpaced, spacingKeys, spacingGap, tasteMaps, tasteScore, tasteOrder, tasteReason, applyTasteReasons, shuffleInPlace, topGenres, fillText, reasonText, shapeSamples,
     artworkUrl, coversOf, formatTime, playEnd, siteSource, moodTags, trackPath, localDay, countText, tasteGroups, capPerArtist, forgottenPicks, artistNames, isNewArtist, spreadBy, pickFinds,
+    moodList, moodDictionary, trackMood, artistMoods, neighborMood, moodScore,
     ...identity.identityHelpers, ...sources.sourceHelpers, ...libraryMix.libraryHelpers, siteRequires, installPlaybackPage, installPlaybackRecovery,
     installVersions, installLibrary, installRadar, installShelf, installMenu,
 ];

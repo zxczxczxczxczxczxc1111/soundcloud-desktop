@@ -135,6 +135,8 @@ export interface WaveQuality {
     origins: WaveSlice[];
     /** Места 1-3 в выдаче против остальных, с сигналов v4 */
     slots: { first: WaveMeasure; later: WaveMeasure };
+    /** По пресету настроения, только треки, поставленные с пресетом */
+    presets: WaveSlice[];
     artists: number;
     /** Артисты, впервые засчитанные именно в волне за период */
     newArtists: number;
@@ -623,8 +625,8 @@ export class HistoryIndex {
             const measure = (where: string, ...args: number[]): WaveMeasure => toMeasure(db.prepare('select ' + MEASURE + ' ' + judged(where)).get(...args) as Values | undefined);
             const count = (sql: string, ...args: number[]): number => num((db.prepare(sql).get(...args) as Values | undefined)?.n);
             const range = 'p.at >= ? and p.at < ?';
-            const sliced = (key: string): WaveSlice[] =>
-                (db.prepare('select ' + key + ' as key, ' + MEASURE + ' ' + judged(WAVE + ' and ' + range) + ' group by key order by plays desc, key').all(start, to) as Values[])
+            const sliced = (key: string, where = ''): WaveSlice[] =>
+                (db.prepare('select ' + key + ' as key, ' + MEASURE + ' ' + judged(WAVE + where + ' and ' + range) + ' group by key order by plays desc, key').all(start, to) as Values[])
                     .map((row) => ({ key: str(row.key), ...toMeasure(row) }));
             const weekFrom = Math.max(start, to - 12 * WEEK_MS);
             // Сутки местные и считаются каждая своей границей: переход на летнее время даёт 23 или 25 часов
@@ -650,6 +652,7 @@ export class HistoryIndex {
                     first: measure(WAVE + ' and p.slot between 1 and 3 and ' + range, start, to),
                     later: measure(WAVE + ' and p.slot >= 4 and ' + range, start, to),
                 },
+                presets: sliced('p.preset', ' and p.preset is not null'),
                 artists: count('select count(distinct p.artist) as n ' + judged(WAVE + ' and p.artist > 0 and ' + range), start, to),
                 newArtists: count(
                     'select count(distinct p.artist) as n ' + judged(WAVE + ' and p.artist > 0 and p.heard >= ? and ' + range + ' and p.at = (select min(q.at) from plays q where q.artist = p.artist and q.heard >= ?)'),

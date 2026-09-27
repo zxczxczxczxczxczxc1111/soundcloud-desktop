@@ -420,6 +420,22 @@ it('круг повтора: пометка сигнала или тот же т
     expect(loopedPlays([list[1], list[0]]).has(list[1])).toBe(true);
 });
 
+it('В3: разрез по пресету только по трекам, поставленным с пресетом', () => {
+    const wave = (patch: Partial<PlaySignal>): PlaySignal => signal({ v: 4, endedBy: 'auto', why: 'similar', origin: 'similar', ...patch });
+    const journal = new Journal();
+    journal.list = [
+        wave({ at: T0, id: 31, preset: 'sad' }),
+        wave({ at: T0 + HOUR, id: 32, preset: 'sad', end: 'skip', heard: 5000, pos: 5000, endedBy: 'user' }),
+        wave({ at: T0 + 2 * HOUR, id: 33, preset: 'calm' }),
+        wave({ at: T0 + 3 * HOUR, id: 34 }),
+    ];
+    const index = open(journal);
+    index.sync(USER);
+    const q = index.waveQuality(USER, T0, T0 + DAY);
+    expect(q?.wave.plays).toBe(4);
+    expect(q?.presets.map((slice) => [slice.key, slice.plays, slice.early])).toEqual([['sad', 2, 1], ['calm', 1, 0]]);
+});
+
 it('круги повтора в замер не идут, смена с порога идёт ранним пропуском, но история и счётчики её не показывают', () => {
     const wave = (patch: Partial<PlaySignal>): PlaySignal => signal({ v: 4, endedBy: 'auto', title: 'Круг', why: 'tasteArtist', origin: 'similar', ...patch });
     const journal = new Journal();
@@ -438,6 +454,7 @@ it('круги повтора в замер не идут, смена с пор�
     expect(q?.wave).toMatchObject({ plays: 4, early: 1, done: 3 });
     expect(q?.reasons.map((slice) => [slice.key, slice.plays])).toEqual([['genreFresh', 1], ['similar', 1], ['tasteArtist', 1], ['tasteTag', 1]]);
     expect(q?.origins.map((slice) => [slice.key, slice.plays])).toEqual([['similar', 2], ['', 1], ['genreFresh', 1]]);
+    expect(q?.presets).toEqual([]);
     expect(index.day(USER, T0, T0 + DAY).map((row) => row.id)).toEqual([24, 23, 21, 21, 21]);
     expect(index.search(USER, 'порог')).toEqual([]);
     expect(index.search(USER, 'круг')).toHaveLength(3);
