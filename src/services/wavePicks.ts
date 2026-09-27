@@ -4,7 +4,7 @@
 import * as identity from './trackIdentity';
 import type { WaveCandidate, WaveFilter, WaveTrack } from './waveTypes';
 
-const { copyKey, familyKey, nameKey, trackCredits, versionKey } = identity;
+const { copyKey, familyKey, nameKey, performerKey, trackCredits, versionKey } = identity;
 
 export function trackArtist(track: WaveTrack): number {
     return track.user_id ?? track.user?.id ?? 0;
@@ -26,6 +26,15 @@ export function isWaveEligible(track: WaveTrack): boolean {
     return duration >= 30000 && duration <= 15 * 60000;
 }
 
+// Мягкий порог «Свежего в жанре» (В2.12): свежая загрузка без лайков и почти без прослушиваний чаще всего пропускается.
+// Без счётчиков трек проходит
+export function freshEnough(track: WaveTrack): boolean {
+    const likes = typeof track.likes_count === 'number' ? track.likes_count : null;
+    const plays = typeof track.playback_count === 'number' ? track.playback_count : null;
+    if (likes === null && plays === null) return true;
+    return (likes ?? 0) >= 1 || (plays ?? 0) >= 30;
+}
+
 export function acceptCandidate(track: WaveTrack, filter: WaveFilter): boolean {
     if (!isWaveEligible(track) || filter.taken.has(track.id) || filter.skipped.has(copyKey(track))) return false;
     if (filter.excludedTracks.has(track.id) || filter.excludedArtists.has(trackArtist(track))) return false;
@@ -34,18 +43,32 @@ export function acceptCandidate(track: WaveTrack, filter: WaveFilter): boolean {
     return !filter.recent.has(track.id);
 }
 
-// Следующие треки из пула: артист не повторяется в окне из трёх последних, пул не меняется
-export function pickSpaced(pool: WaveCandidate[], count: number, recentArtists: number[]): WaveCandidate[] {
+/** Ключи артиста для разнесения: аккаунт загрузчика и исполнитель из названия, если песня чужая */
+export function spacingKeys(track: WaveTrack): string[] {
+    const account = 'u:' + trackArtist(track);
+    const performer = performerKey(trackArtist(track), track.user?.username, trackCredits(track));
+    return performer === account ? [account] : [account, performer];
+}
+/** Окно разнесения по пулу: чем больше разных исполнителей, тем шире, от 2 до 5 */
+export function spacingGap(pool: WaveCandidate[]): number {
+    const performers = new Set(pool.map((item) => spacingKeys(item.track).slice(-1)[0]));
+    return Math.max(2, Math.min(5, Math.floor(performers.size / 3)));
+}
+// Следующие треки из пула: ни аккаунт, ни исполнитель не повторяются в окне из gap последних, пул не меняется.
+// recent: ключи недавно поставленных треков, старые первыми. Одну песню исполнителя на трёх каналах окно ловит по исполнителю
+export function pickSpaced(pool: WaveCandidate[], count: number, recent: string[][], gap = 3): WaveCandidate[] {
     const picked: WaveCandidate[] = [];
     const rest = pool.slice();
-    const window = recentArtists.slice(-3);
+    const window = recent.slice(-gap);
+    const keys = new Map(rest.map((item) => [item, spacingKeys(item.track)] as const));
+    const free = (item: WaveCandidate): boolean => !window.some((list) => list.some((key) => keys.get(item)?.includes(key)));
     while (picked.length < count && rest.length) {
-        let index = rest.findIndex((item) => !window.includes(trackArtist(item.track)));
+        let index = rest.findIndex(free);
         if (index < 0) index = 0;
         const [item] = rest.splice(index, 1);
         picked.push(item);
-        window.push(trackArtist(item.track));
-        if (window.length > 3) window.shift();
+        window.push(keys.get(item) ?? []);
+        if (window.length > gap) window.shift();
     }
     return picked;
 }

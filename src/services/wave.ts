@@ -37,7 +37,7 @@ const { siteRequires } = siteModules;
 const { fillText, reasonText, localDay, countText, formatTime, shapeSamples } = waveTexts;
 const { normalizeTag, tagKeys, tagShares, genreKeys, genreCanon, genreParts, genreMain, parseGenres, formatGenres, genreKeysFor, trackMatchesGenre, topGenres } = waveGenres;
 const { classifyLink, canonicalUrl, trackPath, artworkUrl, coversOf, playEnd, siteSource, retryDelay } = waveLinks;
-const { trackArtist, rememberRecent, isWaveEligible, acceptCandidate, pickSpaced, shuffleInPlace, capPerArtist, forgottenPicks, artistNames, isNewArtist, spreadBy } = wavePicks;
+const { trackArtist, rememberRecent, isWaveEligible, freshEnough, acceptCandidate, pickSpaced, spacingKeys, spacingGap, shuffleInPlace, capPerArtist, forgottenPicks, artistNames, isNewArtist, spreadBy } = wavePicks;
 const { tasteMaps, tasteScore, tasteOrder, tasteReason, applyTasteReasons, tasteGroups, moodTags, pickFinds } = waveTaste;
 // Разделы страницы волны в wave/: объявления уходят на страницу рядом с installWave и зовутся по голому имени
 const { installVersions } = versionsSection;
@@ -50,12 +50,12 @@ export type { WaveTrack, WaveMode, OpenTrackResult, WaveReason, WaveCandidate, W
 export { WAVE_TEXTS, fillText, reasonText, localDay, countText, formatTime, shapeSamples } from './waveTexts';
 export { normalizeTag, tagKeys, tagShares, genreKeys, genreCanon, genreParts, genreMain, parseGenres, formatGenres, genreKeysFor, trackMatchesGenre, topGenres } from './waveGenres';
 export { classifyLink, canonicalUrl, trackPath, artworkUrl, playEnd, siteSource, retryDelay } from './waveLinks';
-export { trackArtist, rememberRecent, isWaveEligible, acceptCandidate, pickSpaced, shuffleInPlace, capPerArtist, forgottenPicks, artistNames, isNewArtist, spreadBy } from './wavePicks';
+export { trackArtist, rememberRecent, isWaveEligible, freshEnough, acceptCandidate, pickSpaced, spacingKeys, spacingGap, shuffleInPlace, capPerArtist, forgottenPicks, artistNames, isNewArtist, spreadBy } from './wavePicks';
 export { tasteMaps, tasteScore, tasteOrder, tasteReason, applyTasteReasons, tasteGroups, moodTags, pickFinds } from './waveTaste';
 
 export interface SiteSound {
     id: number;
-    attributes?: WaveTrack & { likes_count?: number; playback_count?: number };
+    attributes?: WaveTrack;
     isPlayable?(): boolean;
     isSnippetized?(): boolean;
     isBlocked?(): boolean;
@@ -235,7 +235,19 @@ export function installWave(config: WaveConfig, createPlayback: typeof installPl
     // Версии, рано пропущенные человеком в этой сессии: их копии не повторяются, остальной аккаунт играет дальше
     const skipped = new Set<string>();
     const likedSeeds: WaveTrack[] = [];
-    const recentArtists: number[] = [];
+    // Ключи аккаунта и исполнителя последних поставленных треков для разнесения, старые первыми
+    const recentKeys: string[][] = [];
+    // Реакция в сессии волны (В2.2): ранний пропуск снижает аккаунт, теги и зерно трека до конца волны, лайк и «Больше
+    // такого» поднимают. Поправка идёт к оценке вкуса при каждом пересчёте пула
+    const sessionArtists = new Map<number, number>();
+    const sessionTags = new Map<string, number>();
+    const sessionSeeds = new Map<number, number>();
+    // Ранние пропуски подряд: три пересобирают очередь впереди (В2.14)
+    let skipRun = 0;
+    // Взятое из найденного, а не из своей подборки: пересборка впереди возвращает в пул только его
+    const pooled = new WeakSet<WaveCandidate>();
+    // Слышанное в клиенте за 3 дня: «Похожее» его не повторяет, как историю сайта (В2.4)
+    let clientRecent = new Set<number>();
     let itemIndex = 900000;
     let seed: Seed | null = null;
     // Три к одному в «Умном перемешивании»: сколько своих подряд уже встало, счёт идёт через порции очереди
@@ -726,6 +738,10 @@ export function installWave(config: WaveConfig, createPlayback: typeof installPl
                 const loaded = userId ? await host.soundcloudAPI?.waveJournal?.load(userId) : [];
                 if (Array.isArray(loaded)) journal = loaded.filter((id): id is number => typeof id === 'number');
             })().catch((error: unknown) => console.warn('Волна: журнал не загружен', error)),
+            (async () => {
+                const ids = userId ? await host.soundcloudAPI?.waveLibrary?.heard(userId) : [];
+                if (Array.isArray(ids)) clientRecent = new Set(ids.filter(isId));
+            })().catch((error: unknown) => console.warn('Волна: слышанное за 3 дня не загружено', error)),
         ]);
         if (failures.length) throw new Error('Профиль SoundCloud загружен не полностью', { cause: failures[0] });
         const recent = new Set(history.map((track) => track.id));
@@ -1175,7 +1191,7 @@ export function installWave(config: WaveConfig, createPlayback: typeof installPl
         const p = profile;
         const filterMode = seed?.mode ?? mode;
         return {
-            mode: filterMode, taken, recent: p?.recent ?? new Set(),
+            mode: filterMode, taken, recent: new Set([...(p?.recent ?? []), ...clientRecent]),
             // «Новое»: уверенно слышанное аудио на другой загрузке тоже не новое, но только по подтверждённой связи
             heard: p ? (filterMode === 'fresh' ? confirmedCopies(p.heard, copyGroups) : p.heard) : new Set(),
             liked: p ? (filterMode === 'fresh' ? confirmedCopies(p.liked, copyGroups) : p.liked) : new Set(),
@@ -1185,15 +1201,27 @@ export function installWave(config: WaveConfig, createPlayback: typeof installPl
             excludedFamilies,
         };
     }
+    // Зёрна с весом по вкусу (В2.10): дослушанное, переслушанное и лайкнутое встаёт вперёд чаще, трек с минусом во вкусе
+    // зерном не становится. Без профиля вкуса перемешиванием
+    function seedOrder(list: WaveTrack[]): WaveTrack[] {
+        const current = taste;
+        if (!current) return shuffleInPlace(list);
+        return list
+            .map((track) => ({ track, weight: current.tracks.get(track.id) ?? 0 }))
+            .filter((entry) => entry.weight >= 0)
+            .map((entry) => ({ track: entry.track, key: Math.log(Math.max(Math.random(), 1e-12)) / Math.exp(Math.min(3, entry.weight)) }))
+            .sort((a, b) => b.key - a.key)
+            .map((entry) => entry.track);
+    }
     function seedsFor(keys: string[]): WaveTrack[] {
         const p = profile;
         if (!p) return [];
         const mixed: WaveTrack[] = [...likedSeeds];
         if (seed) mixed.push(...seed.tracks, ...derivedSeeds);
         else {
-            const history = shuffleInPlace(p.history.slice());
+            const history = seedOrder(p.history.slice());
             // «Больше такого» идёт вперёд лайков сайта
-            const likes = [...moreSeeds(), ...shuffleInPlace(p.likedTracks.slice())];
+            const likes = [...moreSeeds(), ...seedOrder(p.likedTracks.slice())];
             for (let i = 0; i < Math.max(history.length, likes.length); i++) {
                 if (history[i]) mixed.push(history[i]);
                 if (likes[i]) mixed.push(likes[i]);
@@ -1203,12 +1231,15 @@ export function installWave(config: WaveConfig, createPlayback: typeof installPl
         // Трек, артист или плейлист выбраны руками: их треки остаются зёрнами, даже если артист пропущен или скрыт.
         // Отметки действуют на подборку, иначе волна от такого трека играла бы его одного
         const chosen = new Set(seed?.tracks.map((track) => track.id) ?? []);
-        const list = mixed.filter((track) => {
+        const eligible = mixed.filter((track) => {
             if (seen.has(track.id) || usedSeeds.has(track.id)) return false;
             if (!chosen.has(track.id) && (skipped.has(copyKey(track)) || isExcluded(track))) return false;
             seen.add(track.id);
-            return !!seed || trackMatchesGenre(track, keys, true);
+            return true;
         });
+        let list = seed ? eligible : eligible.filter((track) => trackMatchesGenre(track, keys, true));
+        // Жанр без зёрен по полю жанра: зёрна по меткам (В2.13), иначе такой жанр играл бы одни страницы жанра
+        if (!seed && keys.length && !list.length) list = eligible.filter((track) => trackMatchesGenre(track, keys));
         const fresh = list.filter((track) => !staleSeeds.has(track.id));
         // Встряхивали столько раз, что свежих зёрен не осталось: круг начинается заново
         if (fresh.length || !staleSeeds.size) return fresh;
@@ -1223,6 +1254,39 @@ export function installWave(config: WaveConfig, createPlayback: typeof installPl
         if (!candidate.trace) candidate.trace = { origin: candidate.reason.kind, seed: seedId, score: null, known: false };
         list.push(candidate);
         return true;
+    }
+    // Оценка в журнал до замены причин: по ней меряется, угадывает ли вкус пропуски
+    function traceScores(list: WaveCandidate[], current: TasteMaps): void {
+        for (const candidate of list) {
+            if (!candidate.trace) continue;
+            const score = tasteScore(candidate.track, current);
+            candidate.trace.score = Math.round(score.score * 100) / 100;
+            candidate.trace.known = score.known;
+            if (current.version) candidate.trace.tv = current.version;
+        }
+    }
+    // Поправка сессии к оценке вкуса: аккаунт, теги долями, как во вкусе, и зерно, от которого найден трек
+    function sessionScore(candidate: WaveCandidate): number {
+        const track = candidate.track;
+        let delta = sessionArtists.get(trackArtist(track)) ?? 0;
+        for (const [key, share] of tagShares(track.genre, track.tag_list, [track.user?.username])) delta += share * (sessionTags.get(key) ?? 0);
+        const from = candidate.trace?.seed ?? 0;
+        return from ? delta + (sessionSeeds.get(from) ?? 0) : delta;
+    }
+    // Ранний пропуск (sign -1) или лайк и «Больше такого» (sign 1): аккаунт на единицу, теги на половину доли, зерно на половину
+    function adjustSession(candidate: WaveCandidate, sign: 1 | -1): void {
+        const track = candidate.track;
+        const add = <K>(map: Map<K, number>, key: K, value: number): void => { map.set(key, (map.get(key) ?? 0) + sign * value); };
+        const artist = trackArtist(track);
+        if (artist) add(sessionArtists, artist, 1);
+        for (const [key, share] of tagShares(track.genre, track.tag_list, [track.user?.username])) add(sessionTags, key, 0.5 * share);
+        const from = candidate.trace?.seed ?? 0;
+        if (from) add(sessionSeeds, from, 0.5);
+    }
+    const EMPTY_TASTE: TasteMaps = { version: 0, artists: new Map(), credits: new Map(), families: new Map(), tags: new Map(), markers: new Map(), tracks: new Map() };
+    // Пул заново по вкусу с поправками сессии: при каждой догрузке и после пропусков (В2.1, В2.2)
+    function rerankPool(): void {
+        if (pool.length > 1) pool = tasteOrder(pool, taste ?? EMPTY_TASTE, Math.random, sessionScore);
     }
     async function genrePage(source: 'recent' | 'search', tag: string): Promise<WaveTrack[]> {
         const own = generation;
@@ -1348,7 +1412,10 @@ export function installWave(config: WaveConfig, createPlayback: typeof installPl
             for (const source of ['recent', 'search'] as const)
                 tasks.push(genrePage(source, tag).then((tracks) => {
                     if (disposed || own !== generation) return;
-                    for (const track of tracks) accept(found, { track, reason: { kind: source === 'recent' ? 'genreFresh' : 'genrePopular', genre: tag } }, filter);
+                    for (const track of tracks) {
+                        if (source === 'recent' && !freshEnough(track)) continue;
+                        accept(found, { track, reason: { kind: source === 'recent' ? 'genreFresh' : 'genrePopular', genre: tag } }, filter);
+                    }
                 }).catch((error: unknown) => { failures++; console.warn('Волна: жанр не загружен', error); }));
         // Текстовый поиск по одному зерну за проход, четверть запросов прохода: другие версии зерна и песни его
         // участников у любых аккаунтов, загрузчик запрос не ограничивает. Версии зерна идут со своей причиной
@@ -1418,16 +1485,9 @@ export function installWave(config: WaveConfig, createPlayback: typeof installPl
         // По вкусу, если профиль есть; без него как раньше, перемешиванием
         const current = taste;
         if (current) {
-            // Оценка в журнал до замены причин: по ней меряется, угадывает ли вкус пропуски
-            for (const candidate of found) {
-                if (!candidate.trace) continue;
-                const score = tasteScore(candidate.track, current);
-                candidate.trace.score = Math.round(score.score * 100) / 100;
-                candidate.trace.known = score.known;
-                if (current.version) candidate.trace.tv = current.version;
-            }
+            traceScores(found, current);
             applyTasteReasons(found, current);
-            pool.push(...tasteOrder(found, current));
+            pool.push(...tasteOrder(found, current, Math.random, sessionScore));
         } else pool.push(...shuffleInPlace(found));
         const pagesLeft = (list: string[]): boolean => list.some((tag) => (['recent', 'search'] as const).some((source) => !cursors.get(source + ':' + tag)?.done));
         const sourcesLeft = seedsFor(keys).length > 0 || stationRoots().length > 0 || pagesLeft(tags) || pagesLeft(fallbackMood ?? []);
@@ -1459,15 +1519,20 @@ export function installWave(config: WaveConfig, createPlayback: typeof installPl
         const picked: WaveCandidate[] = [];
         const blend = seed?.order === 'blend';
         const smart = seed?.order === 'smart';
+        // Окно разнесения по пулу: маленький пул не растягивает одного артиста на всю очередь (В2.6)
+        const gap = spacingGap(pool);
         while (picked.length < count && (ownQueue.length || pool.length)) {
             const fromOwn = ownQueue.length > 0 && (smart ? !pool.length || ownRun < 3 : !blend || !pool.length || picked.length % 2 === 0);
             if (smart) ownRun = fromOwn ? ownRun + 1 : 0;
-            const item = fromOwn ? ownQueue.shift() : pickSpaced(pool, 1, recentArtists)[0];
+            const item = fromOwn ? ownQueue.shift() : pickSpaced(pool, 1, recentKeys, gap)[0];
             if (!item) break;
-            if (!fromOwn) pool = pool.filter((entry) => entry !== item);
+            if (!fromOwn) {
+                pool = pool.filter((entry) => entry !== item);
+                pooled.add(item);
+            }
             picked.push(item);
-            recentArtists.push(trackArtist(item.track));
-            if (recentArtists.length > 6) recentArtists.shift();
+            recentKeys.push(spacingKeys(item.track));
+            if (recentKeys.length > 6) recentKeys.shift();
         }
         return picked;
     }
@@ -1620,6 +1685,10 @@ export function installWave(config: WaveConfig, createPlayback: typeof installPl
         seed = null;
         derivedSeeds = [];
         skipped.clear();
+        sessionArtists.clear();
+        sessionTags.clear();
+        sessionSeeds.clear();
+        skipRun = 0;
         const p = player;
         if (p && fallbackBefore !== null && p.getState('fallbackEnabled') === false) p.toggleState('fallbackEnabled', fallbackBefore);
         fallbackBefore = null;
@@ -1654,6 +1723,7 @@ export function installWave(config: WaveConfig, createPlayback: typeof installPl
         try {
             await ensurePool(BATCH);
             if (!active || own !== generation || !ownsQueue()) return;
+            rerankPool();
             const added = makeItems(takeFromPool(BATCH));
             if (added.length) {
                 player.getQueue().add(added);
@@ -1665,6 +1735,89 @@ export function installWave(config: WaveConfig, createPlayback: typeof installPl
             refilling = false;
         }
         render();
+    }
+    // Впереди стоящее из найденного возвращается в пул и берётся заново по вкусу с поправками сессии. Своё из подборки
+    // встаёт обратно в свою очередь по порядку, поставленное руками остаётся (В2.2, В2.14)
+    // fresh: найденное от зёрен с пропусками в пул не возвращается, его место занимает новое
+    function rebuildAhead(fresh = false): void {
+        const p = player;
+        if (!p || !active || !ownsQueue()) return;
+        const { items, index } = queueView();
+        const kept: SiteQueueItem[] = [];
+        const back: WaveCandidate[] = [];
+        const own: WaveCandidate[] = [];
+        for (const item of items.slice(index + 1)) {
+            const candidate = ours.has(item) && !item.explicit && item.sound ? known.get(item.sound.id) : undefined;
+            if (!candidate) kept.push(item);
+            else if (pooled.has(candidate)) back.push(candidate);
+            else own.push(candidate);
+        }
+        if (!back.length) return;
+        pool.push(...(fresh ? back.filter(unskippedSeed) : back));
+        ownQueue.unshift(...own);
+        rerankPool();
+        // Окно разнесения считается от того, что остаётся играть до новой части очереди
+        recentKeys.length = 0;
+        for (const item of items.slice(Math.max(0, index - 5), index + 1)) {
+            const candidate = item.sound ? known.get(item.sound.id) : undefined;
+            if (candidate) recentKeys.push(spacingKeys(candidate.track));
+        }
+        const added = makeItems(takeFromPool(back.length + own.length));
+        p.getQueue().reset(items.slice(0, index + 1).concat(kept, added));
+        render();
+    }
+    // Лайк и «Больше такого» действуют сразу (В2.9): похожие на трек запрашиваются тут же, два лучших по вкусу встают
+    // первыми после поставленного руками, остальное уходит в пул. Подборка по порядку не перебивается
+    async function boostSimilar(track: WaveTrack): Promise<void> {
+        if (!active || seed?.order === 'fixed' || usedSeeds.has(track.id)) return;
+        usedSeeds.add(track.id);
+        const own = generation;
+        try {
+            const body = await call('relatedSounds', { track_id: track.id }, { limit: 50 });
+            const p = player;
+            if (disposed || own !== generation || !active || !p || !ownsQueue()) return;
+            const filter = currentFilter();
+            const keys = !seed && genre ? genreKeysFor(genre) : [];
+            const seedTitle = (track.title ?? '').trim() || '…';
+            const found: WaveCandidate[] = [];
+            for (const value of collection(body)) {
+                const item = asTrack(value);
+                if (item && trackMatchesGenre(item, keys)) accept(found, { track: item, reason: { kind: filter.mode === 'fresh' ? 'fresh' : 'similar', seed: seedTitle } }, filter, track.id);
+            }
+            if (!found.length) return;
+            const current = taste ?? EMPTY_TASTE;
+            traceScores(found, current);
+            const ordered = tasteOrder(found, current, Math.random, sessionScore);
+            const front = pickSpaced(ordered, 2, recentKeys, spacingGap(ordered));
+            pool.push(...ordered.filter((candidate) => !front.includes(candidate)));
+            for (const candidate of front) pooled.add(candidate);
+            const added = makeItems(front);
+            if (!added.length) return;
+            const { items, index } = queueView();
+            let at = index + 1;
+            while (at < items.length && items[at].explicit && !ours.has(items[at])) at++;
+            p.getQueue().reset(items.slice(0, at).concat(added, items.slice(at)));
+            holdAutoplay(p);
+            render();
+        } catch (error) {
+            if (own === generation) usedSeeds.delete(track.id);
+            console.warn('Волна: похожие на отмеченный трек не загружены', error);
+        }
+    }
+    // Три ранних пропуска подряд (В2.14): подбор берёт новые зёрна, найденное от зёрен с пропусками уходит из пула,
+    // очередь впереди собирается из нового. Нового не хватило: очередь не пустеет, остаётся пересчёт с поправками сессии
+    const unskippedSeed = (candidate: WaveCandidate): boolean => (sessionSeeds.get(candidate.trace?.seed ?? 0) ?? 0) >= 0;
+    async function changeCourse(): Promise<void> {
+        const own = generation;
+        try {
+            await ensurePool(ready() + BATCH);
+        } catch (error) {
+            console.warn('Волна: новые зёрна после пропусков не собраны', error);
+        }
+        if (own !== generation) return;
+        const fresh = pool.filter(unskippedSeed);
+        if (fresh.length >= BATCH) pool = fresh;
+        rebuildAhead(fresh.length >= BATCH);
     }
     // Смена режима или жанра во время игры: текущий трек доигрывает, дальше новая подборка
     async function restartAhead(): Promise<void> {
@@ -1906,6 +2059,8 @@ export function installWave(config: WaveConfig, createPlayback: typeof installPl
         const signals = pendingSignals.splice(0);
         try {
             host.soundcloudAPI?.waveSignals?.add(userId, signals);
+            // Лайк ушёл в журнал: main уже сбросил вкус, следующий подбор возьмёт новый профиль
+            if (signals.some((signal) => signal.likedNow)) tasteAt = 0;
         } catch (error) {
             console.warn('Волна: сигналы не записаны', error);
         }
@@ -1925,13 +2080,17 @@ export function installWave(config: WaveConfig, createPlayback: typeof installPl
             const byUser = recentInput();
             // Ранний пропуск: трек волны сменил человек в первые 30 секунд, не кликом в блоке и не в конце. Снижается интерес
             // к этой версии: её вероятные копии в сессии больше не встают, остальные треки аккаунта играют (A07).
-            // Смена самим сайтом (ошибка, конец очереди) пропуском не считается. Зерно выбрано руками, его пропуск ничего не убирает
-            if (active && previous && byUser && previous.reason.kind !== 'seedTrack' && !jumped && currentPosition < 30000 && currentDuration - currentPosition > 10000) {
+            // Смена самим сайтом (ошибка, конец очереди) пропуском не считается. Зерно выбрано руками, его пропуск ничего не убирает.
+            // Пропуск ещё снижает аккаунт, теги и зерно трека до конца волны, и очередь впереди берётся заново (В2.2)
+            const early = !!previous && active && byUser && previous.reason.kind !== 'seedTrack' && !jumped && currentPosition < 30000 && currentDuration - currentPosition > 10000;
+            if (early && previous) {
                 for (const key of copyKeys(previous.track)) skipped.add(key);
                 const kept = (item: WaveCandidate): boolean => item.track.id === previous.track.id || !skipped.has(copyKey(item.track));
                 pool = pool.filter(kept);
                 ownQueue = ownQueue.filter(kept);
-            }
+                adjustSession(previous, -1);
+                skipRun++;
+            } else if (previous && currentPosition >= 30000) skipRun = 0;
             jumped = false;
             finishPlay(undefined, byUser);
             currentId = id;
@@ -1939,6 +2098,10 @@ export function installWave(config: WaveConfig, createPlayback: typeof installPl
             currentDuration = durationOf(sound);
             currentLiked = likeButton()?.classList.contains('sc-button-selected') ?? false;
             if (sound) beginPlay(sound, byUser && lastInput.pick);
+            if (early && skipRun >= 3) {
+                skipRun = 0;
+                void changeCourse();
+            } else if (early) rebuildAhead();
             render();
         } else if (sound) {
             currentPosition = positionOf(sound);
@@ -1948,6 +2111,11 @@ export function installWave(config: WaveConfig, createPlayback: typeof installPl
                 currentLiked = liked;
                 const candidate = known.get(id);
                 if (liked && candidate && !likedSeeds.includes(candidate.track)) likedSeeds.unshift(candidate.track);
+                // Лайк трека волны сразу поднимает его аккаунт и теги в сессии и ставит похожие ближе (В2.2, В2.9)
+                if (liked && candidate && active && fromWave(p.getCurrentQueueItem())) {
+                    adjustSession(candidate, 1);
+                    void boostSimilar(candidate.track);
+                }
                 updateLike();
             }
             trackPlay(sound, p.isPlaying());
@@ -2205,6 +2373,12 @@ export function installWave(config: WaveConfig, createPlayback: typeof installPl
                 // Профиль вкуса пересчитается к следующему подбору, а сам трек сразу становится зерном, как лайк
                 tasteAt = 0;
                 if (excluded && marked && !likedSeeds.some((track) => track.id === entry.id)) likedSeeds.unshift(marked);
+                // Как лайк: аккаунт и теги в сессии выше, похожие сразу ближе в очереди (В2.2, В2.9)
+                if (excluded && marked && active) {
+                    const candidate = known.get(marked.id);
+                    if (candidate) adjustSession(candidate, 1);
+                    void boostSimilar(marked);
+                }
                 if (!excluded) {
                     const index = likedSeeds.findIndex((track) => track.id === entry.id);
                     if (index >= 0 && !profile?.liked.has(entry.id)) likedSeeds.splice(index, 1);
@@ -3475,7 +3649,7 @@ export function installWave(config: WaveConfig, createPlayback: typeof installPl
 // Помощники идут на страницу объявлениями рядом со скриптом: так они видны installWave и друг другу
 const pageHelpers = [
     normalizeTag, tagKeys, tagShares, genreKeys, genreCanon, genreParts, genreMain, parseGenres, formatGenres, genreKeysFor, classifyLink, canonicalUrl, trackMatchesGenre, trackArtist, rememberRecent, retryDelay,
-    isWaveEligible, acceptCandidate, pickSpaced, tasteMaps, tasteScore, tasteOrder, tasteReason, applyTasteReasons, shuffleInPlace, topGenres, fillText, reasonText, shapeSamples,
+    isWaveEligible, freshEnough, acceptCandidate, pickSpaced, spacingKeys, spacingGap, tasteMaps, tasteScore, tasteOrder, tasteReason, applyTasteReasons, shuffleInPlace, topGenres, fillText, reasonText, shapeSamples,
     artworkUrl, coversOf, formatTime, playEnd, siteSource, moodTags, trackPath, localDay, countText, tasteGroups, capPerArtist, forgottenPicks, artistNames, isNewArtist, spreadBy, pickFinds,
     ...identity.identityHelpers, ...sources.sourceHelpers, ...libraryMix.libraryHelpers, siteRequires, installPlaybackPage, installPlaybackRecovery,
     installVersions, installLibrary, installRadar, installShelf, installMenu,

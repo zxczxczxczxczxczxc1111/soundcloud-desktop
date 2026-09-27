@@ -464,6 +464,118 @@ it('A07: ранний пропуск кнопкой убирает версию,
     next.remove();
 });
 
+function nextButton(): HTMLButtonElement {
+    const next = document.createElement('button');
+    next.className = 'playControls skipControl__next';
+    document.body.append(next);
+    return next;
+}
+// Ранний пропуск: «Дальше» в нижнем плеере и следующий трек текущей очереди
+async function skipNow(site: ReturnType<typeof fakeSite>, next: HTMLButtonElement): Promise<void> {
+    next.click();
+    const index = site.player.getQueueState().currentIndex;
+    site.setItems(site.player.getQueue().slice() as FakeItem[], index + 1);
+    await vi.advanceTimersByTimeAsync(1100);
+}
+
+it('В2.2: ранний пропуск топит аккаунт до конца волны, очередь впереди берётся заново', async () => {
+    vi.spyOn(Math, 'random').mockReturnValue(0.5);
+    const withChannel = (seed: number): WaveTrack[] => [
+        ...relatedTracks(seed),
+        ...Array.from({ length: 3 }, (_, i) => ({ id: seed * 1000 + 900 + i, kind: 'track', user_id: 900, duration: 200000, title: 'Channel Song ' + seed + '-' + i })),
+    ];
+    const site = fakeSite(withChannel);
+    window.eval(waveScript());
+    await vi.advanceTimersByTimeAsync(100);
+    document.querySelector<HTMLButtonElement>('#sc-wave .scw-play')!.click();
+    await vi.advanceTimersByTimeAsync(1100);
+    const queued = site.player.replaceQueue.mock.calls[0][0] as FakeItem[];
+    const at = queued.findIndex((item) => item.sound.id % 1000 >= 900);
+    expect(at).toBeGreaterThanOrEqual(0);
+    site.setItems(queued, at);
+    await vi.advanceTimersByTimeAsync(1100);
+    const next = nextButton();
+    await skipNow(site, next);
+    // Впереди новые элементы очереди: песни канала 900 после всех остальных
+    const ahead = site.player.getQueue().slice(site.player.getQueueState().currentIndex + 1).map((item) => item.sound.id);
+    expect(ahead.length).toBeGreaterThan(0);
+    const firstChannel = ahead.findIndex((id) => id % 1000 >= 900);
+    const lastOther = ahead.map((id) => id % 1000 < 900).lastIndexOf(true);
+    if (firstChannel >= 0) expect(firstChannel).toBeGreaterThan(lastOther);
+    expect(new Set(ahead).size).toBe(ahead.length);
+    next.remove();
+});
+
+it('В2.14: три ранних пропуска подряд берут новые зёрна, найденное от зёрен с пропусками уходит из очереди впереди', async () => {
+    vi.spyOn(Math, 'random').mockReturnValue(0.5);
+    const history = [1, 2, 3, 4, 5, 6].map((id) => ({ track: { id, kind: 'track', user_id: 100 + id, duration: 180000, title: 'Seed ' + id } }));
+    const site = fakeSite(relatedTracks, (name) => (name === 'playHistoryTracks' ? { collection: history } : undefined));
+    window.eval(waveScript());
+    await vi.advanceTimersByTimeAsync(100);
+    document.querySelector<HTMLButtonElement>('#sc-wave .scw-play')!.click();
+    await vi.advanceTimersByTimeAsync(1100);
+    const next = nextButton();
+    const skipped: number[] = [];
+    for (let i = 0; i < 3; i++) {
+        skipped.push(site.player.getCurrentSound()!.id);
+        await skipNow(site, next);
+    }
+    await vi.advanceTimersByTimeAsync(2000);
+    const related = site.api.callEndpoint.mock.calls.filter(([name]) => name === 'relatedSounds').map(([, path]) => (path as { track_id: number }).track_id);
+    expect(new Set(related).size).toBeGreaterThan(3);
+    const failed = new Set(skipped.map((id) => Math.floor(id / 1000)));
+    const ahead = site.player.getQueue().slice(site.player.getQueueState().currentIndex + 1).map((item) => item.sound.id);
+    expect(ahead.length).toBeGreaterThan(0);
+    expect(ahead.some((id) => failed.has(Math.floor(id / 1000)))).toBe(false);
+    next.remove();
+});
+
+it('В2.9: лайк трека волны сразу ставит похожие на него первыми впереди', async () => {
+    const site = fakeSite(relatedTracks);
+    document.body.insertAdjacentHTML('beforeend', '<div class="playControls"><button class="playbackSoundBadge__like"></button></div>');
+    const siteLike = document.querySelector<HTMLButtonElement>('.playbackSoundBadge__like')!;
+    siteLike.addEventListener('click', () => siteLike.classList.toggle('sc-button-selected'));
+    window.eval(waveScript());
+    await vi.advanceTimersByTimeAsync(100);
+    document.querySelector<HTMLButtonElement>('#sc-wave .scw-play')!.click();
+    await vi.advanceTimersByTimeAsync(1100);
+    const playing = site.player.getCurrentSound()!.id;
+    siteLike.click();
+    await vi.advanceTimersByTimeAsync(1100);
+    expect(site.api.callEndpoint).toHaveBeenCalledWith('relatedSounds', { track_id: playing }, { limit: 50 });
+    const index = site.player.getQueueState().currentIndex;
+    const front = site.player.getQueue().slice(index + 1, index + 3).map((item) => Math.floor(item.sound.id / 1000));
+    expect(front).toEqual([playing, playing]);
+});
+
+it('В2.4 и В2.10: «Похожее» не повторяет слышанное в клиенте за 3 дня, трек с минусом во вкусе зерном не становится', async () => {
+    const site = fakeSite(relatedTracks);
+    const heard = vi.fn(async () => [1001, 2001, 3001]);
+    const load = vi.fn(async () => ({ version: 6, artists: [], tags: [], tracks: [[1, -0.5]] }));
+    Object.assign(window, { soundcloudAPI: { waveLibrary: { heard }, waveTaste: { load } } });
+    window.eval(waveScript());
+    await vi.advanceTimersByTimeAsync(100);
+    document.querySelector<HTMLButtonElement>('#sc-wave .scw-play')!.click();
+    await vi.advanceTimersByTimeAsync(1100);
+    expect(heard).toHaveBeenCalledWith(77);
+    const ids = site.player.getQueue().slice().map((item) => item.sound.id);
+    expect(ids.length).toBeGreaterThan(0);
+    expect(ids.some((id) => [1001, 2001, 3001].includes(id))).toBe(false);
+    const related = site.api.callEndpoint.mock.calls.filter(([name]) => name === 'relatedSounds').map(([, path]) => (path as { track_id: number }).track_id);
+    expect(related).not.toContain(1);
+});
+
+it('В2.13: жанр без зёрен по полю жанра берёт зёрна по меткам', async () => {
+    localStorage.setItem('scDesktopWave', JSON.stringify({ genre: 'phonk' }));
+    const history = [1, 2, 3].map((id) => ({ track: { id, kind: 'track', user_id: 100 + id, duration: 180000, title: 'Seed ' + id, genre: 'Other', tag_list: 'phonk drift' } }));
+    const site = fakeSite((seed) => relatedTracks(seed).map((track) => ({ ...track, genre: 'Phonk' })), (name) => (name === 'playHistoryTracks' ? { collection: history } : undefined));
+    window.eval(waveScript());
+    await vi.advanceTimersByTimeAsync(100);
+    const related = site.api.callEndpoint.mock.calls.filter(([name]) => name === 'relatedSounds').map(([, path]) => (path as { track_id: number }).track_id);
+    expect(related.length).toBeGreaterThan(0);
+    expect(related.every((id) => [1, 2, 3].includes(id))).toBe(true);
+});
+
 it('волна от трека скрытого артиста подбирает похожих, сам артист в неё не попадает', async () => {
     const site = fakeSite((seed) => [...relatedTracks(seed), { id: seed * 1000 + 900, kind: 'track', user_id: 900, duration: 200000, title: 'Art ' + seed }], siteExtra);
     fakeExclusions([], [{ id: 900, title: 'Art', url: 'https://soundcloud.com/art' }]);

@@ -22,6 +22,9 @@ export interface WaveTrack {
     created_at?: string;
     display_date?: string;
     release_date?: string | null;
+    /** Счётчики сайта: слабый член порядка и порог «Свежего в жанре»; у заготовок и старых записей их нет */
+    likes_count?: number | null;
+    playback_count?: number | null;
 }
 
 export type WaveMode = 'similar' | 'fresh';

@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import {
     WAVE_TEXTS, acceptCandidate, artworkUrl, canonicalUrl, classifyLink, formatGenres, genreKeys, genreKeysFor, isWaveEligible,
-    moodTags, normalizeTag, trackPath, parseGenres, pickSpaced, reasonText, shapeSamples, topGenres, trackMatchesGenre,
+    moodTags, normalizeTag, trackPath, parseGenres, pickSpaced, spacingKeys, spacingGap, freshEnough, reasonText, shapeSamples, topGenres, trackMatchesGenre,
     applyTasteReasons, tagKeys, tasteMaps, tasteOrder, tasteReason, tasteScore, type TasteMaps, type WaveCandidate, type WaveFilter, type WaveTrack,
     countText, forgottenPicks, localDay, pickFinds, tasteGroups, capPerArtist, artistNames, isNewArtist, spreadBy, genreCanon, genreParts, genreMain,
     rememberRecent, retryDelay,
@@ -275,9 +275,33 @@ describe('фильтры', () => {
 
 it('разносит артистов в окне из трёх и не трогает пул', () => {
     const pool: WaveCandidate[] = [1, 1, 1, 2, 3, 4].map((artist, index) => ({ track: track(index + 1, { user_id: artist }), reason: { kind: 'newArtist' } }));
-    const picked = pickSpaced(pool, 4, [2]);
+    const picked = pickSpaced(pool, 4, [['u:2']]);
     expect(picked.map((item) => item.track.user_id)).toEqual([1, 3, 4, 2]);
     expect(pool).toHaveLength(6);
+});
+
+it('В2.6: одна песня исполнителя на разных каналах разносится по исполнителю, окно растёт с числом исполнителей', () => {
+    const song = (id: number, channel: number): WaveCandidate => ({
+        track: track(id, { user_id: channel, title: 'Star - Song ' + id, user: { id: channel, username: 'Channel ' + channel } }), reason: { kind: 'similar', seed: 'x' },
+    });
+    const other = (id: number): WaveCandidate => ({ track: track(id, { user_id: id, user: { id, username: 'Solo ' + id } }), reason: { kind: 'similar', seed: 'x' } });
+    const pool = [song(1, 101), song(2, 102), song(3, 103), other(4), other(5)];
+    expect(spacingKeys(pool[0].track)).toEqual(['u:101', 'a:star']);
+    expect(pickSpaced(pool, 5, []).map((item) => item.track.id)).toEqual([1, 4, 5, 2, 3]);
+    expect(spacingGap(pool)).toBe(2);
+    expect(spacingGap(Array.from({ length: 30 }, (_, i) => other(100 + i)))).toBe(5);
+});
+
+it('В2.12: мягкий порог свежего в жанре, лайки трека и поправка сессии в порядке по вкусу', () => {
+    expect(freshEnough(track(1))).toBe(true);
+    expect(freshEnough(track(2, { likes_count: 0, playback_count: 5 }))).toBe(false);
+    expect(freshEnough(track(3, { likes_count: 1, playback_count: 5 }))).toBe(true);
+    expect(freshEnough(track(4, { likes_count: null, playback_count: 40 }))).toBe(true);
+    const empty = tasteMaps({}) as TasteMaps;
+    const list: WaveCandidate[] = [1, 2, 3].map((id) => ({ track: track(id, { likes_count: id === 3 ? 5000 : 0 }), reason: { kind: 'newArtist' } }));
+    // При равном случае вперёд то, что понравилось многим; поправка сессии топит трек
+    expect(tasteOrder(list, empty, () => 0.5).map((item) => item.track.id)[0]).toBe(3);
+    expect(tasteOrder(list, empty, () => 0.5, (item) => (item.track.id === 3 ? -2 : 0)).map((item) => item.track.id).slice(-1)[0]).toBe(3);
 });
 
 it('частые жанры лайков и подписи причин на двух языках', () => {

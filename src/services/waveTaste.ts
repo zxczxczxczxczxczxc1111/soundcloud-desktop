@@ -109,13 +109,17 @@ export function tasteScore(track: WaveTrack, taste: TasteMaps): TasteScore {
 }
 
 // Порядок подборки по вкусу вместо перемешивания: взвешенная случайная выборка (чем выше оценка, тем раньше),
-// треки с сильным минусом не берутся, не меньше 30% артистов без истории, чтобы волна не кормила сама себя
-export function tasteOrder<T extends { track: WaveTrack }>(list: T[], taste: TasteMaps, random: () => number = Math.random): T[] {
+// треки с сильным минусом не берутся, не меньше 30% артистов без истории, чтобы волна не кормила сама себя.
+// adjust: поправка сессии (пропуски и лайки в этой волне). Лайки трека на сайте идут слабым членом: при равном вкусе
+// вперёд то, что понравилось многим (В2.12)
+export function tasteOrder<T extends { track: WaveTrack }>(list: T[], taste: TasteMaps, random: () => number = Math.random, adjust?: (item: T) => number): T[] {
     const keyed: Array<{ item: T; known: boolean; key: number }> = [];
     for (const item of list) {
         const score = tasteScore(item.track, taste);
         if (score.track <= -1) continue;
-        const weight = Math.exp(Math.max(-3, Math.min(3, score.score)));
+        const likes = item.track.likes_count;
+        const popular = typeof likes === 'number' && likes > 0 ? 0.05 * Math.log10(1 + likes) : 0;
+        const weight = Math.exp(Math.max(-3, Math.min(3, score.score + popular + (adjust ? adjust(item) : 0))));
         keyed.push({ item, known: score.known, key: Math.log(Math.max(random(), 1e-12)) / weight });
     }
     keyed.sort((a, b) => b.key - a.key);
