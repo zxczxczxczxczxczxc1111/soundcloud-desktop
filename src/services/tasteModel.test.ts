@@ -79,11 +79,44 @@ it('круг повтора не плюсует артиста и теги, се
     expect(weightOf(again.tracks, 1)).toBeCloseTo(blended(1.4, 3) + blended(1.4, HOUR_AGE), 2);
 });
 
-it('волна ослабляет плюсы, но не минусы; простой системы нейтрален; без уверенности всё вполсилы', () => {
+it('В2.3: «Не нравится», скрытый аккаунт и «Не сейчас» минусом; «Больше такого» с названием учит участников и семью', () => {
+    const marks: TasteMark[] = [
+        { id: 7, artist: 70, genre: 'Phonk', tags: '', at: NOW, kind: 'track', title: 'Some Song', name: 'Uploader' },
+        { id: 8, artist: 80, genre: '', tags: '', at: NOW, kind: 'later-track', title: 'Other', name: 'Other Uploader' },
+        { id: 90, artist: 90, genre: '', tags: '', at: NOW, kind: 'artist', name: 'Spam' },
+        { id: 91, artist: 91, genre: '', tags: '', at: NOW, kind: 'later-artist', name: 'Tired' },
+        { id: 9, artist: 99, genre: '', tags: '', at: NOW, kind: 'more', title: 'Artist X - Song (slowed)', name: 'Channel' },
+    ];
+    const { profile } = buildTaste(confident, marks, empty, NOW);
+    expect(weightOf(profile.tracks, 7)).toBeCloseTo(-2, 2);
+    expect(weightOf(profile.artists, 70)).toBeCloseTo(-0.5, 2);
+    expect(weightOf(profile.tags, 'phonk')).toBeCloseTo(-0.2, 2);
+    expect(weightOf(profile.tracks, 8)).toBeCloseTo(-0.5, 2);
+    expect(weightOf(profile.artists, 90)).toBeCloseTo(-1, 2);
+    expect(weightOf(profile.artists, 91)).toBeCloseTo(-0.3, 2);
+    // «Больше такого» чужой песни на канале: участник из названия и семья версий, каналу половина
+    expect(weightOf(profile.credits, 'artistx')).toBeCloseTo(0.8, 2);
+    expect(weightOf(profile.families, 'song|artistx')).toBeCloseTo(0.6, 2);
+    expect(weightOf(profile.artists, 99)).toBeCloseTo(0.4, 2);
+});
+
+it('В2.3: прослушивание в простое плюсом не считается; В2.11: убранный аккаунт снят и из участников, уверенность растёт плавно', () => {
+    const away = buildTaste([...confident, play({ id: 1, away: true }), play({ id: 1, away: true, at: NOW - 1000 })], [], empty, NOW).profile;
+    expect(weightOf(away.tracks, 1)).toBeUndefined();
+    expect(weightOf(away.artists, 10)).toBeUndefined();
+    const own = { artist: 50, artistName: 'Artist Z', title: 'Tune' };
+    const dropped = buildTaste([...confident, play({ id: 2, ...own })], [], { artists: [50], tags: [] }, NOW).profile;
+    expect(weightOf(dropped.artists, 50)).toBeUndefined();
+    expect(weightOf(dropped.credits, 'artistz')).toBeUndefined();
+    // Сто засчитанных из двухсот: три четверти силы, а не половина
+    const half = buildTaste([...confident.slice(0, 99), play({ id: 1 })], [], empty, NOW).profile;
+    expect(weightOf(half.tracks, 1)).toBeCloseTo(blended(0.75, HOUR_AGE), 2);
+});
+
+it('волна ослабляет плюсы, но не минусы; без уверенности всё вполсилы', () => {
     const site = buildTaste([...confident, play({ id: 1 })], [], empty, NOW).profile;
     const wave = buildTaste([...confident, play({ id: 1, source: 'wave:similar' })], [], empty, NOW).profile;
     const picked = buildTaste([...confident, play({ id: 1, source: 'wave:similar', picked: true })], [], empty, NOW).profile;
-    const away = buildTaste([...confident, play({ id: 1, away: true })], [], empty, NOW).profile;
     const skipped = buildTaste([...confident, play({ id: 1, source: 'wave:similar', heard: 5000, end: 'skip' })], [], empty, NOW).profile;
     const unsure = buildTaste([play({ id: 1 })], [], empty, NOW).profile;
     expect(weightOf(site.tracks, 1)).toBeCloseTo(blended(1, HOUR_AGE), 2);
@@ -93,8 +126,6 @@ it('волна ослабляет плюсы, но не минусы; прост
     // «Моя музыка» играет собранное самим человеком: без скидки волны (Э7)
     const library = buildTaste([...confident, play({ id: 1, source: 'wave:library' })], [], empty, NOW).profile;
     expect(weightOf(library.tracks, 1)).toBeCloseTo(blended(1, HOUR_AGE), 2);
-    expect(weightOf(away.tracks, 1)).toBeCloseTo(weightOf(site.tracks, 1) ?? 0, 6);
-    expect(weightOf(away.artists, 10)).toBeCloseTo(weightOf(site.artists, 10) ?? 0, 6);
     expect(weightOf(skipped.tracks, 1)).toBeCloseTo(-1, 2);
     expect(weightOf(skipped.artists, 10)).toBeCloseTo(-0.3, 2);
     expect(weightOf(unsure.tracks, 1)).toBeCloseTo(blended(0.5, HOUR_AGE), 2);

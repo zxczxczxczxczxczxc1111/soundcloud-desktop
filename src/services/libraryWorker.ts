@@ -1,8 +1,8 @@
 import { parentPort, workerData } from 'node:worker_threads';
 import { HistoryIndex } from './historyIndex';
 import { WaveSignals } from './waveSignals';
-import { TasteService, type TasteMark } from './tasteModel';
-import { WaveExclusions } from './waveExclusions';
+import { TasteService } from './tasteModel';
+import { WaveExclusions, tasteMarks, type TasteMark } from './waveExclusions';
 import { PlaybackStore } from './playbackStore';
 import { RecommendStore } from './recommendStore';
 import { RadarService } from './radar';
@@ -14,9 +14,8 @@ const index = new HistoryIndex(directory, new WaveSignals(directory));
 const playback = new PlaybackStore(directory);
 const recommend = new RecommendStore(directory);
 const overrides = new Map<number, TasteMark[]>();
-const taste = new TasteService(directory, index, (userId) => overrides.get(userId) ?? new WaveExclusions(directory).load(userId).more.map((entry) => ({
-    id: entry.id, artist: entry.artistId ?? 0, genre: entry.genre ?? '', tags: entry.tags ?? '', at: entry.at,
-})), (userId, played) => recommend.tasteLibrary(userId, played));
+const taste = new TasteService(directory, index, (userId) => overrides.get(userId) ?? tasteMarks(new WaveExclusions(directory).load(userId)),
+    (userId, played) => recommend.tasteLibrary(userId, played));
 const radar = new RadarService(recommend, index, taste, (userId) => new WaveExclusions(directory).load(userId));
 const backup = new BackupService(directory, { playback, recommend, index, taste });
 function run(request: LibraryRequest): unknown {

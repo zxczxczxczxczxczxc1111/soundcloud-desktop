@@ -621,7 +621,8 @@ it('«Не нравится» уводит трек из очереди, игр�
     rightClick(tile);
     choose('dislike');
     await vi.advanceTimersByTimeAsync(100);
-    expect(bridge.set).toHaveBeenCalledWith(77, 'track', expect.objectContaining({ id: disliked }), true);
+    // Артист трека уходит и с «Не нравится»: по нему модель вкуса учится минусом
+    expect(bridge.set).toHaveBeenCalledWith(77, 'track', expect.objectContaining({ id: disliked, artistId: expect.any(Number) }), true);
     expect(site.player.getQueue().slice().some((item) => item.sound.id === disliked)).toBe(false);
     expect(document.querySelector('.scw-toast')?.textContent).toBe('This track won’t play in My Wave');
 

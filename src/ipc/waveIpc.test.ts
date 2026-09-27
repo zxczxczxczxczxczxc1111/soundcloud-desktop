@@ -77,7 +77,18 @@ describe('обработчики волны', () => {
         const { ipc, site, library, settingsView } = setup();
         await expect(ipc.invoke('soundcloud:wave-exclusions:set', site, 11, 'more', { id: 7 }, true)).resolves.toBe(true);
         expect(settingsView.send).toHaveBeenCalledWith('wave-exclusions-changed');
-        expect(library.invalidate).toHaveBeenCalledWith(11, [{ id: 7, artist: 70, genre: 'phonk', tags: '', at: 5 }]);
+        expect(library.invalidate).toHaveBeenCalledWith(11, [{ id: 7, artist: 70, genre: 'phonk', tags: '', at: 5, kind: 'more', title: 'Песня', name: 'Автор' }]);
+    });
+    it('лайк во время трека сразу сбрасывает вкус в main, обычный сигнал нет', async () => {
+        const { ipc, site, signals, library } = setup();
+        await ipc.send('soundcloud:wave-signals:add', site, 11, [{ id: 1, likedNow: false }]);
+        expect(library.invalidate).not.toHaveBeenCalled();
+        await ipc.send('soundcloud:wave-signals:add', site, 11, [{ id: 1, likedNow: false }, { id: 2, likedNow: true }]);
+        expect(library.invalidate).toHaveBeenCalledOnce();
+        // Журнал ничего не принял: вкус не трогается
+        signals.add.mockReturnValueOnce(0);
+        await ipc.send('soundcloud:wave-signals:add', site, 11, [{ id: 3, likedNow: true }]);
+        expect(library.invalidate).toHaveBeenCalledOnce();
     });
     it('снятие в F1: отказ хранилища приходит ошибкой, успех переучивает вкус и будит страницу', async () => {
         const { ipc, own, exclusions, library, page } = setup();

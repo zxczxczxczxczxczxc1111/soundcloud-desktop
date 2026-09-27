@@ -5,6 +5,7 @@ import type { TasteLibrary, TasteUpload } from './recommendStore';
 import { copyKey, familyKey, nameKey, parseTrackTitle, trackCredits, type TrackCredit } from './trackIdentity';
 import { genreCanon, normalizeTag, tagShares, type WaveTrack } from './wave';
 import { TASTE_PARAMS, type Part } from './tasteParams';
+import type { TasteMark } from './waveExclusions';
 
 // Модель вкуса «Моей волны» по журналу прослушиваний, лайкам и подпискам. Три части с разной памятью (раздел 6.1
 // плана радара): устойчивая за год, последние 30 дней и подтверждённые новые интересы недели. Аккаунт-куратор,
@@ -25,15 +26,14 @@ const PARTIAL: Weights = [-0.2, 0, 0];
 const MOST: Weights = [0.5, 0.2, 0.1];
 const FULL: Weights = [1, 0.4, 0.2];
 const LIKE: Weights = [2, 0.8, 0.3];
+/** «Не нравится» и «Не сейчас» у трека: явное действие против, «Не сейчас» мягче */
+const DISLIKE: Weights = [-2, -0.5, -0.2];
+const LATER: Weights = [-0.5, -0.1, 0];
+/** Скрытый аккаунт и «Не сейчас» у аккаунта: минус самому аккаунту */
+const HIDDEN_ARTIST = -1;
+const LATER_ARTIST = -0.3;
 
-/** «Больше такого»: локальный лайк, трек со своим артистом и метками */
-export interface TasteMark {
-    id: number;
-    artist: number;
-    genre: string;
-    tags: string;
-    at: number;
-}
+export type { TasteMark } from './waveExclusions';
 export interface TasteOverrides {
     artists: number[];
     tags: string[];
@@ -192,7 +192,8 @@ export function buildTaste(
     // Треки, чья серия кругов повтора уже получила голос переслушивания
     const looping = new Set<number>();
     const counted = plays.filter((play) => play.heard >= COUNTED_MS && !play.looped).length;
-    const confidence = counted < P.confidentPlays ? 0.5 : 1;
+    // Уверенность растёт плавно от половины до полной: ступенька на пороге сдвигала все веса разом
+    const confidence = 0.5 + 0.5 * Math.min(1, counted / P.confidentPlays);
 
     const originOf = (at: number, record: string, manual: boolean, daily: boolean, undated = false): Origin => {
         const age = Math.max(0, now - at);
@@ -254,29 +255,37 @@ export function buildTaste(
             cache.set(play.id, item);
         }
         if (play.likedNow) likedInPlay.add(play.id);
-        // Трек, поданный волной, весит в плюс меньше выбранного руками. Простой системы (away) не штрафуется: раздел 1 плана.
-        // «Моя музыка» играет собранное самим человеком, это собственный выбор без скидки (Э7)
+        // Трек, поданный волной, весит в плюс меньше выбранного руками. Простой системы (away) не штрафуется и плюсом
+        // не считается: музыка играла сама. «Моя музыка» играет собранное самим человеком, это выбор без скидки (Э7)
         const positive = play.source.startsWith('wave:') && play.source !== 'wave:library' && !play.picked ? P.wavePositive : 1;
         const origin = originOf(play.at, item.record, play.likedNow || play.picked, true);
         // Само прослушивание насыщается по суткам, лайк во время него явное действие и идёт целиком.
         // Круг повтора не прослушивание заново: артист и теги за него ничего не получают
         const weights = play.looped ? null : playWeights({ heard: play.heard, dur: play.dur, end: play.end, likedNow: false, covered: play.covered, endedBy: play.endedBy });
-        if (weights) apply(weights, play.id, play.artist, item, positive, origin);
+        if (weights && !(play.away && weights[0] > 0)) apply(weights, play.id, play.artist, item, positive, origin);
         if (play.likedNow) apply(LIKE, play.id, play.artist, item, positive, { ...origin, daily: false });
         if (!play.looped) looping.delete(play.id);
-        if (play.heard < COUNTED_MS) continue;
+        if (play.heard < COUNTED_MS || play.away) continue;
         const previous = lastCounted.get(play.id);
         // Переслушивание плюсует трек; серия кругов повтора подряд даёт один голос, а не голос за круг
         if (previous !== undefined && play.at - previous <= P.replayDays * DAY && !(play.looped && looping.has(play.id))) push('tracks', String(play.id), positive, origin);
         if (play.looped) looping.add(play.id);
         lastCounted.set(play.id, play.at);
     }
+    // Отметки: «Больше такого» как лайк, с названием и именем учит семью версий и участников; «Не нравится»,
+    // скрытый аккаунт и «Не сейчас» минусом. Явные действия, без насыщения по суткам
     const marked = new Set<number>();
     for (const mark of marks) {
-        marked.add(mark.id);
+        const kind = mark.kind ?? 'more';
+        const origin = (record: string): Origin => originOf(mark.at, record, true, false);
+        if (kind === 'artist' || kind === 'later-artist') {
+            push('artists', String(mark.id), kind === 'artist' ? HIDDEN_ARTIST : LATER_ARTIST, origin('sc:user:' + mark.id));
+            continue;
+        }
+        if (kind === 'more') marked.add(mark.id);
         tagLabels(mark.genre, mark.tags, labels);
-        const item = directionsOf({ id: mark.id, uploader: mark.artist, uploaderName: '', title: '', duration: 0, genre: mark.genre, tags: mark.tags, credits: null });
-        apply(LIKE, mark.id, mark.artist, item, 1, originOf(mark.at, item.record, true, false));
+        const item = directionsOf({ id: mark.id, uploader: mark.artist, uploaderName: mark.name ?? '', title: mark.title ?? '', duration: 0, genre: mark.genre, tags: mark.tags, credits: stored.get(mark.id)?.credits ?? null });
+        apply(kind === 'more' ? LIKE : kind === 'track' ? DISLIKE : LATER, mark.id, mark.artist, item, 1, origin(item.record));
     }
     // Лайки сайта: явное действие, без насыщения. Лайк, уже поставленный во время прослушивания, второй раз не идёт
     for (const like of library?.likes ?? []) {
@@ -312,7 +321,12 @@ export function buildTaste(
     const droppedArtists = new Set(overrides.artists);
     // Убранные до склейки написаний (hiphopandrap) снимают и склеенный ключ (hiphop)
     const droppedTags = new Set([...overrides.tags, ...overrides.tags.map(genreCanon)]);
-    for (const id of droppedArtists) total.artists.delete(String(id));
+    // Убранный аккаунт снимается и из участников под своим именем: иначе его песни на чужих каналах шли бы по-прежнему
+    for (const id of droppedArtists) {
+        total.artists.delete(String(id));
+        const name = nameKey(names.get(id)?.name);
+        if (name) total.credits.delete(name);
+    }
     for (const key of droppedTags) total.tags.delete(key);
     const profile: TasteProfile = {
         version: P.version,

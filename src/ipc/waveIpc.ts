@@ -1,7 +1,7 @@
 // «Моя волна»: журнал «Нового», сигналы прослушиваний, пустая волна, отметки, вкус, подборки дня и «Моя музыка»
 import type { DiagnosticJournal } from '../services/diagnosticJournal';
 import type { LibraryService } from '../services/libraryService';
-import type { WaveExclusions } from '../services/waveExclusions';
+import { tasteMarks, type WaveExclusions } from '../services/waveExclusions';
 import type { WaveJournal } from '../services/waveJournal';
 import type { WaveShelf } from '../services/waveShelf';
 import type { WaveSignals } from '../services/waveSignals';
@@ -36,7 +36,10 @@ export function registerWaveIpc(ipc: IpcRegistry, deps: WaveIpcDeps): void {
     // Журнал сигналов: как слушается каждый трек, из него потом учится подбор
     ipc.removeAllListeners('soundcloud:wave-signals:add');
     ipc.on('soundcloud:wave-signals:add', (event, userId: unknown, signals: unknown) => {
-        if (isTrustedSoundCloudSender(event)) deps.signals()?.add(userId, signals);
+        if (!isTrustedSoundCloudSender(event) || !deps.signals()?.add(userId, signals)) return;
+        // Лайк во время трека: вкус пересчитывается к следующему подбору, а не через полчаса кэша
+        const liked = Array.isArray(signals) && signals.some((item: unknown) => !!item && typeof item === 'object' && (item as { likedNow?: unknown }).likedNow === true);
+        if (liked) library.invalidate(userId, tasteMarks(exclusions.load(userId)));
     });
     ipc.removeAllListeners('soundcloud:wave-empty');
     ipc.on('soundcloud:wave-empty', (event, counts: unknown) => {
@@ -55,8 +58,8 @@ export function registerWaveIpc(ipc: IpcRegistry, deps: WaveIpcDeps): void {
         const saved = exclusions.set(userId, kind, entry, excluded);
         if (saved) {
             deps.settingsView()?.send('wave-exclusions-changed');
-            // «Больше такого» учит модель вкуса, «Не нравится» снимает его с трека
-            library.invalidate(userId, exclusions.load(userId).more.map((entry) => ({ id: entry.id, artist: entry.artistId ?? 0, genre: entry.genre ?? '', tags: entry.tags ?? '', at: entry.at })));
+            // Любая отметка учит модель вкуса: «Больше такого» плюсом, остальные минусом
+            library.invalidate(userId, tasteMarks(exclusions.load(userId)));
         }
         return saved;
     });
@@ -68,7 +71,7 @@ export function registerWaveIpc(ipc: IpcRegistry, deps: WaveIpcDeps): void {
         if (!isTrustedLocalSender(event)) throw new Error('Недопустимый отправитель IPC');
         const userId = exclusions.currentUser();
         if (!exclusions.set(userId, kind, { id }, false)) throw new Error('Отметка не снята');
-        library.invalidate(userId, exclusions.load(userId).more.map((entry) => ({ id: entry.id, artist: entry.artistId ?? 0, genre: entry.genre ?? '', tags: entry.tags ?? '', at: entry.at })));
+        library.invalidate(userId, tasteMarks(exclusions.load(userId)));
         // Страница держит отметки у себя, поэтому перечитывает их по сигналу
         const page = deps.page();
         if (!page.isDestroyed())

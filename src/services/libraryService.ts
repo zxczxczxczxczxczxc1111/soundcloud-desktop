@@ -1,7 +1,8 @@
 import { Worker } from 'node:worker_threads';
 import { join } from 'node:path';
 import type { HistoryIndex } from './historyIndex';
-import type { TasteService, TasteMark } from './tasteModel';
+import type { TasteService } from './tasteModel';
+import type { TasteMark } from './waveExclusions';
 import type { PlaybackStore } from './playbackStore';
 import type { RecommendStore } from './recommendStore';
 import type { RadarService } from './radar';

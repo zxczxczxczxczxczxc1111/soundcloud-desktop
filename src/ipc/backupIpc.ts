@@ -10,7 +10,7 @@ import {
 import type { DiagnosticJournal } from '../services/diagnosticJournal';
 import type { LibraryService } from '../services/libraryService';
 import type { TranslationKeys } from '../services/translationService';
-import type { WaveExclusions } from '../services/waveExclusions';
+import { tasteMarks, type WaveExclusions } from '../services/waveExclusions';
 import type { WaveJournal } from '../services/waveJournal';
 import type { WaveSignals } from '../services/waveSignals';
 import type { HistoryManager } from '../history/historyManager';
@@ -60,7 +60,7 @@ export function registerBackupIpc(ipc: IpcRegistry, deps: BackupIpcDeps): { runA
             busy: backupBusy,
         };
     };
-    const tasteMarks = (userId: number) => exclusions.load(userId).more.map((entry) => ({ id: entry.id, artist: entry.artistId ?? 0, genre: entry.genre ?? '', tags: entry.tags ?? '', at: entry.at }));
+    const marksOf = (userId: number) => tasteMarks(exclusions.load(userId));
     const backupSettings = (): Record<string, unknown> => {
         const values: Record<string, unknown> = {};
         for (const key of [...BACKUP_SETTING_KEYS, ...BACKUP_MIGRATION_MARKS]) {
@@ -178,7 +178,7 @@ export function registerBackupIpc(ipc: IpcRegistry, deps: BackupIpcDeps): { runA
             const ids = outcome.accounts.map((account) => account.id);
             await library.request('backupFinish', ids).catch((error: unknown) => console.warn('Резервная копия: индекс истории не пересобран', error));
             // Волна, история и F1 перечитывают данные; играющий трек не трогается
-            for (const id of ids) library.invalidate(id, tasteMarks(id));
+            for (const id of ids) library.invalidate(id, marksOf(id));
             deps.settingsView()?.send('wave-exclusions-changed');
             const page = deps.page();
             if (page && !page.isDestroyed())

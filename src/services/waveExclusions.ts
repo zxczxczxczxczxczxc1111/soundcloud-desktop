@@ -32,6 +32,32 @@ export interface WaveExclusionList {
     families: ExclusionEntry[];
 }
 
+/** Отметка для модели вкуса: «Больше такого» плюсом, «Не нравится», скрытый аккаунт и «Не сейчас» минусом */
+export interface TasteMark {
+    id: number;
+    /** Загрузчик трека; у отметки аккаунта сам аккаунт */
+    artist: number;
+    genre: string;
+    tags: string;
+    at: number;
+    /** Без вида это «Больше такого» */
+    kind?: 'more' | 'track' | 'artist' | 'later-track' | 'later-artist';
+    /** Название трека и имя загрузчика: по ним учатся семья версий и участники */
+    title?: string;
+    name?: string;
+}
+/** Отметки пользователя для модели вкуса; истёкшие «Не сейчас» load уже не отдаёт */
+export function tasteMarks(list: WaveExclusionList): TasteMark[] {
+    const track = (kind: 'more' | 'track' | 'later-track') => (entry: ExclusionEntry): TasteMark => ({
+        id: entry.id, artist: entry.artistId ?? 0, genre: entry.genre ?? '', tags: entry.tags ?? '', at: entry.at, kind, title: entry.title, name: entry.artist,
+    });
+    const account = (kind: 'artist' | 'later-artist') => (entry: ExclusionEntry): TasteMark => ({ id: entry.id, artist: entry.id, genre: '', tags: '', at: entry.at, kind, name: entry.title });
+    return [
+        ...list.more.map(track('more')), ...list.tracks.map(track('track')), ...list.laterTracks.map(track('later-track')),
+        ...list.artists.map(account('artist')), ...list.laterArtists.map(account('later-artist')),
+    ];
+}
+
 const LIMIT = 5000;
 export const LATER_MS = 7 * 86400000;
 const LISTS: Record<ExclusionKind, keyof WaveExclusionList> = {

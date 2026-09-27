@@ -2177,9 +2177,8 @@ export function installWave(config: WaveConfig, createPlayback: typeof installPl
                 return;
             }
             const id = await ensureUser();
-            // Артист и метки трека нужны main только для «Больше такого»: по ним учится модель вкуса
-            const payload = kind === 'more' ? entry : { id: entry.id, title: entry.title, artist: entry.artist, url: entry.url };
-            const saved = id ? await host.soundcloudAPI?.waveExclusions?.set(id, kind, payload, excluded) : false;
+            // Артист и метки трека уходят с любой отметкой трека: по ним модель вкуса учится и плюсом, и минусом
+            const saved = id ? await host.soundcloudAPI?.waveExclusions?.set(id, kind, entry, excluded) : false;
             if (saved !== true) {
                 showToast(T.toastNotSaved);
                 return;
