@@ -406,7 +406,7 @@ it('ПКМ по артисту: волна от его треков, его тр
     window.eval(waveScript());
     await vi.advanceTimersByTimeAsync(100);
     rightClick(row.querySelector('.soundTitle__username')!);
-    expect(menuActs()).toEqual(['wave-artist', 'later-artist', 'hide-artist']);
+    expect(menuActs()).toEqual(['wave-artist', 'pin', 'later-artist', 'hide-artist']);
     choose('wave-artist');
     await vi.advanceTimersByTimeAsync(100);
     expect(site.api.callEndpoint).toHaveBeenCalledWith('userToptracks', { id: 900 }, { limit: 20 });
@@ -414,6 +414,115 @@ it('ПКМ по артисту: волна от его треков, его тр
     expect(queued.some((item) => item.sound.id > 9000 && item.sound.id < 9010)).toBe(true);
     expect(queued.some((item) => item.sound.id > 9000000)).toBe(true);
     expect(document.querySelector('#sc-wave .scw-hint')?.textContent).toBe('Wave from artist Art');
+});
+
+// В5: закрепления главной
+const pinExtra: Extra = (name, path, query) => {
+    if (name === 'resolve' && query.url === 'https://soundcloud.com/art/sets/mix')
+        return { kind: 'playlist', title: 'Mix', permalink_url: 'https://soundcloud.com/art/sets/mix', tracks: artistTracks };
+    return siteExtra(name, path, query);
+};
+function pageLink(href: string, text: string): HTMLAnchorElement {
+    const link = document.createElement('a');
+    link.setAttribute('href', href);
+    link.textContent = text;
+    document.body.append(link);
+    return link;
+}
+const pinTitles = (): string[] => [...document.querySelectorAll<HTMLElement>('#sc-wave .scw-pins [data-act="pin-play"]')].map((node) => node.textContent ?? '');
+
+it('В5: плейлист и артист закрепляются из меню, стоят в быстром ряду до «Моей музыки», играют, подсвечены и открепляются', async () => {
+    vi.spyOn(Math, 'random').mockReturnValue(0.5);
+    const site = fakeSite(relatedTracks, pinExtra);
+    const exclusions = fakeExclusions();
+    Object.assign(window, { soundcloudAPI: { waveExclusions: exclusions, waveLibrary: libraryBridge() } });
+    const mix = pageLink('/art/sets/mix', 'Mix');
+    const artist = pageLink('/art', 'Art');
+    window.eval(waveScript());
+    await vi.advanceTimersByTimeAsync(100);
+    const section = document.getElementById('sc-wave')!;
+    expect(section.querySelector('.scw-pins')).toBeNull();
+
+    rightClick(mix);
+    expect(menuActs()).toEqual(['wave-playlist', 'pin']);
+    choose('pin');
+    await vi.advanceTimersByTimeAsync(100);
+    expect(document.querySelector('.scw-toast')?.textContent).toBe('Pinned to home: Mix');
+    rightClick(artist);
+    choose('pin');
+    await vi.advanceTimersByTimeAsync(100);
+    expect(pinTitles()).toEqual(['Mix', 'Art']);
+    rightClick(mix);
+    expect(menuActs()).toEqual(['wave-playlist', 'unpin']);
+    document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
+
+    // Порядок главной: волна, пять следующих, быстрый ряд (настроения и закрепления), «Моя музыка»
+    const order = [...section.children].map((node) => node.className.split(' ')[0]);
+    expect(order.indexOf('scw-quick')).toBe(order.indexOf('scw-tiles') + 1);
+    expect(order.indexOf('scw-quick')).toBeLessThan(order.indexOf('scw-lib'));
+    expect(section.querySelector('.scw-quick > .scw-moods + .scw-pins')?.getAttribute('aria-label')).toBe('Pinned');
+    expect(section.querySelector('[data-act="pin-remove"][data-pin="0"]')?.getAttribute('aria-label')).toBe('Unpin: Mix');
+
+    section.querySelector<HTMLButtonElement>('[data-act="pin-play"][data-pin="0"]')!.click();
+    await vi.advanceTimersByTimeAsync(100);
+    // Треки плейлиста это зёрна: в очереди похожие на них
+    const queued = (site.player.replaceQueue.mock.calls[site.player.replaceQueue.mock.calls.length - 1][0] as FakeItem[]).map((item) => item.sound.id);
+    expect(queued.some((id) => id > 9000000)).toBe(true);
+    expect(section.querySelector('.scw-hint')?.textContent).toBe('Wave from playlist Mix');
+    expect([...section.querySelectorAll('.scw-pin')].map((node) => node.classList.contains('on'))).toEqual([true, false]);
+    expect(section.querySelector('[data-act="pin-play"][data-pin="0"]')?.getAttribute('aria-pressed')).toBe('true');
+    // Нажатие на играющее закрепление ставит паузу, как большая кнопка
+    section.querySelector<HTMLButtonElement>('[data-act="pin-play"][data-pin="0"]')!.click();
+    expect(site.player.pauseCurrent).toHaveBeenCalled();
+
+    // Закрепления переживают перезагрузку страницы
+    window.dispatchEvent(new Event('pagehide'));
+    document.getElementById('sc-wave')?.remove();
+    window.eval(waveScript());
+    await vi.advanceTimersByTimeAsync(100);
+    expect(pinTitles()).toEqual(['Mix', 'Art']);
+    const remove = document.querySelector<HTMLButtonElement>('#sc-wave [data-act="pin-remove"][data-pin="0"]')!;
+    remove.focus();
+    remove.click();
+    expect(pinTitles()).toEqual(['Art']);
+    expect(document.querySelector('.scw-toast')?.textContent).toBe('Unpinned: Mix');
+    // Фокус остаётся в ряду, на крестике следующего закрепления
+    expect((document.activeElement as HTMLElement).dataset.act).toBe('pin-remove');
+    expect(JSON.parse(localStorage.getItem('scDesktopWavePins') ?? '[]')).toEqual([{ kind: 'artist', url: 'https://soundcloud.com/art', title: 'Art' }]);
+});
+
+it('В5: жанр закрепляется со ссылки /tags и с карточки полки, закреплённый жанр включает волну по нему', async () => {
+    fakeSite(relatedTracks, siteExtra);
+    const snapshot = {
+        day: localDay(Date.now()), v: 4,
+        cards: [{ kind: 'group', title: 'Techno and Industrial', sub: 'A, B', ids: [5101, 5102], seeds: [], keys: ['techno'], art: [] }],
+    };
+    Object.assign(window, { soundcloudAPI: { waveExclusions: fakeExclusions(), waveShelf: { load: vi.fn(async () => ({ snapshot, recent: [] })), save: vi.fn(async () => true) } } });
+    // Мусор в хранилище не ломает чтение: чужой вид, ссылка не на плейлист, повтор
+    localStorage.setItem('scDesktopWavePins', JSON.stringify([
+        { kind: 'track', url: 'https://soundcloud.com/art/song', title: 'Song' }, { kind: 'playlist', url: 'https://soundcloud.com/art', title: 'Bad' },
+        { kind: 'genre', url: '', title: 'Phonk' }, { kind: 'genre', url: '', title: 'phonk' },
+    ]));
+    const tag = pageLink('/tags/deep%20house', 'deep house');
+    window.eval(waveScript());
+    await vi.advanceTimersByTimeAsync(100);
+    const section = document.getElementById('sc-wave')!;
+    expect(pinTitles()).toEqual(['phonk']);
+
+    rightClick(tag);
+    expect(menuActs()).toEqual(['wave-genre', 'pin']);
+    choose('pin');
+    await vi.advanceTimersByTimeAsync(100);
+    rightClick(section.querySelector('.scw-card[data-card="0"] .scw-t1')!);
+    expect(menuActs()).toEqual(['wave-genre', 'pin']);
+    choose('pin');
+    await vi.advanceTimersByTimeAsync(100);
+    expect(pinTitles()).toEqual(['phonk', 'deep house', 'techno / industrial']);
+
+    section.querySelector<HTMLButtonElement>('[data-act="pin-play"][data-pin="1"]')!.click();
+    await vi.advanceTimersByTimeAsync(100);
+    expect(section.querySelector('.scw-genre.set')?.textContent).toContain('deep house');
+    expect(JSON.parse(localStorage.getItem('scDesktopWave') ?? '{}').genre).toBe('deep house');
 });
 
 // Замкнутый круг, как у «Steel Lullaby»: похожие это четыре трека того же артиста, похожие на них снова они же

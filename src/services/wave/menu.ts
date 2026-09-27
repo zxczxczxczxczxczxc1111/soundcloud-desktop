@@ -8,7 +8,7 @@ import * as wavePicks from '../wavePicks';
 import type { Excluded, MarkKind, MenuTarget, Seed, WaveCandidate, WaveLinkKind, WaveState, WaveTexts, WaveTrack } from '../waveTypes';
 import type { SitePlayer } from '../wave';
 
-const { canonicalUrl, classifyLink } = waveLinks;
+const { canonicalUrl, classifyLink, classifyTag } = waveLinks;
 const { shuffleInPlace, trackArtist } = wavePicks;
 
 export interface MenuCore {
@@ -57,6 +57,13 @@ export interface MenuCore {
     /** Прокрутка страницы или iframe: меню и подсказка закрываются */
     onScroll(): void;
     el<K extends keyof HTMLElementTagNameMap>(tag: K, className: string, text?: string): HTMLElementTagNameMap[K];
+    /** Закреплённое на главной (В5): есть ли цель в быстром ряду, закрепить или открепить */
+    pinned(target: MenuTarget): boolean;
+    pin(target: MenuTarget, add: boolean): Promise<void>;
+    /** Обычная волна с этим жанром, сразу играет */
+    playGenre(genre: string): void;
+    /** Название жанра карточки полки под узлом; пусто, если это не карточка жанра */
+    cardGenre(node: Element): string;
 }
 /** Что раздел отдаёт ядру: слушатели страницы, закрытие меню, слежение за iframe */
 export interface MenuSection {
@@ -64,6 +71,8 @@ export interface MenuSection {
     onOutside(event: Event): void;
     onDocumentKey(event: KeyboardEvent): void;
     closeMenu(): void;
+    /** Волна от закреплённого плейлиста или артиста по ссылке; title для плашки «Собираю волну» */
+    startLink(kind: 'playlist' | 'artist', url: string, title: string): void;
     /** iframe того же сайта: в каждый документ те же слушатели, ушедшие документы забываются */
     watchFrames(): void;
     /** Снять слушатели со всех документов iframe */
@@ -74,6 +83,7 @@ export function installMenu(core: MenuCore): MenuSection {
     const {
         texts: T, known, excludedTracks, excludedArtists, laterTracks, laterArtists, moreTracks, marked, familyHidden, setExcluded, setFamily, addTrack, currentCandidate,
         fromTrack, trackOf, artistOf, artistOwnTracks, playlistTracks, resolveUrl, beginSeed, ensureProfile, ensureExclusions, ensureStyle, showToast, onScroll, el,
+        pinned, pin, playGenre, cardGenre,
     } = core;
     const MENU_ICON: Record<string, string> = {
         wave: '<svg viewBox="0 0 16 16" aria-hidden="true"><path d="M1 6.5h1.5v3H1zM4 4.5h1.5v7H4zM7 2h1.5v12H7zM10 5h1.5v6H10zM13 7h1.5v2H13z"/></svg>',
@@ -87,6 +97,8 @@ export function installMenu(core: MenuCore): MenuSection {
         versions: '<svg viewBox="0 0 16 16" aria-hidden="true"><path d="M8 1.2 15 5 8 8.8 1 5zM2.7 7.4 8 10.3l5.3-2.9L15 8.3 8 12.1 1 8.3zm0 3.3L8 13.6l5.3-2.9 1.7.9L8 15.4 1 11.6z"/></svg>',
         // Список с плюсом: трек в набор
         pick:'<svg viewBox="0 0 16 16" aria-hidden="true"><path d="M1 2.5h10V4H1zM1 6.25h10v1.5H1zM1 10h6v1.5H1zM11.25 9h1.5v2.25H15v1.5h-2.25V15h-1.5v-2.25H9v-1.5h2.25z"/></svg>',
+        // Кнопка-булавка: закрепить на главной
+        pin: '<svg viewBox="0 0 16 16" aria-hidden="true"><path d="M10.2 1 15 5.8l-1.06 1.06-.88-.88-2.9 2.9.35 2.83-1.06 1.06-2.83-2.83L2.06 14.5 1.5 13.94l4.56-4.56-2.83-2.83 1.06-1.06 2.83.35 2.9-2.9-.88-.88z"/></svg>',
     };
     // Зёрна: сам трек; топ артиста (он же идёт в подборку); треки плейлиста
     async function loadSeed(kind: WaveLinkKind, target: MenuTarget): Promise<{ seed: Seed; first: WaveTrack | null } | null> {
@@ -104,10 +116,10 @@ export function installMenu(core: MenuCore): MenuSection {
         const tracks = await playlistTracks(body);
         return { seed: { kind, title: (typeof body?.title === 'string' ? body.title.trim() : '') || '…', tracks: shuffleInPlace(tracks), own: [] }, first: null };
     }
-    async function startSeed(kind: WaveLinkKind, target: MenuTarget): Promise<void> {
+    async function startSeed(kind: WaveLinkKind, target: MenuTarget, title = ''): Promise<void> {
         const request = core.nextSeedRequest();
         // Треки артиста и плейлиста грузятся секунды: плашка сразу, название, если оно уже известно
-        const name = (kind === 'track' ? target.track?.title : kind === 'artist' && target.kind === 'track' ? target.track?.user?.username : '')?.trim();
+        const name = (title || (kind === 'track' ? target.track?.title : kind === 'artist' && target.kind === 'track' ? target.track?.user?.username : ''))?.trim();
         showToast(name ? T.seedCollecting.replace('{title}', name) : T.seedCollectingAny);
         try {
             await Promise.all([ensureProfile(), ensureExclusions()]);
@@ -138,10 +150,16 @@ export function installMenu(core: MenuCore): MenuSection {
             const track = id
                 ? known.get(id)?.track ?? core.preview().find((item) => item.track.id === id)?.track ?? core.sectionTrack(id)
                 : node.closest('.scw-body') ? currentCandidate()?.track : undefined;
-            return track ? fromTrack(track) : null;
+            if (track) return fromTrack(track);
+            // Карточка жанра на полке: закрепить жанр или включить волну по нему
+            const genre = tile ? '' : cardGenre(node);
+            return genre ? { kind: 'genre', url: '', artistUrl: '', genre } : null;
         }
         const item = node.closest(ITEM_SELECTOR);
         const anchor = node.closest<HTMLAnchorElement>('a[href]');
+        // Ссылка на жанр (метка трека, страница /tags/…) раньше строки, в которой она стоит
+        const tag = anchor ? classifyTag(anchor.getAttribute('href') ?? '', location.href) : '';
+        if (tag) return { kind: 'genre', url: '', artistUrl: '', genre: tag };
         let link = anchor ? classifyLink(anchor.getAttribute('href') ?? '', location.href) : null;
         if (!link && item) {
             const primary = item.querySelector<HTMLAnchorElement>(PRIMARY_SELECTOR);
@@ -193,8 +211,10 @@ export function installMenu(core: MenuCore): MenuSection {
         const anchor = node.closest('a[href]');
         let link: { kind: WaveLinkKind; url: string } | null = null;
         let artistUrl = '';
+        const tag = anchor ? classifyTag(anchor.getAttribute('href') ?? '', base) : '';
+        if (tag) return { kind: 'genre', url: '', artistUrl: '', genre: tag };
         if (anchor) {
-            // Ссылка не на трек, артиста или плейлист (теги, подписчики): меню сайта
+            // Ссылка не на трек, артиста, плейлист или жанр (подписчики и прочее): меню сайта
             link = linkOf(anchor);
             if (!link) return null;
             if (link.kind === 'track') artistUrl = artistIn(rowOf(anchor)?.row ?? null);
@@ -233,10 +253,14 @@ export function installMenu(core: MenuCore): MenuSection {
     const artistExcluded = (target: MenuTarget): boolean => artistMarked(excludedArtists, target);
     function menuItems(target: MenuTarget): Array<[string, string, string]> {
         const items: Array<[string, string, string]> = [];
+        // Закрепить на главной можно плейлист, артиста и жанр (В5); у трека закрепления нет
+        const pinItem = (): [string, string, string] => (pinned(target) ? ['unpin', T.menuUnpin, 'undo'] : ['pin', T.menuPin, 'pin']);
+        if (target.kind === 'genre') return [['wave-genre', T.menuWaveGenre, 'wave'], pinItem()];
         const hasArtist = target.kind === 'artist' || !!target.artistUrl || !!target.track;
         if (target.kind === 'track') items.push(['wave-track', T.menuWaveTrack, 'wave']);
-        if (target.kind === 'playlist') items.push(['wave-playlist', T.menuWavePlaylist, 'wave']);
+        if (target.kind === 'playlist') items.push(['wave-playlist', T.menuWavePlaylist, 'wave'], pinItem());
         if (hasArtist) items.push(['wave-artist', T.menuWaveArtist, target.kind === 'artist' ? 'wave' : 'artist']);
+        if (target.kind === 'artist') items.push(pinItem());
         if (target.kind === 'track') {
             items.push(['queue-next', T.lang === 'ru' ? 'Слушать следующим' : 'Play next', 'pick']);
             items.push(['queue-last', T.lang === 'ru' ? 'В конец очереди' : 'Add to queue', 'pick']);
@@ -260,6 +284,9 @@ export function installMenu(core: MenuCore): MenuSection {
             case 'wave-track': void startSeed('track', target); return;
             case 'wave-artist': void startSeed('artist', target); return;
             case 'wave-playlist': void startSeed('playlist', target); return;
+            case 'wave-genre': if (target.genre) playGenre(target.genre); return;
+            case 'pin':
+            case 'unpin': void pin(target, act === 'pin'); return;
             case 'pick':
             case 'unpick': void core.pick(target, act === 'pick'); return;
             case 'dislike':
@@ -430,6 +457,7 @@ export function installMenu(core: MenuCore): MenuSection {
         onOutside,
         onDocumentKey,
         closeMenu,
+        startLink: (kind, url, title) => void startSeed(kind, { kind, url, artistUrl: '' }, title),
         watchFrames,
         dispose: () => {
             for (const cleanup of frameCleanups.values()) cleanup();

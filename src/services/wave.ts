@@ -14,7 +14,7 @@ import * as libraryMix from './libraryMix';
 import type { LibraryMode } from './libraryMix';
 import * as siteModules from './siteModules';
 import type { SiteState, WebpackRequire } from './siteModules';
-import type { WaveTrack, WaveMode, OpenTrackResult, WaveReason, WaveCandidate, WaveFilter, WaveTexts, TasteMaps, MenuTarget, Excluded, MarkKind, Profile, Seed, WaveState as State } from './waveTypes';
+import type { WaveTrack, WaveMode, OpenTrackResult, WaveReason, WaveCandidate, WaveFilter, WaveTexts, TasteMaps, MenuTarget, WavePin, Excluded, MarkKind, Profile, Seed, WaveState as State } from './waveTypes';
 import { WAVE_TEXTS } from './waveTexts';
 import * as waveTexts from './waveTexts';
 import * as waveGenres from './waveGenres';
@@ -38,7 +38,7 @@ const { siteRequires } = siteModules;
 // Чистые функции волны разложены по файлам. Здесь они разбираются в константы по той же причине: installWave зовёт их по голому имени
 const { fillText, reasonText, localDay, countText, formatTime, shapeSamples } = waveTexts;
 const { normalizeTag, tagKeys, tagShares, genreKeys, genreEnglish, genreCanon, genrePhrases, genreParts, genreMain, parseGenres, formatGenres, genreKeysFor, trackMatchesGenre, topGenres } = waveGenres;
-const { classifyLink, canonicalUrl, trackPath, artworkUrl, coversOf, playEnd, siteSource, retryDelay } = waveLinks;
+const { classifyLink, classifyTag, canonicalUrl, trackPath, artworkUrl, coversOf, playEnd, siteSource, retryDelay } = waveLinks;
 const { trackArtist, rememberRecent, isWaveEligible, freshEnough, acceptCandidate, pickSpaced, spacingKeys, spacingGap, shuffleInPlace, capPerArtist, forgottenPicks, daySample, artistNames, isNewArtist, spreadBy } = wavePicks;
 const { tasteMaps, tasteScore, tasteOrder, tasteReason, applyTasteReasons, tasteGroups, moodTags, pickFinds } = waveTaste;
 const { moodList, moodDictionary, trackMood, artistMoods, neighborMood, moodScore } = waveMood;
@@ -52,7 +52,7 @@ const { installMenu } = menuSectionModule;
 export type { WaveTrack, WaveMode, OpenTrackResult, WaveReason, WaveCandidate, WaveFilter, WaveLinkKind, WaveTexts, TasteMaps, TasteScore, TasteGroup } from './waveTypes';
 export { WAVE_TEXTS, fillText, reasonText, localDay, countText, formatTime, shapeSamples } from './waveTexts';
 export { normalizeTag, tagKeys, tagShares, genreKeys, genreEnglish, genreCanon, genrePhrases, genreParts, genreMain, parseGenres, formatGenres, genreKeysFor, trackMatchesGenre, topGenres } from './waveGenres';
-export { classifyLink, canonicalUrl, trackPath, artworkUrl, playEnd, siteSource, retryDelay } from './waveLinks';
+export { classifyLink, classifyTag, canonicalUrl, trackPath, artworkUrl, playEnd, siteSource, retryDelay } from './waveLinks';
 export { trackArtist, rememberRecent, isWaveEligible, freshEnough, acceptCandidate, pickSpaced, spacingKeys, spacingGap, shuffleInPlace, capPerArtist, forgottenPicks, daySample, artistNames, isNewArtist, spreadBy } from './wavePicks';
 export { tasteMaps, tasteScore, tasteOrder, tasteReason, applyTasteReasons, tasteGroups, moodTags, pickFinds } from './waveTaste';
 export { moodList, moodDictionary, trackMood, artistMoods, neighborMood, moodScore } from './waveMood';
@@ -227,6 +227,42 @@ export function installWave(config: WaveConfig, createPlayback: typeof installPl
         console.warn('Волна: отметки пресетов не прочитаны', error);
         presetMarks = {};
     }
+    // Закрепления главной (В5): плейлисты, артисты и жанры в быстром ряду под волной, до 12, переживают перезапуск
+    const PINS_KEY = 'scDesktopWavePins';
+    const PIN_LIMIT = 12;
+    const pinKey = (kind: WavePin['kind'], url: string, title: string): string => kind + ':' + (kind === 'genre' ? genreCanon(normalizeTag(title)) : canonicalUrl(url));
+    let pins: WavePin[] = [];
+    try {
+        const saved: unknown = JSON.parse(localStorage.getItem(PINS_KEY) || '[]');
+        const seen = new Set<string>();
+        for (const entry of Array.isArray(saved) ? saved : []) {
+            const item = entry as { kind?: unknown; url?: unknown; title?: unknown } | null;
+            if (!item || typeof item.title !== 'string' || typeof item.url !== 'string') continue;
+            const title = item.title.trim().slice(0, 120);
+            let pin: WavePin | null = null;
+            if (item.kind === 'genre') {
+                const name = formatGenres(parseGenres(title));
+                if (name) pin = { kind: 'genre', url: '', title: name };
+            } else if ((item.kind === 'playlist' || item.kind === 'artist') && title) {
+                const link = classifyLink(item.url, 'https://soundcloud.com/');
+                if (link?.kind === item.kind) pin = { kind: item.kind, url: link.url, title };
+            }
+            if (!pin || seen.has(pinKey(pin.kind, pin.url, pin.title))) continue;
+            seen.add(pinKey(pin.kind, pin.url, pin.title));
+            pins.push(pin);
+            if (pins.length >= PIN_LIMIT) break;
+        }
+    } catch (error) {
+        console.warn('Волна: закрепления не прочитаны', error);
+        pins = [];
+    }
+    const savePins = (): void => {
+        try {
+            localStorage.setItem(PINS_KEY, JSON.stringify(pins));
+        } catch (error) {
+            console.warn('Волна: закрепления не сохранены', error);
+        }
+    };
 
     let profile: Profile | null = null;
     let profilePromise: Promise<Profile> | null = null;
@@ -561,6 +597,14 @@ export function installWave(config: WaveConfig, createPlayback: typeof installPl
         showToast,
         onScroll: () => onScroll(),
         el,
+        pinned: (target) => pinIndex(target) >= 0,
+        pin: (target, add) => pinTarget(target, add),
+        playGenre: (label) => playGenre(label),
+        cardGenre: (node) => {
+            const card = node.closest<HTMLElement>('.scw-card[data-card]');
+            const index = card ? Number(card.dataset.card) : -1;
+            return Number.isInteger(index) && index >= 0 ? shelfSection.genreOf(index) : '';
+        },
     });
 
     const wait = (ms: number): Promise<void> => new Promise((resolve) => setTimeout(resolve, ms));
@@ -2512,6 +2556,89 @@ export function installWave(config: WaveConfig, createPlayback: typeof installPl
         else if (isVisible()) void preparePreview();
         else { state = 'idle'; render(); }
     }
+    // Волна по жанру из меню или закрепления: жанр как из шапки, волна от зёрен сбрасывается, играет сразу
+    function playGenre(label: string): void {
+        const name = formatGenres(parseGenres(label));
+        if (!name) return;
+        seedRequest++;
+        seed = null;
+        derivedSeeds = [];
+        skipped.clear();
+        genre = name;
+        recentGenres = [name, ...recentGenres.filter((item) => item !== name)].slice(0, 6);
+        saveSettings();
+        popOpen = false;
+        staleSeeds.clear();
+        resetGeneration();
+        void start();
+    }
+    function pinIndex(target: MenuTarget): number {
+        const kind = target.kind;
+        if (kind !== 'playlist' && kind !== 'artist' && kind !== 'genre') return -1;
+        const key = pinKey(kind, target.url, target.genre ?? '');
+        return pins.findIndex((pin) => pinKey(pin.kind, pin.url, pin.title) === key);
+    }
+    function pinPlaying(pin: WavePin): boolean {
+        if (!active) return false;
+        if (pin.kind === 'genre') return !seed && genre === pin.title;
+        return seed?.kind === pin.kind && seed.title === pin.title;
+    }
+    // Название и ссылка берутся у сайта: плейлист по адресу, артист по ссылке или по треку
+    async function pinTarget(target: MenuTarget, add: boolean): Promise<void> {
+        if (!add) {
+            const index = pinIndex(target);
+            if (index < 0) return;
+            const [gone] = pins.splice(index, 1);
+            savePins();
+            showToast(fillText(T.toastUnpinned, { title: gone.title }));
+            render();
+            return;
+        }
+        if (pinIndex(target) >= 0) return;
+        if (pins.length >= PIN_LIMIT) {
+            showToast(fillText(T.toastPinFull, { count: String(PIN_LIMIT) }));
+            return;
+        }
+        let pin: WavePin | null = null;
+        try {
+            if (target.kind === 'genre') {
+                const name = formatGenres(parseGenres(target.genre ?? ''));
+                if (name) pin = { kind: 'genre', url: '', title: name };
+            } else if (target.kind === 'artist') {
+                const artist = await artistOf(target);
+                const link = artist ? classifyLink(artist.url || target.url, 'https://soundcloud.com/') : null;
+                if (artist?.username && link?.kind === 'artist') pin = { kind: 'artist', url: link.url, title: artist.username.trim() };
+            } else if (target.kind === 'playlist') {
+                const body = (await resolveUrl(target.url)) as { title?: unknown; permalink_url?: unknown } | null;
+                const link = classifyLink(typeof body?.permalink_url === 'string' ? body.permalink_url : target.url, 'https://soundcloud.com/');
+                const title = typeof body?.title === 'string' ? body.title.trim() : '';
+                if (title && link?.kind === 'playlist') pin = { kind: 'playlist', url: link.url, title };
+            }
+        } catch (error) {
+            console.warn('Волна: закрепление не собрано', error);
+        }
+        if (!pin) {
+            showToast(T.toastFailed);
+            return;
+        }
+        // Пока ждали сайт, то же могли закрепить вторым кликом
+        const key = pinKey(pin.kind, pin.url, pin.title);
+        if (pins.some((item) => pinKey(item.kind, item.url, item.title) === key) || pins.length >= PIN_LIMIT) return;
+        pins.push(pin);
+        savePins();
+        showToast(fillText(T.toastPinned, { title: pin.title }));
+        render();
+    }
+    function playPin(index: number): void {
+        const pin = pins[index];
+        if (!pin) return;
+        if (pinPlaying(pin) && player) {
+            if (player.isPlaying()) player.pauseCurrent({ userInitiated: true });
+            else player.playCurrent({ userInitiated: true });
+            setTimeout(render, 150);
+        } else if (pin.kind === 'genre') playGenre(pin.title);
+        else menuSection.startLink(pin.kind, pin.url, pin.title);
+    }
 
     async function setExcluded(kind: MarkKind, target: MenuTarget, excluded: boolean): Promise<void> {
         try {
@@ -2826,9 +2953,17 @@ export function installWave(config: WaveConfig, createPlayback: typeof installPl
         '#sc-wave .scw-chip{height:28px;padding:0 12px;border-radius:14px;background:var(--scw-surface);color:var(--scw-muted);font-weight:600;white-space:nowrap}',
         '#sc-wave .scw-chip:hover{color:inherit}',
         '#sc-wave .scw-chip[aria-pressed="true"]{background:var(--scw-btn);color:var(--scw-btn-ink)}',
-        // Пресеты настроения под шапкой волны: выбранный подсвечен, без галочек
-        '.scw-moods{display:flex;gap:8px;flex-wrap:wrap;margin:-4px 0 16px}',
+        // Быстрый ряд под подборкой волны: пресеты настроения (выбранный подсвечен, без галочек) и закрепления главной
+        '.scw-quick{display:flex;flex-wrap:wrap;align-items:center;gap:8px;margin-top:24px}',
+        '.scw-moods,.scw-pins{display:flex;gap:8px;flex-wrap:wrap}',
         '#sc-wave .scw-moods .scw-chip[aria-checked="true"]{background:var(--scw-btn);color:var(--scw-btn-ink)}',
+        '.scw-moods+.scw-pins{padding-left:8px;border-left:1px solid var(--scw-film-strong)}',
+        '.scw-pin{display:inline-flex;align-items:center;height:28px;border-radius:14px;background:var(--scw-surface);color:var(--scw-muted);max-width:260px}',
+        '.scw-pin.on{background:var(--scw-btn);color:var(--scw-btn-ink)}',
+        '#sc-wave .scw-pin .scw-chip,#sc-wave .scw-pin .scw-chip[aria-pressed="true"]{min-width:0;padding:0 4px 0 12px;background:none;color:inherit;overflow:hidden;text-overflow:ellipsis}',
+        '#sc-wave .scw-pin-x{flex:none;display:grid;place-items:center;width:20px;height:20px;margin-right:4px;border-radius:10px;transition:background-color .12s}',
+        '#sc-wave .scw-pin-x:hover{background:var(--scw-film-strong)}',
+        '.scw-pin-x svg{width:14px;height:14px;fill:currentColor}',
         '#sc-wave .scw-btn:disabled{opacity:.5;cursor:default}',
         '.scw-select{height:32px;max-width:220px;padding:0 8px;border-radius:4px;border:0;background:var(--scw-surface);color:inherit;font:inherit;cursor:pointer}',
         '.scw-row-e{display:flex;align-items:center;gap:6px;min-width:0}',
@@ -3105,6 +3240,34 @@ export function installWave(config: WaveConfig, createPlayback: typeof installPl
         }
         return row;
     }
+    // Быстрый ряд главной: настроения и закрепления одной строкой; играющее закрепление подсвечено
+    function renderQuick(): HTMLElement | null {
+        const moods = renderMoods();
+        if (!moods && !pins.length) return null;
+        const row = el('div', 'scw-quick');
+        if (moods) row.append(moods);
+        if (pins.length) {
+            const group = el('div', 'scw-pins');
+            group.setAttribute('role', 'group');
+            group.setAttribute('aria-label', T.pinned);
+            pins.forEach((pin, index) => {
+                const on = pinPlaying(pin);
+                const item = el('span', 'scw-pin' + (on ? ' on' : ''));
+                const play = el('button', 'scw-chip', pin.title);
+                play.type = 'button';
+                play.dataset.act = 'pin-play';
+                play.dataset.pin = String(index);
+                play.title = fillText(T.pinPlay, { title: pin.title });
+                play.setAttribute('aria-pressed', String(on));
+                const remove = button('scw-pin-x', 'pin-remove', fillText(T.pinRemove, { title: pin.title }), 'x');
+                remove.dataset.pin = String(index);
+                item.append(play, remove);
+                group.append(item);
+            });
+            row.append(group);
+        }
+        return row;
+    }
     function renderPop(): HTMLElement {
         const pop = el('div', 'scw-pop');
         pop.setAttribute('role', 'dialog');
@@ -3186,7 +3349,7 @@ export function installWave(config: WaveConfig, createPlayback: typeof installPl
         // У карточек полки одни действия на всех: фокус возвращается по номеру карточки, в строке списка по треку и месту в строке
         const focusedCard = focusedNode?.dataset.card;
         // Источник и режим «Моей музыки» делят одно действие на все кнопки: фокус возвращается по ключу кнопки
-        const focusedSource = focusedNode?.dataset.source ?? focusedNode?.dataset.lmode;
+        const focusedSource = focusedNode?.dataset.source ?? focusedNode?.dataset.lmode ?? focusedNode?.dataset.pin;
         const focusedRow = focusedNode?.closest<HTMLElement>('.scw-row[data-track]');
         const focusedTrack = focusedRow?.dataset.track;
         const focusedPart = focusedRow && focusedNode ? [...focusedRow.querySelectorAll('button, a')].indexOf(focusedNode) : -1;
@@ -3197,8 +3360,6 @@ export function installWave(config: WaveConfig, createPlayback: typeof installPl
         section.setAttribute('aria-label', T.wave);
         section.append(renderHead());
         if (popOpen) section.append(renderPop());
-        const moods = renderMoods();
-        if (moods) section.append(moods);
         const body = el('div', 'scw-body');
         const info = el('div', 'scw-info');
         const top = el('div', 'scw-top');
@@ -3251,7 +3412,8 @@ export function installWave(config: WaveConfig, createPlayback: typeof installPl
             cover.innerHTML = '<svg viewBox="0 0 200 200" fill="none"><circle cx="100" cy="100" r="76" stroke="currentColor" opacity=".07"/><circle cx="100" cy="100" r="57" stroke="currentColor" opacity=".12"/><path d="M48 96v8m13-22v36m13-43v50m13-61v72m13-84v96m13-75v54m13-44v34m13-43v52m13-36v20" stroke="currentColor" stroke-width="3" stroke-linecap="round" opacity=".7"/></svg>';
         }
         body.append(info, cover);
-        section.append(body, ...renderTiles(), ...librarySection.render(), ...shelfSection.render());
+        const quick = renderQuick();
+        section.append(body, ...renderTiles(), ...(quick ? [quick] : []), ...librarySection.render(), ...shelfSection.render());
         const rowsBox = section.querySelector('.scw-mix-rows');
         if (rowsBox) rowsBox.scrollTop = rowsScroll;
         const libraryBox = section.querySelector('.scw-lib-rows');
@@ -3264,7 +3426,7 @@ export function installWave(config: WaveConfig, createPlayback: typeof installPl
             const again = focusedCard !== undefined
                 ? section.querySelector<HTMLElement>('[data-act="' + focused + '"][data-card="' + focusedCard + '"]')
                 : focusedSource !== undefined
-                    ? section.querySelector<HTMLElement>('[data-act="' + focused + '"][data-source="' + focusedSource + '"],[data-act="' + focused + '"][data-lmode="' + focusedSource + '"]')
+                    ? section.querySelector<HTMLElement>('[data-act="' + focused + '"][data-source="' + focusedSource + '"],[data-act="' + focused + '"][data-lmode="' + focusedSource + '"],[data-act="' + focused + '"][data-pin="' + focusedSource + '"]')
                     : section.querySelector<HTMLElement>('[data-act="' + focused + '"],[data-mode="' + focused + '"],[data-role="' + focused + '"],[data-preset="' + focused + '"]');
             again?.focus();
             if (again instanceof HTMLInputElement) again.setSelectionRange(again.value.length, again.value.length);
@@ -3540,6 +3702,14 @@ export function installWave(config: WaveConfig, createPlayback: typeof installPl
             case 'pick-clear':
                 shelfSection.clearPicks();
                 return;
+            case 'pin-play':
+                playPin(Number(control.dataset.pin));
+                return;
+            case 'pin-remove': {
+                const pin = pins[Number(control.dataset.pin)];
+                if (pin) void pinTarget({ kind: pin.kind, url: pin.url, artistUrl: '', genre: pin.title }, false);
+                return;
+            }
             case 'shake':
                 shake();
                 return;
@@ -3938,7 +4108,7 @@ export function installWave(config: WaveConfig, createPlayback: typeof installPl
 
 // Помощники идут на страницу объявлениями рядом со скриптом: так они видны installWave и друг другу
 const pageHelpers = [
-    normalizeTag, tagKeys, tagShares, genreKeys, genreEnglish, genreCanon, genrePhrases, genreParts, genreMain, parseGenres, formatGenres, genreKeysFor, classifyLink, canonicalUrl, trackMatchesGenre, trackArtist, rememberRecent, retryDelay,
+    normalizeTag, tagKeys, tagShares, genreKeys, genreEnglish, genreCanon, genrePhrases, genreParts, genreMain, parseGenres, formatGenres, genreKeysFor, classifyLink, classifyTag, canonicalUrl, trackMatchesGenre, trackArtist, rememberRecent, retryDelay,
     isWaveEligible, freshEnough, acceptCandidate, pickSpaced, spacingKeys, spacingGap, tasteMaps, tasteScore, tasteOrder, tasteReason, applyTasteReasons, shuffleInPlace, topGenres, fillText, reasonText, shapeSamples,
     artworkUrl, coversOf, formatTime, playEnd, siteSource, moodTags, trackPath, localDay, countText, tasteGroups, capPerArtist, forgottenPicks, daySample, artistNames, isNewArtist, spreadBy, pickFinds,
     moodList, moodDictionary, trackMood, artistMoods, neighborMood, moodScore,

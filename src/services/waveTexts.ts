@@ -76,6 +76,9 @@ export const WAVE_TEXTS: Record<'ru' | 'en', WaveTexts> = {
         whyMoodTag: 'Автор отметил: {tag}',
         undo: 'Отменить', toastLiked: 'Лайк: {title}', toastUnliked: 'Лайк снят: {title}',
         seedCollecting: 'Собираю волну от {title}', seedCollectingAny: 'Собираю волну…',
+        pinned: 'Закреплённое', menuPin: 'Закрепить на главной', menuUnpin: 'Открепить с главной', menuWaveGenre: 'Волна по жанру',
+        toastPinned: 'Закреплено на главной: {title}', toastUnpinned: 'Откреплено: {title}', toastPinFull: 'На главной уже {count}, открепи что-нибудь',
+        pinPlay: 'Волна: {title}', pinRemove: 'Открепить: {title}',
     },
     en: {
         wave: 'My Wave', similar: 'Similar', fresh: 'New', anyGenre: 'Any genre', genreInput: 'Genres, comma separated', fromLikes: 'From your likes',
@@ -150,6 +153,9 @@ export const WAVE_TEXTS: Record<'ru' | 'en', WaveTexts> = {
         whyMoodTag: 'Tagged {tag} by the author',
         undo: 'Undo', toastLiked: 'Liked: {title}', toastUnliked: 'Unliked: {title}',
         seedCollecting: 'Building a wave from {title}', seedCollectingAny: 'Building a wave…',
+        pinned: 'Pinned', menuPin: 'Pin to home', menuUnpin: 'Unpin from home', menuWaveGenre: 'Wave from genre',
+        toastPinned: 'Pinned to home: {title}', toastUnpinned: 'Unpinned: {title}', toastPinFull: 'Home already has {count}, unpin something first',
+        pinPlay: 'Wave: {title}', pinRemove: 'Unpin: {title}',
     },
 };
 

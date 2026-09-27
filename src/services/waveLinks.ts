@@ -24,6 +24,26 @@ export function classifyLink(href: string, base: string): { kind: WaveLinkKind; 
     return null;
 }
 
+// Жанр по ссылке сайта soundcloud.com/tags/<жанр>: название без кодировки адреса, до 60 знаков; иначе пусто
+export function classifyTag(href: string, base: string): string {
+    let url: URL;
+    try {
+        url = new URL(href, base);
+    } catch {
+        return '';
+    }
+    const parts = url.pathname.split('/').filter(Boolean);
+    if (url.protocol !== 'https:' || url.hostname !== 'soundcloud.com' || parts.length !== 2 || parts[0] !== 'tags') return '';
+    let tag = parts[1];
+    try {
+        tag = decodeURIComponent(tag);
+    } catch {
+        return '';
+    }
+    tag = tag.replace(/\s+/g, ' ').trim();
+    return tag.length <= 60 ? tag : '';
+}
+
 // Та же форма ссылки, что хранит main: без запроса, хвоста и регистра
 export function canonicalUrl(value: string | undefined): string {
     if (!value) return '';

@@ -79,6 +79,8 @@ export interface ShelfSection {
     /** Треки по номерам через trackBatch с кэшем полки */
     tracksByIds(ids: number[]): Promise<WaveTrack[]>;
     track(id: number): WaveTrack | undefined;
+    /** Жанры карточки полки по её номеру через запятую; пусто у находок, «Давно не слушал» и радара */
+    genreOf(index: number): string;
     /** Набор из меню: треки, место трека в нём, добавить или убрать, волна по набору, очистка */
     picks(): readonly WaveTrack[];
     pickedIndex(target: MenuTarget): number;
@@ -587,6 +589,12 @@ export function installShelf(core: ShelfCore): ShelfSection {
         start: startShelf,
         tracksByIds,
         track: (id) => shelfTracks.get(id),
+        genreOf: (index) => {
+            const card = shelf?.cards[index];
+            if (card?.kind !== 'group') return '';
+            // Название «A и B» это два жанра: волна идёт по обоим
+            return card.title.split(T.groupAnd.replace('{a}', '').replace('{b}', '')).join(', ');
+        },
         picks: () => picks,
         pickedIndex,
         pick: pickTrack,

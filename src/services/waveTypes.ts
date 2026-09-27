@@ -91,8 +91,11 @@ export interface WaveFilter {
 }
 
 export type WaveLinkKind = 'track' | 'artist' | 'playlist';
-/** Цель меню по правому клику: трек, артист или плейлист по ссылке, трек волны сразу с данными */
-export interface MenuTarget { kind: WaveLinkKind; url: string; artistUrl: string; track?: WaveTrack }
+/** Цель меню по правому клику: трек, артист или плейлист по ссылке, трек волны сразу с данными; жанр по ссылке
+ *  сайта /tags/… или по карточке жанра на полке, его название в genre */
+export interface MenuTarget { kind: WaveLinkKind | 'genre'; url: string; artistUrl: string; track?: WaveTrack; genre?: string }
+/** Закреплённое на главной (В5): плейлист и артист по ссылке, жанр по названию; title для подписи в быстром ряду */
+export interface WavePin { kind: 'playlist' | 'artist' | 'genre'; url: string; title: string }
 
 export type WaveTexts = Record<
     | 'wave' | 'similar' | 'fresh' | 'anyGenre' | 'genreInput' | 'fromLikes' | 'hintSimilar' | 'hintFresh' | 'hintGenre' | 'hintGenres'
@@ -119,7 +122,8 @@ export type WaveTexts = Record<
     | 'libraryPlay' | 'libraryPick' | 'libraryLoading' | 'libraryFailed' | 'libraryBuilding' | 'libraryEmpty' | 'libraryList' | 'libraryMore'
     | 'libraryModes' | 'librarySources' | 'libraryPlaying' | 'libraryPaused' | 'libraryPlaylists' | 'libraryHere' | 'libraryUnavailable' | 'libraryUnavailableTip' | 'whyLibrary' | 'whyLibraryLikes' | 'seedLibrary'
     | 'presets' | 'presetAll' | 'moodHappy' | 'moodSad' | 'moodAggressive' | 'moodCalm' | 'moodEnergetic' | 'hintPreset' | 'presetShort' | 'whyMoodTag'
-    | 'undo' | 'toastLiked' | 'toastUnliked' | 'seedCollecting' | 'seedCollectingAny',
+    | 'undo' | 'toastLiked' | 'toastUnliked' | 'seedCollecting' | 'seedCollectingAny'
+    | 'pinned' | 'menuPin' | 'menuUnpin' | 'menuWaveGenre' | 'toastPinned' | 'toastUnpinned' | 'toastPinFull' | 'pinPlay' | 'pinRemove',
     string
 >;
 
