@@ -53,9 +53,9 @@ describe('вкус волны', () => {
         // Минус участника и плюс другого складываются
         const mixed = item(3, 98, { title: 'Artist X, Bad - Thing', user: { id: 98, username: 'Hub' } });
         expect(tasteScore(mixed.track, profile).credit).toBeCloseTo(1, 6);
-        // Безымянный ремикс без участников оценивается остальным и не выпадает
+        // Безымянный ремикс без участников оценивается остальным и не выпадает: жанр с весом 1 после насыщения даёт 0.5
         const anon = item(4, 97, { title: 'Nightcall (Remix)', genre: 'phonk', user: { id: 97, username: 'anon' } });
-        expect(tasteScore(anon.track, taste([], [['phonk', 1]])).score).toBeCloseTo(1, 6);
+        expect(tasteScore(anon.track, taste([], [['phonk', 1]])).score).toBeCloseTo(0.5, 6);
     });
 
     it('сильный минус отсеивается, любимое чаще встаёт вперёд, треть мест у новых артистов', () => {
@@ -99,11 +99,25 @@ describe('вкус волны', () => {
         const byGenre = item(1, 10, { genre: 'Dark' });
         const byTag = item(2, 20, { genre: 'Pop', tag_list: 'dark sad love night slow' });
         const nick = item(3, 30, { genre: 'Pop', tag_list: 'ivoxygen', user: { id: 30, username: 'IVOXYGEN' } });
-        expect(tasteScore(byGenre.track, profile).tag).toBeCloseTo(2, 6);
-        expect(tasteScore(byTag.track, profile).tag).toBeCloseTo(0.2, 6);
+        // Сырые 2 и 0.2 после насыщения x / (1 + x)
+        expect(tasteScore(byGenre.track, profile).tag).toBeCloseTo(2 / 3, 6);
+        expect(tasteScore(byTag.track, profile).tag).toBeCloseTo(0.2 / 1.2, 6);
         expect(tasteReason(byGenre, profile)).toEqual({ kind: 'tasteTag', genre: 'dark' });
         expect(tasteReason(byTag, profile)).toBeNull();
         expect(tasteScore(nick.track, profile).tag).toBe(0);
+    });
+
+    it('В2.8: любимый жанр не ставит всё на потолок, любимый артист в нём обгоняет незнакомого и получает свою причину', () => {
+        const profile = taste([[10, 2]], [['hiphop', 72]], [], { tags: [['hiphop', 72], ['darkpop', -3]] });
+        const favourite = item(1, 10, { genre: 'Hip Hop', user: { id: 10, username: 'Favourite' } });
+        const stranger = item(2, 20, { genre: 'Hip Hop', user: { id: 20, username: 'Stranger' } });
+        const disliked = item(3, 30, { genre: 'Dark Pop' });
+        expect(tasteScore(stranger.track, profile).score).toBeCloseTo(72 / 73, 6);
+        expect(tasteScore(favourite.track, profile).score).toBeCloseTo(2 + 72 / 73, 6);
+        // Минус нелюбимого жанра не насыщается
+        expect(tasteScore(disliked.track, profile).score).toBeCloseTo(-3, 6);
+        expect(tasteReason(favourite, profile)).toEqual({ kind: 'tasteArtist', artist: 'Favourite' });
+        expect(tasteReason(stranger, profile)).toEqual({ kind: 'tasteTag', genre: 'hip hop' });
     });
 
     it('причина по вкусу достаётся только заметной трети подборки', () => {

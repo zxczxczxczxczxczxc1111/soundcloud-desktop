@@ -89,8 +89,11 @@ export function tasteScore(track: WaveTrack, taste: TasteMaps): TasteScore {
     const credit = creditBest + creditWorst;
     const family = Math.max(0, taste.families.get(familyKey(track, parsed)) ?? 0);
     const marker = average([...new Set(parsed.version.map((item) => item.split(':')[0]))], taste.markers).value;
+    // Плюс тегов насыщается до единицы: любимый жанр копит во вкусе десятки, и без насыщения он ставил больше половины
+    // выдачи на потолок оценки, где порядок уже случаен. Минус нелюбимого жанра действует полностью (В2.8)
+    const tag = tags.value > 0 ? tags.value / (1 + tags.value) : tags.value;
     return {
-        score: own + artist + credit + family + marker + tags.value,
+        score: own + artist + credit + family + marker + tag,
         track: own,
         artist,
         credit,
@@ -98,7 +101,7 @@ export function tasteScore(track: WaveTrack, taste: TasteMaps): TasteScore {
         creditBest,
         family,
         marker,
-        tag: tags.value,
+        tag,
         tagKey: tags.key,
         tagBest: tags.best,
         known: taste.artists.has(artistId) || creditKnown,
@@ -147,11 +150,12 @@ export function tasteReason(candidate: WaveCandidate, taste: TasteMaps): WaveRea
     return label ? { kind: 'tasteTag', genre: label.trim().toLowerCase() } : null;
 }
 
-// Причина по вкусу только у заметной трети подборки: иначе с ростом журнала строка «почему» у всех одна и та же
+// Причина по вкусу только у заметной трети подборки: иначе с ростом журнала строка «почему» у всех одна и та же.
+// Порог 0.5 это единица сырого веса тегов после насыщения
 export function applyTasteReasons(list: WaveCandidate[], taste: TasteMaps): void {
     const scored = list
         .map((candidate) => ({ candidate, score: tasteScore(candidate.track, taste).score }))
-        .filter((entry) => entry.score >= 1)
+        .filter((entry) => entry.score >= 0.5)
         .sort((a, b) => b.score - a.score);
     for (const { candidate } of scored.slice(0, Math.ceil(list.length * 0.3))) {
         const reason = tasteReason(candidate, taste);
