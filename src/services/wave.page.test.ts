@@ -1511,6 +1511,75 @@ it('ожидание рисует заготовки плиток; обложк�
     }
 });
 
+it('В6: смена трека переходом: прошлая обложка под новой, подложка блока от прошлого цвета, поздний цвет, «Меньше анимаций» выключает', async () => {
+    const withArt = (seed: number): WaveTrack[] => relatedTracks(seed).map((track) => ({
+        ...track, permalink_url: 'https://soundcloud.com/a/t' + track.id, artwork_url: 'https://i1.sndcdn.com/artworks-' + track.id + '-large.jpg',
+    }));
+    const site = fakeSite(withArt);
+    const scope = window as unknown as Record<string, unknown>;
+    const originalImage = scope.Image;
+    scope.Image = class {
+        onload: (() => void) | null = null;
+        onerror: (() => void) | null = null;
+        set src(_value: string) { queueMicrotask(() => this.onload?.()); }
+    };
+    let color: string | undefined = '#123456';
+    Object.assign(window, { __scmCoverColor: (key: string) => (key.startsWith('/a/t') ? color : undefined), __scmLearnCover: () => undefined });
+    const section = (): HTMLElement => document.getElementById('sc-wave')!;
+    const body = (): HTMLElement => section().querySelector<HTMLElement>('.scw-body')!;
+    const next = async (index: number): Promise<number> => {
+        site.setItems(site.player.getQueue().slice(), index);
+        await vi.advanceTimersByTimeAsync(1100);
+        return site.player.getQueue().slice()[index].sound.id;
+    };
+    try {
+        window.eval(waveScript());
+        await vi.advanceTimersByTimeAsync(100);
+        section().querySelector<HTMLButtonElement>('.scw-play')!.click();
+        await vi.advanceTimersByTimeAsync(1100);
+        const first = site.player.getQueue().slice()[0].sound.id;
+        // Первый трек после простоя встаёт без перехода, подложка сразу своего цвета
+        expect(section().querySelector('.scw-swap')).toBeNull();
+        expect(body().classList.contains('tinted')).toBe(true);
+        expect(body().style.getPropertyValue('--scw-cover')).toBe('#123456');
+
+        color = '#654321';
+        const second = await next(1);
+        expect(section().querySelector('.scw-top .scw-swap .scw-track')?.textContent).toBe('Rel ' + Math.floor(second / 1000) + '-' + (second % 1000));
+        const layers = [...section().querySelectorAll<HTMLElement>('.scw-cover.scw-cross .scw-img')];
+        expect(layers.map((layer) => layer.style.backgroundImage)).toEqual(['url("https://i1.sndcdn.com/artworks-' + first + '-t500x500.jpg")', 'url("https://i1.sndcdn.com/artworks-' + second + '-t500x500.jpg")']);
+        expect(layers.every((layer) => layer.classList.contains('on'))).toBe(true);
+        expect(body().classList.contains('scw-tint-in')).toBe(true);
+        expect(body().style.getPropertyValue('--scw-cover-from')).toBe('#123456');
+        expect(body().style.getPropertyValue('--scw-cover')).toBe('#654321');
+
+        // Цвет новой обложки ещё не посчитан: подложка гаснет, а когда цвет готов, красится без пересборки блока
+        color = undefined;
+        await next(2);
+        expect(body().classList.contains('tinted')).toBe(false);
+        expect(body().style.getPropertyValue('--scw-cover-from')).toBe('#654321');
+        const kept = body();
+        color = '#abcdef';
+        await vi.advanceTimersByTimeAsync(1100);
+        expect(body()).toBe(kept);
+        expect(kept.classList.contains('tinted')).toBe(true);
+        expect(kept.style.getPropertyValue('--scw-cover')).toBe('#abcdef');
+
+        // «Меньше анимаций»: трек и цвет меняются сразу, без переходов
+        document.documentElement.classList.add('scm-reduce');
+        color = '#fedcba';
+        await next(3);
+        expect(section().querySelector('.scw-swap, .scw-cross, .scw-tint-in')).toBeNull();
+        expect(section().querySelectorAll('.scw-cover .scw-img')).toHaveLength(1);
+        expect(body().style.getPropertyValue('--scw-cover')).toBe('#fedcba');
+    } finally {
+        document.documentElement.classList.remove('scm-reduce');
+        scope.Image = originalImage;
+        delete scope.__scmCoverColor;
+        delete scope.__scmLearnCover;
+    }
+});
+
 // Треки по id для trackBatch: из списка, остальные заготовкой
 const batchOf = (list: WaveTrack[]) => (query: Record<string, unknown>): WaveTrack[] =>
     String(query.ids).split(',').map((id) => list.find((track) => track.id === Number(id)) ?? { id: Number(id), kind: 'track', user_id: 700, duration: 200000, title: 'Seed ' + id });

@@ -363,6 +363,15 @@ export function installWave(config: WaveConfig, createPlayback: typeof installPl
     let jumped = false;
     // Что сейчас нарисовано на кнопке блока: играет или пауза
     let shownPlaying = false;
+    // В6: трек, обложка и цвет подложки в блоке сейчас; смена трека идёт переходом от них.
+    // drawFrom: когда начала расти форма нового трека (0 - не растёт), drawFor - трек, чья форма ещё не пришла
+    let shownTrack = 0;
+    let shownCover = '';
+    let shownTint = '';
+    let drawFrom = 0;
+    let drawFor = 0;
+    // «Меньше анимаций» в F1 (класс от плавности сайта) или системная настройка
+    const calm = (): boolean => document.documentElement.classList.contains('scm-reduce') || (typeof window.matchMedia === 'function' && window.matchMedia('(prefers-reduced-motion: reduce)').matches);
     const recorded = new Set<number>();
     const pendingJournal: number[] = [];
     let userId = 0;
@@ -2351,6 +2360,7 @@ export function installWave(config: WaveConfig, createPlayback: typeof installPl
                 updateLike();
             }
             trackPlay(sound, p.isPlaying());
+            tintLate();
         }
         if (sound) publishMeta(sound);
         // Пауза кнопкой сайта или медиаклавишей: иначе кнопка блока остаётся в старом состоянии
@@ -2802,7 +2812,14 @@ export function installWave(config: WaveConfig, createPlayback: typeof installPl
         '#sc-wave .scw-opt{display:block;width:100%;text-align:left;padding:6px 8px;border-radius:4px}',
         '#sc-wave .scw-opt:hover{background:var(--scw-film-strong)}',
         '#sc-wave .scw-opt[aria-selected="true"]{font-weight:600}',
-        '.scw-body{display:flex;gap:24px}',
+        // Подложка блока в цвет обложки играющего трека (В6): без цвета прозрачна, отступы гасят поля, раскладка та же
+        '.scw-body{display:flex;gap:24px;margin:-12px;padding:12px;border-radius:8px;transition:background-color .3s cubic-bezier(.2,0,0,1)}',
+        '.scw-body.tinted{background-color:color-mix(in srgb,var(--scw-cover) 18%,transparent)}',
+        // Новый блок после смены трека начинает с прошлого цвета, строка названия и обложка проявляются
+        '.scw-body.scw-tint-in{animation:scw-tint .3s cubic-bezier(.2,0,0,1)}',
+        '@keyframes scw-tint{from{background-color:color-mix(in srgb,var(--scw-cover-from) 18%,transparent)}}',
+        '.scw-swap{animation:scw-fade .25s cubic-bezier(.2,0,0,1)}',
+        '.scw-cover.scw-cross .scw-img{transition-duration:.3s}',
         '.scw-info{flex:1;min-width:0;display:flex;flex-direction:column}',
         '.scw-top{display:flex;gap:16px;align-items:center}',
         '.scw-top>div{min-width:0}',
@@ -3027,6 +3044,9 @@ export function installWave(config: WaveConfig, createPlayback: typeof installPl
         '.scw-dialog .scw-vrow:hover .scw-btn,.scw-dialog .scw-vrow:focus-within .scw-btn{background:var(--scw-surface);color:#fff;box-shadow:none}',
         '@media (prefers-reduced-motion:reduce){.scw-tip,.scw-toast,.scw-card .scw-art::before,.scw-card .scw-art::after,#sc-wave .scw-card-play,#sc-wave .scw-mix-play{transition:none}.scw-menu{animation:none}#sc-wave .scw-card .scw-card-play,#sc-wave .scw-mix-play{transform:none!important}}',
         'html.scm-reduce #sc-wave .scw-card .scw-card-play,html.scm-reduce #sc-wave .scw-mix-play{transition:none;transform:none!important}',
+        // Переходы играющего трека выключаются целиком: цвет подложки меняется сразу. Скрипт их тогда и не ставит
+        'html.scm-reduce .scw-body,html.scm-reduce .scw-swap{transition:none;animation:none}',
+        '@media (prefers-reduced-motion:reduce){.scw-body,.scw-swap{transition:none;animation:none}}',
         // «Меньше анимаций» в F1: без масштаба меню, растворения остаются
         'html.scm-reduce .scw-menu{animation:none}',
     ].join('\n');
@@ -3367,8 +3387,10 @@ export function installWave(config: WaveConfig, createPlayback: typeof installPl
         shownPlaying = playing;
         const play = button('scw-play', 'play', playing ? T.pause : T.play, playing ? 'pause' : 'play');
         play.disabled = state === 'unavailable' || (state === 'loading' && !active);
-        const lines = el('div', '');
         const current = currentCandidate();
+        // Блок пересобирается целиком: при смене трека прошлые обложка и цвет переносятся в новый, и смена идёт переходом
+        const swap = !!current && !!shownTrack && current.track.id !== shownTrack && !calm();
+        const lines = el('div', swap ? 'scw-swap' : '');
         if (current) {
             lines.append(titleLink('div', 'scw-track', current.track), artistLink('div', 'scw-artist', current.track));
         } else {
@@ -3397,9 +3419,15 @@ export function installWave(config: WaveConfig, createPlayback: typeof installPl
             if (mode === 'fresh') meta.append(textButton('to-similar', T.toSimilar));
         } else if (state === 'error' || state === 'unavailable') meta.append(textButton('retry', T.retry));
         info.append(top, canvas, meta);
-        const cover = el('div', 'scw-cover');
-        if (current) art(cover, current.track, 't500x500');
-        else if (state === 'idle' && preview.some((item) => artworkUrl(item.track, 't300x300'))) {
+        const cover = el('div', 'scw-cover' + (swap ? ' scw-cross' : ''));
+        if (current) {
+            if (swap && shownCover && loadedArt.has(shownCover)) {
+                const under = el('span', 'scw-img on');
+                under.style.backgroundImage = 'url("' + shownCover.replace(/["\\]/g, '') + '")';
+                cover.append(under);
+            }
+            art(cover, current.track, 't500x500');
+        } else if (state === 'idle' && preview.some((item) => artworkUrl(item.track, 't300x300'))) {
             cover.classList.add('collage');
             for (let i = 0; i < 4; i++) {
                 const cell = el('span', '');
@@ -3412,8 +3440,21 @@ export function installWave(config: WaveConfig, createPlayback: typeof installPl
             cover.innerHTML = '<svg viewBox="0 0 200 200" fill="none"><circle cx="100" cy="100" r="76" stroke="currentColor" opacity=".07"/><circle cx="100" cy="100" r="57" stroke="currentColor" opacity=".12"/><path d="M48 96v8m13-22v36m13-43v50m13-61v72m13-84v96m13-75v54m13-44v34m13-43v52m13-36v20" stroke="currentColor" stroke-width="3" stroke-linecap="round" opacity=".7"/></svg>';
         }
         body.append(info, cover);
+        paintTint(body, current ? host.__scmCoverColor?.(coverPath(current.track)) ?? '' : '');
         const quick = renderQuick();
         section.append(body, ...renderTiles(), ...(quick ? [quick] : []), ...librarySection.render(), ...shelfSection.render());
+        if (swap) {
+            // Уже загруженная обложка встала бы сразу: проявление поверх прошлой запускается с нуля
+            const image = cover.lastElementChild;
+            if (image instanceof HTMLElement && image.classList.contains('on')) {
+                image.classList.remove('on');
+                void image.offsetWidth;
+                image.classList.add('on');
+            }
+            drawFor = current?.track.id ?? 0;
+        }
+        shownTrack = current?.track.id ?? 0;
+        shownCover = current ? artworkUrl(current.track, 't500x500') : '';
         const rowsBox = section.querySelector('.scw-mix-rows');
         if (rowsBox) rowsBox.scrollTop = rowsScroll;
         const libraryBox = section.querySelector('.scw-lib-rows');
@@ -3432,6 +3473,29 @@ export function installWave(config: WaveConfig, createPlayback: typeof installPl
             if (again instanceof HTMLInputElement) again.setSelectionRange(again.value.length, again.value.length);
         }
         paint();
+    }
+    // Подложка блока цветом обложки; новая начинает с прошлого цвета, без цвета гаснет до прозрачной
+    function paintTint(body: HTMLElement, tint: string): void {
+        if (tint) {
+            body.classList.add('tinted');
+            body.style.setProperty('--scw-cover', tint);
+        }
+        if (tint !== shownTint && !calm()) {
+            body.classList.add('scw-tint-in');
+            body.style.setProperty('--scw-cover-from', shownTint || 'transparent');
+        }
+        shownTint = tint;
+    }
+    // Средний цвет новой обложки считается после её загрузки: подложка красится, как только он готов
+    function tintLate(): void {
+        const current = shownTint ? null : currentCandidate();
+        const tint = current ? host.__scmCoverColor?.(coverPath(current.track)) : undefined;
+        const body = tint ? section?.querySelector<HTMLElement>('.scw-body') : null;
+        if (!body || !tint) return;
+        // Уже вставленный блок меняет цвет плавным переходом подложки, а не анимацией от прошлого
+        shownTint = tint;
+        body.classList.add('tinted');
+        body.style.setProperty('--scw-cover', tint);
     }
     function updateLike(): void {
         // Класс scw-like у всех трёх кнопок ряда, сердце только по data-act
@@ -3501,6 +3565,13 @@ export function installWave(config: WaveConfig, createPlayback: typeof installPl
                 look = 'dim';
             }
         }
+        // Форма нового трека растёт слева направо за 300 мс, когда пришла (В6)
+        if (current && samples && drawFor === current.track.id) {
+            drawFor = 0;
+            drawFrom = calm() ? 0 : Date.now();
+        }
+        const drawn = drawFrom ? (Date.now() - drawFrom) / 300 : 1;
+        if (drawn >= 1) drawFrom = 0;
         const step = 3;
         const bars = Math.floor(width / step);
         const top = Math.round(height * 0.7);
@@ -3520,9 +3591,10 @@ export function installWave(config: WaveConfig, createPlayback: typeof installPl
                 }
                 if (gap) continue;
             }
-            const barHeight = Math.max(1, Math.round(value * (top - 2)));
-            const x = i * step;
             const fraction = (i + 0.5) / bars;
+            const rise = drawn >= 1 ? 1 : 1 - (1 - Math.min(1, Math.max(0, drawn * 1.6 - fraction * 0.6))) ** 3;
+            const barHeight = Math.max(1, Math.round(value * (top - 2) * rise));
+            const x = i * step;
             const played = look === 'live' && fraction <= progress;
             const hovered = look === 'live' && hover !== null && fraction <= hover && !played;
             let upper: string;
@@ -3536,6 +3608,7 @@ export function installWave(config: WaveConfig, createPlayback: typeof installPl
             context.fillStyle = lower;
             context.fillRect(x, top + 1, 2, Math.round(barHeight * ((height - top - 1) / top)));
         }
+        if (drawFrom) repaint();
     }
 
     // Подсказка с полным текстом, только если строка обрезана многоточием
