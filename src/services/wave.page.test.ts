@@ -455,12 +455,18 @@ it('A07: ранний пропуск кнопкой убирает версию,
     next.click();
     site.setItems(queued, at + 1);
     await vi.advanceTimersByTimeAsync(1100);
-    // Ближе к концу очереди волна догружает хвост из пула: другие песни канала там остались
-    site.setItems(site.player.getQueue().slice(), queued.length - 2);
-    await vi.advanceTimersByTimeAsync(1100);
-    const added = site.player.getQueue().slice(queued.length).map((item) => item.sound.id);
+    // Ближе к концу очереди волна догружает хвост из пула. Аккаунт канала после пропуска опущен до конца волны (В2.2),
+    // но другие его песни в пуле остались и приходят, когда кончается остальное
+    let added: number[] = [];
+    for (let i = 0; i < 8 && !added.some((id) => id % 1000 >= 900); i++) {
+        const items = site.player.getQueue().slice();
+        site.setItems(items, items.length - 2);
+        await vi.advanceTimersByTimeAsync(1100);
+        added = site.player.getQueue().slice(queued.length).map((item) => item.sound.id);
+    }
     expect(added.length).toBeGreaterThan(0);
     expect(added.some((id) => id % 1000 >= 900)).toBe(true);
+    expect(added).not.toContain(queued[at].sound.id);
     next.remove();
 });
 
@@ -1071,6 +1077,35 @@ it('В1.1: круг повтора помечен; смена кнопкой р�
     expect(five[0]).not.toHaveProperty('looped');
     expect(signals.filter((signal) => signal.id === 6)).toEqual([expect.objectContaining({ end: 'skip', endedBy: 'user', heard: 0 })]);
     expect(signals.some((signal) => signal.id === 7)).toBe(false);
+    next.remove();
+});
+
+it('трек не загрузился сразу после клика и сайт сам ушёл дальше: это не пропуск человеком', async () => {
+    const site = fakeSite(relatedTracks);
+    const bridge = fakeBridge();
+    window.eval(waveScript());
+    await vi.advanceTimersByTimeAsync(100);
+    const item = (id: number): FakeItem => ({ sound: { id, currentTime: () => position, getMediaDuration: () => 200000 }, sourceInfo: { type: 'playlist' } });
+    site.player.playCurrent();
+    position = 0;
+    site.setItems([item(5)], 0);
+    await vi.advanceTimersByTimeAsync(1000);
+    await playFor(40000);
+    const next = document.createElement('button');
+    next.className = 'playControls skipControl__next';
+    document.body.append(next);
+    next.click();
+    position = 0;
+    site.setItems([item(6)], 0);
+    await vi.advanceTimersByTimeAsync(1000);
+    // Трек 6 не заиграл, через полторы секунды после клика сайт сам поставил следующий
+    await vi.advanceTimersByTimeAsync(500);
+    site.setItems([item(7)], 0);
+    await vi.advanceTimersByTimeAsync(1000);
+    await vi.advanceTimersByTimeAsync(6000);
+    const signals = bridge.waveSignals.add.mock.calls.flatMap(([, list]) => list) as PlaySignal[];
+    expect(signals.filter((signal) => signal.id === 5)).toEqual([expect.objectContaining({ end: 'skip', endedBy: 'user' })]);
+    expect(signals.some((signal) => signal.id === 6)).toBe(false);
     next.remove();
 });
 
@@ -1778,6 +1813,37 @@ it('добавляет трек следующим и в конец без ос�
     rightClick(row.querySelector('.soundTitle__title')!); choose('queue-last'); await vi.advanceTimersByTimeAsync(100);
     expect(site.player.getQueue().slice(-1)[0]?.sound.id).toBe(song.id);
 });
+it('В2.2: после перезапуска клиента ранний пропуск пересобирает и восстановленную очередь', async () => {
+    vi.spyOn(Math, 'random').mockReturnValue(0.5);
+    const song = (id: number, user: number): WaveTrack => ({ id, kind: 'track', user_id: user, duration: 200000, title: 'Saved ' + id });
+    const tracks = [song(1, 900), song(2, 901), song(3, 900), song(4, 902), song(5, 903)];
+    const saved: PlaybackSnapshot = {
+        version: 1, at: Date.now(),
+        items: tracks.map((track, i) => ({ track, wave: true, explicit: false, reason: i === 0 ? { kind: 'tasteTag', genre: 'phonk' } : { kind: 'similar', seed: 'Seed' } })),
+        index: 0, position: 1000, paused: true, active: true, mode: 'similar', genre: null, seed: null, fallback: true,
+    };
+    const site = fakeSite(relatedTracks, (name) => name === 'trackBatch' ? tracks : undefined);
+    const library = savedLibrary(saved);
+    const add = vi.fn();
+    Object.assign(window, { soundcloudAPI: { library, waveSignals: { add } } });
+    window.eval(waveScript());
+    await vi.advanceTimersByTimeAsync(100);
+    site.player.playCurrent();
+    await vi.advanceTimersByTimeAsync(1000);
+    const next = nextButton();
+    await skipNow(site, next);
+    // Без пересборки впереди стоял бы трек 3 того же аккаунта, что пропущенный трек 1
+    const ahead = site.player.getQueue().slice(site.player.getQueueState().currentIndex + 1).map((item) => item.sound.id);
+    expect(ahead.length).toBeGreaterThan(0);
+    expect(ahead[0]).not.toBe(3);
+    // Исходная причина трека из сессии неизвестна: причина по вкусу в разрез по исходной не идёт
+    await vi.advanceTimersByTimeAsync(6000);
+    const skippedSignal = (add.mock.calls.flatMap(([, list]) => list) as PlaySignal[]).find((signal) => signal.id === 1);
+    expect(skippedSignal).toEqual(expect.objectContaining({ end: 'skip', endedBy: 'user', why: 'tasteTag' }));
+    expect(skippedSignal).not.toHaveProperty('origin');
+    next.remove();
+});
+
 it('повторяет восстановление сессии после ошибки API без перезаписи сохранённой очереди', async () => {
     const tracks = relatedTracks(31).slice(0, 3);
     const saved: PlaybackSnapshot = { version: 1, at: Date.now(), items: tracks.map((track) => ({ track, wave: true, explicit: false })),

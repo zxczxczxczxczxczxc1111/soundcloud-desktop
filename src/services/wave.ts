@@ -290,6 +290,8 @@ export function installWave(config: WaveConfig, createPlayback: typeof installPl
     let tasteFailed = false;
     // Слежение за текущим треком: журнал, пропуски и лайки
     let currentId = 0;
+    // Когда волна увидела текущий трек: смену после этого считает человеком, только если действие было позже
+    let currentSince = 0;
     let currentPosition = 0;
     let currentDuration = 0;
     let currentLiked = false;
@@ -575,6 +577,9 @@ export function installWave(config: WaveConfig, createPlayback: typeof installPl
         const byId = new Map(tracks.map((track) => [track.id, track]));
         const items: SiteQueueItem[] = [];
         let selected = -1;
+        // Найденное волной после перезапуска снова пересобирается пропусками (В2.2); своё из подборки, зерно
+        // и трек без сохранённой причины остаются на своих местах
+        const ownKinds = new Set<WaveReason['kind']>(['library', 'daily', 'forgotten', 'group', 'radar', 'seedTrack', 'restored']);
         for (let i = 0; i < saved.items.length; i++) {
             const stored = saved.items[i]; const track = byId.get(stored.track.id);
             const item = track ? createQueueItem(track) : null;
@@ -583,7 +588,9 @@ export function installWave(config: WaveConfig, createPlayback: typeof installPl
             item.explicit = stored.explicit;
             if (stored.wave && track) {
                 ours.add(item);
-                known.set(track.id, { track, reason: stored.reason ?? { kind: 'restored' } });
+                const candidate: WaveCandidate = { track, reason: stored.reason ?? { kind: 'restored' } };
+                known.set(track.id, candidate);
+                if (!ownKinds.has(candidate.reason.kind)) pooled.add(candidate);
             }
             items.push(item);
         }
@@ -1950,7 +1957,11 @@ export function installWave(config: WaveConfig, createPlayback: typeof installPl
 
     // Разбор выдачи для журнала (v4): поколение, место, исходная причина и зерно, оценка вкуса, режим
     function waveFields(candidate: WaveCandidate, trace: QueueTrace | undefined): Partial<PlaySignal> {
-        const fields: Partial<PlaySignal> = { origin: candidate.trace?.origin ?? candidate.reason.kind, seed: candidate.trace?.seed ?? 0, laterNow: false, moreNow: false };
+        // Трек из сессии до перезапуска без разбора: причина по вкусу уже заменила исходную, и исходная неизвестна
+        const kind = candidate.reason.kind;
+        const origin = candidate.trace?.origin ?? (kind === 'tasteArtist' || kind === 'tasteTag' ? undefined : kind);
+        const fields: Partial<PlaySignal> = { seed: candidate.trace?.seed ?? 0, laterNow: false, moreNow: false };
+        if (origin) fields.origin = origin;
         if (trace) Object.assign(fields, { gen: trace.gen, slot: trace.slot, mode: trace.mode });
         if (trace?.waveGenre) fields.waveGenre = trace.waveGenre;
         if (trace?.libMode) fields.libMode = trace.libMode;
@@ -2079,7 +2090,9 @@ export function installWave(config: WaveConfig, createPlayback: typeof installPl
         const id = sound?.id ?? 0;
         if (id !== currentId) {
             const previous = known.get(currentId);
-            const byUser = recentInput();
+            // Клик, которым трек поставили, его пропуском не считается: не загрузился и сайт сам ушёл дальше
+            // (зашифрованный трек, сбой сети) сразу после клика, это не пропуск человеком
+            const byUser = recentInput() && lastInput.at >= currentSince;
             // Ранний пропуск: трек волны сменил человек в первые 30 секунд, не кликом в блоке и не в конце. Снижается интерес
             // к этой версии: её вероятные копии в сессии больше не встают, остальные треки аккаунта играют (A07).
             // Смена самим сайтом (ошибка, конец очереди) пропуском не считается. Зерно выбрано руками, его пропуск ничего не убирает.
@@ -2096,6 +2109,7 @@ export function installWave(config: WaveConfig, createPlayback: typeof installPl
             jumped = false;
             finishPlay(undefined, byUser);
             currentId = id;
+            currentSince = Date.now();
             currentPosition = 0;
             currentDuration = durationOf(sound);
             currentLiked = likeButton()?.classList.contains('sc-button-selected') ?? false;
