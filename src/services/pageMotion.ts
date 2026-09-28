@@ -131,6 +131,10 @@ export function installPageMotion(config: PageMotionConfig): void {
     }
     const learning = new Set<string>();
     const sources = new Map<string, string>();
+    // Пиксели читаются только у картинок с разрешением CORS: хосты i1-i4 его отдают, сборные обложки al.sndcdn.com
+    // и заглушки a1.sndcdn.com нет (проверено 28.09.2026). Их загрузка кончается ошибкой в консоли, но в проверку
+    // «разные картинки под одной ссылкой» они идут
+    const readable = (url: string): boolean => /^https:\/\/i\d+\.sndcdn\.com\//.test(url);
     function learn(key: string, url: string): void {
         if (!pen || !key || !/^https:\/\/[a-z0-9-]+\.sndcdn\.com\//.test(url)) return;
         // Под одной ссылкой разные картинки (круги «новых треков», подборки): такой ключ не красится
@@ -146,7 +150,7 @@ export function installPageMotion(config: PageMotionConfig): void {
             }
             return;
         }
-        if (colors.has(key) || learning.has(key) || learning.size > 20) return;
+        if (colors.has(key) || learning.has(key) || learning.size > 20 || !readable(url)) return;
         learning.add(key);
         const image = new Image();
         // CDN отдаёт Access-Control-Allow-Origin: *, картинка приходит из кэша без сети

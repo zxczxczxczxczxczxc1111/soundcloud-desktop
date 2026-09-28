@@ -161,6 +161,22 @@ it('под одной ссылкой разные картинки: ключ н�
     expect(JSON.parse(localStorage.getItem(COVER_COLORS_KEY) ?? '[]')).toEqual([['/feed', '-']]);
 });
 
+it('картинки без разрешения CORS (сборные обложки al, заглушки a1) не загружаются, но разные картинки под ссылкой замечаются', async () => {
+    install();
+    const station = '/discover/sets/artist-stations:1';
+    host.__scmLearnCover?.(station, 'https://al.sndcdn.com/labs-518138ec-0-t200x200.jpg?q=YXJ0');
+    host.__scmLearnCover?.('/user', 'https://a1.sndcdn.com/images/default_avatar_large.png');
+    host.__scmLearnCover?.('/other/song', 'https://i2.sndcdn.com/artworks-xyz-t200x200.jpg');
+    await tick();
+    expect(loads).toEqual(['https://i2.sndcdn.com/artworks-xyz-t200x200.jpg']);
+    // Та же ссылка потом с обычной обложкой: цвет сборной обложки ей не подойдёт, ключ не красится
+    host.__scmLearnCover?.(station, ARTWORK);
+    await tick();
+    expect(loads).not.toContain(ARTWORK);
+    expect(host.__scmCoverColor?.(station)).toBeUndefined();
+    expect(host.__scmCoverColor?.('/other/song')).toBe('#102030');
+});
+
 it('спиннер списка становится заготовкой, пришедшие строки проявляются; меню и поиск не трогаются', async () => {
     install();
     const list = document.createElement('ul');
