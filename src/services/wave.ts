@@ -2989,10 +2989,10 @@ export function installWave(config: WaveConfig, createPlayback: typeof installPl
         '#sc-wave .scw-chip:hover{color:inherit}',
         '#sc-wave .scw-chip[aria-pressed="true"]{background:var(--scw-btn);color:var(--scw-btn-ink)}',
         // Быстрый ряд под подборкой волны: пресеты настроения (выбранный подсвечен, без галочек) и закрепления главной
-        '.scw-quick{display:flex;flex-wrap:wrap;align-items:center;gap:8px;margin-top:24px}',
+        // Пресеты и закрепления разделены промежутком шире, чем внутри группы: при переносе строки линия-разделитель повисла бы
+        '.scw-quick{display:flex;flex-wrap:wrap;align-items:center;gap:8px 24px;margin-top:24px}',
         '.scw-moods,.scw-pins{display:flex;gap:8px;flex-wrap:wrap}',
         '#sc-wave .scw-moods .scw-chip[aria-checked="true"]{background:var(--scw-btn);color:var(--scw-btn-ink)}',
-        '.scw-moods+.scw-pins{padding-left:8px;border-left:1px solid var(--scw-film-strong)}',
         '.scw-pin{display:inline-flex;align-items:center;height:28px;border-radius:14px;background:var(--scw-surface);color:var(--scw-muted);max-width:260px}',
         '.scw-pin.on{background:var(--scw-btn);color:var(--scw-btn-ink)}',
         '#sc-wave .scw-pin .scw-chip,#sc-wave .scw-pin .scw-chip[aria-pressed="true"]{min-width:0;padding:0 4px 0 12px;background:none;color:inherit;overflow:hidden;text-overflow:ellipsis}',
