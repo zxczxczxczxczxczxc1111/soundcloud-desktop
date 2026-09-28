@@ -3,6 +3,11 @@
 import type { NativeImage } from 'electron';
 import type { TaskbarCard } from './taskbarCard';
 
+/** Кадр бегущей строки: до 30 в секунду, считается от прошлого запроса Windows, пока превью на экране */
+const FRAME_MS = 33;
+/** Превью, которое Windows не запрашивала дольше этого, открыто заново: строка начинается сначала */
+const REOPEN_MS = 1500;
+
 const WM_DWMSENDICONICTHUMBNAIL = 0x0323;
 const WM_DWMSENDICONICLIVEPREVIEWBITMAP = 0x0326;
 const DWMWA_FORCE_ICONIC_REPRESENTATION = 7;
@@ -28,7 +33,8 @@ export interface ThumbnailWindow {
 export interface ThumbnailSource {
     /** Карточка играющего трека или null, если трека нет */
     card(): TaskbarCard | null;
-    render(card: TaskbarCard, width: number, height: number): Promise<NativeImage | null>;
+    /** phase: сколько миллисекунд превью на экране; moving: следующий кадр другой, строка едет */
+    render(card: TaskbarCard, width: number, height: number, phase: number): Promise<{ image: NativeImage; moving: boolean } | null>;
     /** Снимок окна для подсмотра при наведении на превью и его место в окне, в физических точках */
     peek(): Promise<{ image: NativeImage; x: number; y: number } | null>;
 }
@@ -103,12 +109,16 @@ export class IconicThumbnail {
     private on = false;
     private broken = false;
     private shown = '';
-    private cache: { key: string; image: NativeImage } | null = null;
+    private cache: { key: string; image: NativeImage; moving: boolean } | null = null;
     private ticket = 0;
+    private openedAt = 0;
+    private requestedAt = Number.NEGATIVE_INFINITY;
+    private frame: ReturnType<typeof setTimeout> | null = null;
     constructor(
         private readonly window: ThumbnailWindow,
         private readonly dwm: DwmBridge,
         private readonly source: ThumbnailSource,
+        private readonly now: () => number = Date.now,
     ) {
         this.hwnd = Number(window.getNativeWindowHandle().readBigUInt64LE(0));
         window.hookWindowMessage(WM_DWMSENDICONICTHUMBNAIL, (_wParam, lParam) => this.thumbnail(lParam));
@@ -147,22 +157,37 @@ export class IconicThumbnail {
         const width = (value >>> 16) & 0xffff;
         const height = Math.min(value & 0xffff, Math.round(width * 0.6));
         if (!width || !height) return;
+        const now = this.now();
+        if (now - this.requestedAt > REOPEN_MS) this.openedAt = now;
+        this.requestedAt = now;
         const key = cardKey(card) + '|' + width + 'x' + height;
-        if (this.cache?.key === key) {
+        // Неподвижная карточка отдаётся из запаса, с бегущей строкой каждый кадр рисуется заново
+        if (this.cache?.key === key && !this.cache.moving) {
             const image = this.cache.image;
             this.guard(() => check(this.dwm.setThumbnail(this.hwnd, image), 'DwmSetIconicThumbnail'));
             return;
         }
         const ticket = ++this.ticket;
         this.source
-            .render(card, width, height)
-            .then((image) => {
+            .render(card, width, height, now - this.openedAt)
+            .then((result) => {
                 if (ticket !== this.ticket || this.broken || !this.on) return;
-                if (!image) throw new Error('Карточка превью пустая');
-                this.cache = { key, image };
-                this.guard(() => check(this.dwm.setThumbnail(this.hwnd, image), 'DwmSetIconicThumbnail'));
+                if (!result) throw new Error('Карточка превью пустая');
+                this.cache = { key, image: result.image, moving: result.moving };
+                this.guard(() => check(this.dwm.setThumbnail(this.hwnd, result.image), 'DwmSetIconicThumbnail'));
+                if (result.moving) this.nextFrame();
             })
             .catch((error: unknown) => this.fail(error));
+    }
+    // Следующий кадр бегущей строки: Windows пришлёт запрос, только если превью ещё на экране, иначе цепочка обрывается
+    private nextFrame(): void {
+        if (this.frame) return;
+        const delay = Math.max(0, FRAME_MS - (this.now() - this.requestedAt));
+        this.frame = setTimeout(() => {
+            this.frame = null;
+            if (this.broken || !this.on || this.window.isDestroyed()) return;
+            this.guard(() => check(this.dwm.invalidate(this.hwnd), 'DwmInvalidateIconicBitmaps'));
+        }, delay);
     }
     private livePreview(): void {
         if (this.broken || !this.on) return;

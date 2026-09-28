@@ -54,6 +54,7 @@ import {
     powerMonitor,
     net,
     Notification,
+    screen,
     type IpcMainEvent,
     type NativeImage,
 } from 'electron';
@@ -67,7 +68,7 @@ import { TranslationService, type AppLanguage, type TranslationKeys } from './se
 import { ThumbarService } from './services/thumbarService';
 import { ArtworkCache, IconicThumbnail, loadDwmBridge } from './services/iconicThumbnail';
 import { taskbarCardScript, type TaskbarCard } from './services/taskbarCard';
-import { formatClock, trackParts, trackSeconds } from './utils/trackParser';
+import { formatClock, trackSeconds } from './utils/trackParser';
 import { WebhookService } from './services/webhookService';
 import { UpdateService, type UpdateMode, type UpdateStatus } from './services/updateService';
 import { UpdateScreen } from './update/updateScreen';
@@ -462,27 +463,31 @@ function startIconicThumbnail(): void {
         (url) => net.fetch(url, { signal: AbortSignal.timeout(8000) }),
         () => iconicThumbnail?.update(),
     );
+    // На карточке название целиком, как на SoundCloud, и загрузчик: длинное едет бегущей строкой
     const card = (): TaskbarCard | null => {
         const track = playback.info;
-        const parts = trackParts(track.title, track.author, store.get('trackParserEnabled', true) === true);
-        if (!parts.track) return null;
+        const title = track.title.split('\n')[0].trim();
+        if (!title) return null;
         const { elapsed, duration } = trackSeconds(track.elapsed, track.duration);
         return {
-            title: parts.track,
-            artist: parts.artist,
+            title,
+            artist: track.author.trim(),
             artwork: track.artwork ? artwork.get(track.artwork) : '',
             progress: duration > 0 ? Math.min(1, elapsed / duration) : -1,
             time: duration > 0 ? formatClock(elapsed) + ' / ' + formatClock(duration) : '',
             playing: track.isPlaying,
+            motion: store.get('reduceMotion', false) !== true,
         };
     };
-    const render = async (value: TaskbarCard, width: number, height: number): Promise<NativeImage | null> => {
+    const render = async (value: TaskbarCard, width: number, height: number, phase: number): Promise<{ image: NativeImage; moving: boolean } | null> => {
         const page = headerView?.webContents;
         if (!page || page.isDestroyed()) return null;
-        const url: unknown = await page.executeJavaScript(taskbarCardScript(value, width, height));
+        const frame: unknown = await page.executeJavaScript(taskbarCardScript(value, width, height, phase));
+        if (typeof frame !== 'object' || frame === null) return null;
+        const { image: url, moving } = frame as { image?: unknown; moving?: unknown };
         if (typeof url !== 'string' || !url.startsWith('data:image/png;base64,')) return null;
         const image = nativeImage.createFromDataURL(url);
-        return image.isEmpty() ? null : image;
+        return image.isEmpty() ? null : { image, moving: moving === true };
     };
     const peek = async (): Promise<{ image: NativeImage; x: number; y: number } | null> => {
         if (contentView.webContents.isDestroyed() || mainWindow.isMinimized()) return null;
@@ -731,7 +736,9 @@ async function init() {
     if (process.platform === 'darwin') setupDarwinMenu();
     else Menu.setApplicationMenu(null);
 
-    const windowState = windowStateManager({ defaultWidth: 800, defaultHeight: 800 });
+    // Первое окно вмещает главную до второго ряда подборок, но не больше рабочей области экрана; дальше размер запоминается
+    const work = screen.getPrimaryDisplay().workAreaSize;
+    const windowState = windowStateManager({ defaultWidth: Math.min(1440, work.width), defaultHeight: Math.min(1240, work.height) });
     mainWindow = createBrowserWindow(windowState);
 
     windowState.manage(mainWindow);

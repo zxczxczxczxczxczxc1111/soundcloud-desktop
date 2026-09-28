@@ -6,7 +6,8 @@ import type { TaskbarCard } from './taskbarCard';
 const WM_THUMBNAIL = 0x0323;
 const WM_PEEK = 0x0326;
 
-function setup(render: ThumbnailSource['render'] = async () => ({ id: 'card' }) as unknown as NativeImage) {
+function setup(render: ThumbnailSource['render'] = async () => ({ image: { id: 'card' } as unknown as NativeImage, moving: false })) {
+    let clock = 1000;
     const hooks = new Map<number, (wParam: Buffer, lParam: Buffer) => void>();
     const handle = Buffer.alloc(8);
     handle.writeBigUInt64LE(0x1234n);
@@ -27,16 +28,19 @@ function setup(render: ThumbnailSource['render'] = async () => ({ id: 'card' }) 
         render: vi.fn(render),
         peek: vi.fn<ThumbnailSource['peek']>(async () => ({ image: { id: 'site' } as unknown as NativeImage, x: 0, y: 32 })),
     };
-    const thumbnail = new IconicThumbnail(window, dwm, source);
+    const thumbnail = new IconicThumbnail(window, dwm, source, () => clock);
+    const tick = (ms: number): void => {
+        clock += ms;
+    };
     const request = (width: number, height: number): void => {
         const lParam = Buffer.alloc(8);
         lParam.writeUInt32LE(((width & 0xffff) << 16) | (height & 0xffff));
         hooks.get(WM_THUMBNAIL)?.(Buffer.alloc(8), lParam);
     };
     const set = (patch: Partial<TaskbarCard> | null): void => {
-        card = patch === null ? null : { title: 'Night Drive', artist: 'Mira Solen', artwork: '', progress: 0.3, time: '1:06 / 3:40', playing: true, ...patch };
+        card = patch === null ? null : { title: 'Night Drive', artist: 'Mira Solen', artwork: '', progress: 0.3, time: '1:06 / 3:40', playing: true, motion: true, ...patch };
     };
-    return { hooks, dwm, source, thumbnail, request, set };
+    return { hooks, dwm, source, thumbnail, request, set, tick };
 }
 
 describe('своя картинка превью на панели задач', () => {
@@ -71,14 +75,41 @@ describe('своя картинка превью на панели задач', 
         thumbnail.update();
         request(200, 109);
         await vi.waitFor(() => expect(dwm.setThumbnail).toHaveBeenCalledTimes(1));
-        expect(source.render).toHaveBeenLastCalledWith(expect.objectContaining({ title: 'Night Drive' }), 200, 109);
+        expect(source.render).toHaveBeenLastCalledWith(expect.objectContaining({ title: 'Night Drive' }), 200, 109, 0);
         request(200, 109);
         expect(dwm.setThumbnail).toHaveBeenCalledTimes(2);
         expect(source.render).toHaveBeenCalledTimes(1);
         // Слишком высокое место режется до пропорции карточки
         request(300, 400);
         await vi.waitFor(() => expect(dwm.setThumbnail).toHaveBeenCalledTimes(3));
-        expect(source.render).toHaveBeenLastCalledWith(expect.anything(), 300, 180);
+        expect(source.render).toHaveBeenLastCalledWith(expect.anything(), 300, 180, 0);
+    });
+
+    it('с бегущей строкой просит следующий кадр, пока Windows запрашивает превью, и начинает строку заново после закрытия', async () => {
+        vi.useFakeTimers();
+        const { dwm, source, thumbnail, request, set, tick } = setup(async () => ({ image: { id: 'frame' } as unknown as NativeImage, moving: true }));
+        set({ title: 'THE STRONGEST | GOJO X SUKUNA - Hardtekk' });
+        thumbnail.update();
+        expect(dwm.invalidate).toHaveBeenCalledTimes(1);
+        request(200, 109);
+        await vi.waitFor(() => expect(dwm.setThumbnail).toHaveBeenCalledTimes(1));
+        await vi.advanceTimersByTimeAsync(66);
+        expect(dwm.invalidate).toHaveBeenCalledTimes(2);
+        // Windows пришла за кадром: тот же ключ, но кадр рисуется заново с новым сдвигом
+        tick(70);
+        request(200, 109);
+        await vi.waitFor(() => expect(dwm.setThumbnail).toHaveBeenCalledTimes(2));
+        expect(source.render).toHaveBeenLastCalledWith(expect.anything(), 200, 109, 70);
+        await vi.advanceTimersByTimeAsync(66);
+        expect(dwm.invalidate).toHaveBeenCalledTimes(3);
+        // Превью закрыто: запроса нет, следующий кадр не просится
+        await vi.advanceTimersByTimeAsync(1000);
+        expect(dwm.invalidate).toHaveBeenCalledTimes(3);
+        tick(5000);
+        request(200, 109);
+        await vi.waitFor(() => expect(dwm.setThumbnail).toHaveBeenCalledTimes(3));
+        expect(source.render).toHaveBeenLastCalledWith(expect.anything(), 200, 109, 0);
+        vi.useRealTimers();
     });
 
     it('подсмотр через превью получает снимок сайта на его месте в окне', async () => {
