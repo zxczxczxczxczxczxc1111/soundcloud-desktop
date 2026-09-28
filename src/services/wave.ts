@@ -422,6 +422,22 @@ export function installWave(config: WaveConfig, createPlayback: typeof installPl
         openCard = index;
         if (index !== null) keptRowsScroll = 0;
     }
+    // Раскрытый список встаёт строкой под карточкой и в маленьком окне уходит за нижний край: он прокручивается в вид
+    // и забирает фокус, свёрнутый отдаёт их карточке. Пока треки грузятся, список растёт, и render докручивает его 3 с
+    let revealUntil = 0;
+    function revealMix(): void {
+        const list = section?.querySelector<HTMLElement>('.scw-shelf .scw-mix');
+        if (!list) return;
+        list.querySelector<HTMLElement>('.scw-mix-head [data-act]')?.focus({ preventScroll: true });
+        list.scrollIntoView({ block: 'nearest' });
+        revealUntil = Date.now() + 3000;
+    }
+    function backToCard(index: number): void {
+        revealUntil = 0;
+        const open = section?.querySelector<HTMLElement>('[data-act="shelf-open"][data-card="' + index + '"]');
+        open?.focus({ preventScroll: true });
+        open?.closest('.scw-card')?.scrollIntoView({ block: 'nearest' });
+    }
     // Разделы из wave/: сборка с ядром. Стоит до кода, который их зовёт; константы ядра ниже по тексту идут обёртками
     // «Версии этого трека»: раздел в wave/versions.ts
     const versions = installVersions({
@@ -2878,6 +2894,8 @@ export function installWave(config: WaveConfig, createPlayback: typeof installPl
         '.scw-tiles.scw-shelf{grid-template-columns:repeat(6,minmax(0,1fr));gap:20px}',
         '@media(max-width:1200px){#sc-wave .scw-tiles:not(.scw-shelf){grid-template-columns:repeat(3,minmax(0,1fr))}#sc-wave .scw-tiles.scw-shelf{grid-template-columns:repeat(4,minmax(0,1fr))}}',
         '.scw-card{position:relative;min-width:0}',
+        // Прокрутка к карточке и раскрытому списку не прячет их под шапкой сайта
+        '.scw-card,.scw-mix{scroll-margin:72px 0 16px}',
         '#sc-wave .scw-card-open{display:block;width:100%;min-width:0;text-align:left}',
         // Кнопка «слушать» лежит поверх обложки: слой того же размера, что обложка, пропускает клики мимо кнопки
         '.scw-card-over{position:absolute;z-index:2;left:0;top:0;width:100%;aspect-ratio:1;pointer-events:none}',
@@ -3472,6 +3490,8 @@ export function installWave(config: WaveConfig, createPlayback: typeof installPl
             again?.focus();
             if (again instanceof HTMLInputElement) again.setSelectionRange(again.value.length, again.value.length);
         }
+        // Треки только что раскрытого списка догрузились, и он вырос: прокрутка догоняет его
+        if (revealUntil && Date.now() < revealUntil) section.querySelector('.scw-shelf .scw-mix')?.scrollIntoView({ block: 'nearest' });
         paint();
     }
     // Подложка блока цветом обложки; новая начинает с прошлого цвета, без цвета гаснет до прозрачной
@@ -3729,6 +3749,8 @@ export function installWave(config: WaveConfig, createPlayback: typeof installPl
                 const index = Number(control.dataset.card);
                 if (isRadarCard(index)) radarSection.toggle(index);
                 else shelfSection.toggle(index);
+                if (openCard === index) revealMix();
+                else backToCard(index);
                 return;
             }
             case 'lib-source':
@@ -3752,11 +3774,13 @@ export function installWave(config: WaveConfig, createPlayback: typeof installPl
             case 'shelf-retry':
                 shelfSection.resetFailures(); profileRetryAt = 0; shelfSection.ensure();
                 return;
-            case 'mix-close':
+            case 'mix-close': {
+                const index = openCard;
                 openCard = null;
                 render();
-                section.querySelector<HTMLElement>('[data-act="shelf-open"][aria-expanded="true"]')?.focus();
+                if (index !== null) backToCard(index);
                 return;
+            }
             case 'shelf-play':
             case 'mix-play': {
                 const index = control.dataset.act === 'mix-play' ? openCard ?? -1 : Number(control.dataset.card);
@@ -3871,7 +3895,7 @@ export function installWave(config: WaveConfig, createPlayback: typeof installPl
             const index = openCard;
             openCard = null;
             render();
-            section?.querySelector<HTMLElement>('[data-act="shelf-open"][data-card="' + index + '"]')?.focus();
+            backToCard(index);
         } else if (event.key === 'Enter' && event.target instanceof HTMLInputElement && event.target.dataset.role === 'genre-input' && parseGenres(popQuery).length) {
             applySettings(mode, popQuery);
         }

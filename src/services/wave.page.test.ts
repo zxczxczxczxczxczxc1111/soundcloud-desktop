@@ -93,6 +93,8 @@ beforeEach(() => {
     document.body.innerHTML = '<div class="l-content"><div class="modular-home-mixed-selection"></div></div>';
     // В jsdom нет раскладки: блок считается видимым, пока он в документе
     Object.defineProperty(HTMLElement.prototype, 'offsetParent', { configurable: true, get(this: HTMLElement) { return this.parentElement; } });
+    // И прокрутки к элементу в jsdom нет
+    Object.defineProperty(HTMLElement.prototype, 'scrollIntoView', { configurable: true, value: () => undefined });
     vi.stubGlobal('fetch', vi.fn(() => Promise.reject(new Error('сеть в тесте закрыта'))));
 });
 afterEach(() => {
@@ -100,6 +102,7 @@ afterEach(() => {
     delete (window as unknown as Record<string, unknown>).webpackJsonp;
     delete (window as unknown as Record<string, unknown>).soundcloudAPI;
     Reflect.deleteProperty(HTMLElement.prototype, 'offsetParent');
+    Reflect.deleteProperty(HTMLElement.prototype, 'scrollIntoView');
     vi.unstubAllGlobals();
     vi.restoreAllMocks();
     vi.useRealTimers();
@@ -1732,6 +1735,53 @@ it('раскрытая подборка: треки списком, трек и�
     section.querySelector('.scw-mix')!.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
     expect(section.querySelector('.scw-mix')).toBeNull();
     expect(document.activeElement?.getAttribute('data-act')).toBe('shelf-open');
+});
+
+it('раскрытая подборка забирает прокрутку и фокус, свёрнутая карточкой, крестиком или Esc отдаёт их карточке', async () => {
+    const finds = Array.from({ length: 12 }, (_, i): WaveTrack => ({ id: 5001 + i, kind: 'track', user_id: 600 + i, duration: 200000, title: 'Find ' + i }));
+    fakeSite(relatedTracks, (name, _path, query) => (name === 'trackBatch' ? batchOf(finds)(query) : undefined));
+    const snapshot = {
+        day: localDay(Date.now()), v: 4,
+        cards: [
+            { kind: 'daily', title: '', sub: '', ids: finds.map((track) => track.id), seeds: [1], keys: [], art: [] },
+            { kind: 'group', title: 'Techno', sub: 'A, B', ids: finds.slice(0, 6).map((track) => track.id), seeds: [], keys: ['techno'], art: [] },
+        ],
+    };
+    Object.assign(window, { soundcloudAPI: { waveShelf: { load: vi.fn(async () => ({ snapshot, recent: [] })), save: vi.fn(async () => true) } } });
+    const scrolled: string[] = [];
+    Object.defineProperty(HTMLElement.prototype, 'scrollIntoView', { configurable: true, value(this: HTMLElement) { scrolled.push(this.className.split(' ')[0]); } });
+    window.eval(waveScript());
+    await vi.advanceTimersByTimeAsync(100);
+    const section = document.getElementById('sc-wave')!;
+    const card = (): HTMLButtonElement => section.querySelector<HTMLButtonElement>('[data-act="shelf-open"][data-card="1"]')!;
+    const focused = (): string | undefined => (document.activeElement as HTMLElement | null)?.dataset.act;
+
+    card().focus();
+    card().click();
+    // Список сразу в виду, фокус на его первой кнопке; догруженный и выросший список докручивается, фокус остаётся
+    expect(focused()).toBe('mix-play');
+    expect(scrolled).toEqual(['scw-mix']);
+    await vi.advanceTimersByTimeAsync(100);
+    expect(section.querySelectorAll('.scw-mix .scw-row[data-track]')).toHaveLength(6);
+    expect(focused()).toBe('mix-play');
+    expect(scrolled.slice(-1)).toEqual(['scw-mix']);
+
+    section.querySelector<HTMLButtonElement>('[data-act="mix-close"]')!.click();
+    expect(section.querySelector('.scw-mix')).toBeNull();
+    expect(document.activeElement).toBe(card());
+    expect(scrolled.slice(-1)).toEqual(['scw-card']);
+    // Повторное нажатие на карточку сворачивает так же
+    card().click();
+    expect(focused()).toBe('mix-play');
+    card().click();
+    expect(section.querySelector('.scw-mix')).toBeNull();
+    expect(document.activeElement).toBe(card());
+    expect(scrolled.slice(-2)).toEqual(['scw-mix', 'scw-card']);
+
+    card().click();
+    section.querySelector('.scw-mix')!.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
+    expect(document.activeElement).toBe(card());
+    expect(scrolled.slice(-1)).toEqual(['scw-card']);
 });
 
 it('ссылки в строках и шапке: название на трек, автор на профиль, без запуска; обложка и пустое место играют; приватный без ссылок', async () => {
