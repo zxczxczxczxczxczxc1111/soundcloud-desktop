@@ -65,6 +65,9 @@ import { ProxyService } from './services/proxyService';
 import { PresenceService, TEMPLATE_DEFAULTS } from './services/presenceService';
 import { TranslationService, type AppLanguage, type TranslationKeys } from './services/translationService';
 import { ThumbarService } from './services/thumbarService';
+import { ArtworkCache, IconicThumbnail, loadDwmBridge } from './services/iconicThumbnail';
+import { taskbarCardScript, type TaskbarCard } from './services/taskbarCard';
+import { formatClock, trackParts, trackSeconds } from './utils/trackParser';
 import { WebhookService } from './services/webhookService';
 import { UpdateService, type UpdateMode, type UpdateStatus } from './services/updateService';
 import { UpdateScreen } from './update/updateScreen';
@@ -182,6 +185,7 @@ let updateScreenDismissed = false;
 const appLanguage = (): AppLanguage => (store.get('siteLanguage', 'ru') === 'en' ? 'en' : 'ru');
 const translationService = new TranslationService(appLanguage);
 let thumbarService: ThumbarService;
+let iconicThumbnail: IconicThumbnail | null = null;
 let playbackController: PlaybackController;
 let shortcutService: ShortcutService;
 let tray: Tray | null = null;
@@ -449,6 +453,52 @@ function buildTrayMenu(): Menu {
 function sendPresencePreview(): void {
     if (!presenceService) return;
     settingsManager?.getView()?.webContents.send('presence-preview-update', { track: playback.info, ...presenceService.preview() });
+}
+
+// Превью на панели задач Windows: карточка играющего трека вместо снимка окна. Рисует её страница шапки, она наша
+// и живёт всё время; при подсмотре через превью Windows получает снимок сайта на его месте в окне
+function startIconicThumbnail(): void {
+    const artwork = new ArtworkCache(
+        (url) => net.fetch(url, { signal: AbortSignal.timeout(8000) }),
+        () => iconicThumbnail?.update(),
+    );
+    const card = (): TaskbarCard | null => {
+        const track = playback.info;
+        const parts = trackParts(track.title, track.author, store.get('trackParserEnabled', true) === true);
+        if (!parts.track) return null;
+        const { elapsed, duration } = trackSeconds(track.elapsed, track.duration);
+        return {
+            title: parts.track,
+            artist: parts.artist,
+            artwork: track.artwork ? artwork.get(track.artwork) : '',
+            progress: duration > 0 ? Math.min(1, elapsed / duration) : -1,
+            time: duration > 0 ? formatClock(elapsed) + ' / ' + formatClock(duration) : '',
+            playing: track.isPlaying,
+        };
+    };
+    const render = async (value: TaskbarCard, width: number, height: number): Promise<NativeImage | null> => {
+        const page = headerView?.webContents;
+        if (!page || page.isDestroyed()) return null;
+        const url: unknown = await page.executeJavaScript(taskbarCardScript(value, width, height));
+        if (typeof url !== 'string' || !url.startsWith('data:image/png;base64,')) return null;
+        const image = nativeImage.createFromDataURL(url);
+        return image.isEmpty() ? null : image;
+    };
+    const peek = async (): Promise<{ image: NativeImage; x: number; y: number } | null> => {
+        if (contentView.webContents.isDestroyed() || mainWindow.isMinimized()) return null;
+        const image = await contentView.webContents.capturePage();
+        if (image.isEmpty()) return null;
+        const bounds = contentView.getBounds();
+        const scale = Math.max(1, ...image.getScaleFactors());
+        return { image, x: Math.round(bounds.x * scale), y: Math.round(bounds.y * scale) };
+    };
+    loadDwmBridge()
+        .then((dwm) => {
+            if (mainWindow.isDestroyed()) return;
+            iconicThumbnail = new IconicThumbnail(mainWindow, dwm, { card, render, peek });
+            iconicThumbnail.update();
+        })
+        .catch((error: unknown) => console.error('Своя картинка превью недоступна', error));
 }
 
 // Инкогнито прячет только карточку Discord: журнал и обучение волны работают как обычно
@@ -850,8 +900,11 @@ async function init() {
         presence: () => presenceService,
         webhooks: () => webhookService,
         previewPresence: sendPresencePreview,
-        updateThumbar: (playing, liked) => {
-            if (thumbarService) thumbarService.updateThumbarButtons(mainWindow, playing, liked);
+        updateThumbar: (track) => {
+            if (!thumbarService) return;
+            thumbarService.updateThumbarButtons(mainWindow, track.isPlaying, track.isLiked);
+            thumbarService.updateTrack(mainWindow, track, store.get('trackParserEnabled', true) === true, appTitle);
+            iconicThumbnail?.update();
         },
     });
     waveJournal?.flush();
@@ -913,7 +966,11 @@ async function init() {
     });
     if (platform() === 'win32') {
         thumbarService = new ThumbarService(translationService, RESOURCES_PATH, playbackController);
-        mainWindow.on('show', () => thumbarService.restore(mainWindow));
+        mainWindow.on('show', () => {
+            thumbarService.restore(mainWindow);
+            iconicThumbnail?.restore();
+        });
+        startIconicThumbnail();
     }
 
 

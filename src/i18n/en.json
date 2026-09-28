@@ -7,6 +7,7 @@
     "pause": "Pause",
     "like": "Like",
     "unlike": "Remove from likes",
+    "thumbnailTime": "{elapsed} of {duration}",
     "client": "App",
     "adBlocker": "Ad blocker",
     "enableAdBlocker": "Block ads",

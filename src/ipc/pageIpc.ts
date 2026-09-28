@@ -40,8 +40,8 @@ export interface PageIpcDeps {
     webhooks(): Pick<WebhookService, 'updateTrackInfo'>;
     /** Предпросмотр карточки Discord в F1 */
     previewPresence(): void;
-    /** Кнопки на миниатюре панели задач Windows */
-    updateThumbar(playing: boolean, liked: boolean): void;
+    /** Кнопки, заголовок и подсказка миниатюры на панели задач Windows */
+    updateThumbar(track: TrackInfo): void;
 }
 
 export function registerPageIpc(ipc: IpcRegistry, deps: PageIpcDeps): void {
@@ -131,6 +131,6 @@ export function registerPageIpc(ipc: IpcRegistry, deps: PageIpcDeps): void {
 
         // update rich presence preview in settings
         deps.previewPresence();
-        deps.updateThumbar(result.isPlaying, result.isLiked);
+        deps.updateThumbar(result);
     });
 }

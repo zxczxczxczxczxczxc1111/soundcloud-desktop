@@ -14,7 +14,7 @@ const reasons = new Set<string>(['clean-exit', 'abnormal-exit', 'killed', 'crash
 const errorTypes = new Set(['Error', 'TypeError', 'RangeError', 'ReferenceError', 'SyntaxError', 'URIError', 'AggregateError']);
 const sourceFiles = new Set([
     'main', 'presenceService', 'proxyService', 'adblockService', 'webhookService', 'settingsManager', 'notificationManager', 'rendererRecovery', 'playbackController', 'viewStyles', 'gpu', 'utility', 'process',
-    'contentPolicy', 'updateScreen', 'updateService', 'awayTracker', 'hiddenPageWatchdog', 'revealWindow', 'shortcutService', 'thumbarService',
+    'contentPolicy', 'updateScreen', 'updateService', 'awayTracker', 'hiddenPageWatchdog', 'revealWindow', 'shortcutService', 'thumbarService', 'iconicThumbnail',
     'waveJournal', 'waveExclusions', 'waveSignals', 'historyIndex', 'historyManager',
 ]);
 // Предупреждение самого Node (устаревший модуль, утечка слушателей) печатается через console.error с этим началом

@@ -7,6 +7,7 @@
     "pause": "Пауза",
     "like": "Нравится",
     "unlike": "Убрать из понравившихся",
+    "thumbnailTime": "{elapsed} из {duration}",
     "client": "Приложение",
     "adBlocker": "Блокировка рекламы",
     "enableAdBlocker": "Блокировать рекламу",

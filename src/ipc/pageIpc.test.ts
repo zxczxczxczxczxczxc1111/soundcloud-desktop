@@ -83,7 +83,7 @@ describe('обработчики страницы сайта', () => {
         expect(page.executeJavaScript).toHaveBeenCalledOnce();
         expect(webhooks.updateTrackInfo).toHaveBeenCalledTimes(3);
         expect(presence.updatePresence).toHaveBeenCalledTimes(3);
-        expect(deps.updateThumbar).toHaveBeenLastCalledWith(false, false);
+        expect(deps.updateThumbar).toHaveBeenLastCalledWith(playback.info);
     });
     it('мусор вместо трека и неизвестная команда отклонены', async () => {
         const { ipc, site, playback, controller } = setup();

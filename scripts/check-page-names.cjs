@@ -15,6 +15,7 @@ const scripts = [
     ['pageMotion', () => load('pageMotion').pageMotionScript(false)],
     ['playbackController', () => '(' + load('playbackController').executePageCommand.toString() + ')({"type":"toggle"});'],
     ['playerArea', () => load('playerArea').playerAreaScript()],
+    ['taskbarCard', () => load('taskbarCard').taskbarCardScript({ title: 'a', artist: 'b', artwork: '', progress: 0.5, time: '1:05 / 3:40', playing: true }, 200, 109)],
     ['wave', () => load('wave').waveScript()],
 ];
 // Проверка самой проверки: имя из модуля и константа снаружи, как их отдал бы tsc
