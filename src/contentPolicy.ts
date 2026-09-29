@@ -36,6 +36,25 @@ export function sitePagePath(target: string, current: string): string | null {
     return to.pathname + to.search;
 }
 
+// Короткая ссылка из мобильного «Поделиться»: on.soundcloud.com/<ключ>
+export function isShortLink(value: string): boolean {
+    try {
+        const url = new URL(value);
+        return url.protocol === 'https:' && url.hostname === 'on.soundcloud.com' && !url.username && !url.password && !url.port &&
+            /^\/[a-z0-9]{1,64}\/?$/i.test(url.pathname);
+    } catch { return false; }
+}
+
+// Куда ведёт короткая ссылка: страница soundcloud.com без меток шаринга (ref, si, utm). Другой адрес не принимается
+export function shortLinkTarget(location: string): string | null {
+    try {
+        const url = new URL(location, 'https://on.soundcloud.com/');
+        if (url.protocol !== 'https:' || url.hostname !== 'soundcloud.com' || url.username || url.password || url.port) return null;
+        const path = url.pathname.replace(/\/+$/, '');
+        return path ? url.origin + path : null;
+    } catch { return null; }
+}
+
 export function protectContent(contents: WebContents, openExternal: (url: string) => Promise<void>): void {
     contents.session.setPermissionCheckHandler((_contents, permission, origin) =>
         permission === 'mediaKeySystem' && isSoundCloudUrl(origin));

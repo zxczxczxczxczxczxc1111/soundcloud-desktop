@@ -48,6 +48,7 @@
     "incognitoOn": "Incognito: Discord doesn’t see what’s playing",
     "incognitoOff": "Discord shows the track again",
     "pageLoadFailed": "Couldn’t load SoundCloud. The client will retry when the connection is back, or press Ctrl+R.",
+    "shortLinkFailed": "Couldn’t open the link: SoundCloud didn’t find it or there’s no connection",
     "playerCrashed": "The player stopped with an error. The client will restart it in a minute, or press Ctrl+R.",
     "pageGaveUp": "SoundCloud didn’t load after several attempts. Open the client and press Ctrl+R.",
     "proxyPasswordUnreadable": "Couldn’t read the proxy password. Enter it again.",

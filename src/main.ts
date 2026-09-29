@@ -1,7 +1,7 @@
 import { DiagnosticJournal, LOOP_RESOLUTION_MS, loopDelayStats, metricsDue } from './services/diagnosticJournal';
 import { monitorEventLoopDelay } from 'perf_hooks';
 import { installRendererRecovery } from './services/rendererRecovery';
-import { protectContent, sitePagePath } from './contentPolicy';
+import { isShortLink, protectContent, shortLinkTarget, sitePagePath } from './contentPolicy';
 import { DISCORD_TEXT_KEYS, type SettingChange } from './settings/validateSetting';
 import { applyPreferenceMigrations } from './settings/preferenceMigrations';
 import { isTrustedLocalSender, trustLocalFile } from './trustedViews';
@@ -14,6 +14,7 @@ import { homeBlockDefaults, homeBlocksCss, homePageScript, isHomeBlockKey } from
 import { waveScript } from './services/wave';
 import { pageMotionScript } from './services/pageMotion';
 import { playerAreaScript } from './services/playerArea';
+import { searchLinkScript } from './services/searchLink';
 import { WaveJournal } from './services/waveJournal';
 import { WaveExclusions } from './services/waveExclusions';
 import { WaveShelf } from './services/waveShelf';
@@ -822,17 +823,8 @@ async function init() {
     // Ссылку из встроенных страниц новой вёрстки сайт иногда открывает полной загрузкой (window.location): музыка обрывается,
     // волна сбрасывается. Такой переход ведёт роутер сайта; если сайт тут же снова просит полную загрузку того же адреса, она проходит
     let softNavigation: { url: string; at: number } | null = null;
-    contentView.webContents.on('will-navigate', (event, url) => {
+    const openInSite = (url: string, pagePath: string): void => {
         const contents = contentView.webContents;
-        const pagePath = sitePagePath(url, contents.getURL());
-        if (!pagePath) return;
-        if (softNavigation?.url === url && Date.now() - softNavigation.at < 5000) {
-            softNavigation = null;
-            return;
-        }
-        event.preventDefault();
-        softNavigation = { url, at: Date.now() };
-        diagnostics.record('page.soft-navigation', { playing: playback.info.isPlaying });
         const fullLoad = (): void => {
             if (!contents.isDestroyed()) contents.loadURL(url).catch((error: unknown) => console.warn('Страница сайта не открыта:', error));
         };
@@ -843,6 +835,38 @@ async function init() {
                 console.warn('Переход внутри сайта не удался:', error);
                 fullLoad();
             });
+    };
+    // Короткую ссылку on.soundcloud.com (мобильное «Поделиться», вставка в поиск) раскрывает клиент: страница не может,
+    // ответ on.soundcloud.com без разрешения CORS. Дальше переход, как у обычной ссылки
+    const openShortLink = (url: string): void => {
+        const contents = contentView.webContents;
+        void expandShortLink(url).then((target) => {
+            if (contents.isDestroyed()) return;
+            if (!target) {
+                queueToastNotification(translationService.translate('shortLinkFailed'));
+                return;
+            }
+            const pagePath = sitePagePath(target, contents.getURL());
+            if (pagePath) openInSite(target, pagePath);
+            else if (contents.getURL().split(/[?#]/)[0] !== target) contents.loadURL(target).catch((error: unknown) => console.warn('Страница сайта не открыта:', error));
+        });
+    };
+    contentView.webContents.on('will-navigate', (event, url) => {
+        if (isShortLink(url)) {
+            event.preventDefault();
+            openShortLink(url);
+            return;
+        }
+        const pagePath = sitePagePath(url, contentView.webContents.getURL());
+        if (!pagePath) return;
+        if (softNavigation?.url === url && Date.now() - softNavigation.at < 5000) {
+            softNavigation = null;
+            return;
+        }
+        event.preventDefault();
+        softNavigation = { url, at: Date.now() };
+        diagnostics.record('page.soft-navigation', { playing: playback.info.isPlaying });
+        openInSite(url, pagePath);
     });
     contentView.webContents.setUserAgent(globalUserAgent);
 
@@ -1147,6 +1171,7 @@ async function init() {
             await contentView.webContents.executeJavaScript(homePageScript());
             await contentView.webContents.executeJavaScript(waveScript(playback.playedThisRun));
             await contentView.webContents.executeJavaScript(playerAreaScript());
+            await contentView.webContents.executeJavaScript(searchLinkScript());
 
             if (presenceService) {
                 await presenceService.updatePresence(playback.info);
@@ -1430,6 +1455,39 @@ app.on('will-quit', () => {
         tray = null;
     }
 });
+
+// Куда ведёт короткая ссылка: заголовок перенаправления без самого перехода. fetch Electron при ручном перенаправлении падает
+// с «Redirect was cancelled», поэтому net.request с событием redirect. Сессия сайта: запрос идёт через тот же прокси
+function expandShortLink(url: string): Promise<string | null> {
+    return new Promise((resolve) => {
+        let done = false;
+        const finish = (target: string | null): void => {
+            if (done) return;
+            done = true;
+            clearTimeout(timer);
+            resolve(target);
+        };
+        const request = net.request({ url, session: contentView.webContents.session, redirect: 'manual' });
+        const timer = setTimeout(() => {
+            finish(null);
+            request.abort();
+        }, 10000);
+        request.on('redirect', (_status, _method, location) => {
+            finish(shortLinkTarget(location));
+            request.abort();
+        });
+        // Ответ без перенаправления: ссылки нет (404) или она ведёт не туда; тело не нужно
+        request.on('response', () => {
+            finish(null);
+            request.abort();
+        });
+        request.on('error', (error) => {
+            if (!done) console.warn('Короткая ссылка не раскрыта:', error);
+            finish(null);
+        });
+        request.end();
+    });
+}
 
 // Ссылка «открыть в клиенте» из карточки Discord: страница сайта включает трек, когда её модули найдены.
 // До этого __scOpenTrack отвечает false или его ещё нет, тогда повтор раз в секунду, не дольше 30 секунд
