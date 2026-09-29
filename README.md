@@ -8,7 +8,7 @@
 
 <a href="https://github.com/zxczxczxczxczxczxc1111/soundcloud-desktop/releases/latest"><img src="assets/readme/download.svg" width="248" height="48" alt="Скачать для Windows"></a>
 
-<sub>Версия 0.12.0 для Windows 10 и 11 x64</sub>
+<sub>Версия 0.13.0 для Windows 10 и 11 x64</sub>
 
 <a href="#моя-волна">Моя волна</a>&emsp;<a href="#радар-релизов">Радар релизов</a>&emsp;<a href="#история">История</a>&emsp;<a href="#что-ещё-есть-в-клиенте">Что ещё есть</a>&emsp;<a href="#установка">Установка</a>
 
@@ -176,16 +176,21 @@
       <b>Резервная копия</b><br>
       <sub>История, отметки волны, вкус, подборки, архив радара и настройки в одном файле. Автокопия раз в неделю в твою папку.</sub>
     </td>
+    <td valign="top">
+      <img src="assets/readme/icons/links.svg" width="28" height="28" alt=""><br>
+      <b>Ссылки в поиске</b><br>
+      <sub>Вставь в поиск ссылку на трек, плейлист или профиль, и откроется его страница. Короткие ссылки из телефона тоже.</sub>
+    </td>
   </tr>
 </table>
 
-Всё это включается и настраивается в окне по <kbd>F1</kbd>:
+Всё это включается и настраивается в окне по <kbd>F1</kbd> или по шестерёнке в шапке:
 
 <img src="assets/readme/settings.webp" width="100%" alt="Окно настроек поверх главной: раздел «Моя волна» с отметками волны, версиями и расписанием радара">
 
 ## Установка
 
-Бери установщик `soundcloud-desktop-0.12.0-setup-x64.exe` на странице [последнего релиза](https://github.com/zxczxczxczxczxczxc1111/soundcloud-desktop/releases/latest). Рядом лежит `SHA256SUMS`, если захочешь сверить файлы.
+Бери установщик `soundcloud-desktop-0.13.0-setup-x64.exe` на странице [последнего релиза](https://github.com/zxczxczxczxczxczxc1111/soundcloud-desktop/releases/latest). Рядом лежит `SHA256SUMS`, если захочешь сверить файлы.
 
 Клиент обновляется сам: новую версию качает в фоне и ставит, когда ты его закрываешь. Выключить это можно переключателем «Проверять обновления» внизу настроек.
 
