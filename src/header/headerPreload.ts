@@ -11,6 +11,7 @@ const SEND_CHANNELS = new Set([
     'title-bar-double-click',
     'toggle-history',
     'toggle-queue',
+    'toggle-settings',
 ]);
 
 const INVOKE_CHANNELS = new Set(['get-header-texts', 'get-navigation-controls-enabled', 'is-maximized']);

@@ -402,7 +402,7 @@ function setupTray() {
 }
 
 function headerTexts(): Record<string, string> {
-    const keys = ['headerBack', 'headerForward', 'headerRefresh', 'headerStop', 'headerTitleBar', 'headerMinimize', 'headerMaximize', 'headerRestore', 'headerClose', 'headerHistory', 'headerQueue'] as const;
+    const keys = ['headerBack', 'headerForward', 'headerRefresh', 'headerStop', 'headerTitleBar', 'headerMinimize', 'headerMaximize', 'headerRestore', 'headerClose', 'headerHistory', 'headerQueue', 'headerSettings'] as const;
     return Object.fromEntries(keys.map((key) => [key, translationService.translate(key)]));
 }
 

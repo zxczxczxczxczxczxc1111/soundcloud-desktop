@@ -72,6 +72,7 @@
     "headerClose": "Закрыть",
     "headerQueue": "Очередь",
     "headerHistory": "История, Ctrl+H",
+    "headerSettings": "Настройки, F1",
     "updateScreenTitle": "Обновление до версии {v}",
     "updateScreenDownloading": "Загружаю: {p}%",
     "updateScreenInstalling": "Устанавливаю и перезапускаю",

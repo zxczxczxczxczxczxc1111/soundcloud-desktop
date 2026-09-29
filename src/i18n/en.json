@@ -72,6 +72,7 @@
     "headerClose": "Close",
     "headerQueue": "Queue",
     "headerHistory": "History, Ctrl+H",
+    "headerSettings": "Settings, F1",
     "updateScreenTitle": "Updating to version {v}",
     "updateScreenDownloading": "Downloading: {p}%",
     "updateScreenInstalling": "Installing and restarting",
