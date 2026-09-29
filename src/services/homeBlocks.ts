@@ -11,6 +11,7 @@ export const HOME_BLOCK_KEYS = [
     'homeAlbums',
     'homeLiked',
     'homeBuzzing',
+    'homeVoiceNotes',
     'homeNewTracks',
     'homeFollow',
     'homeLikes',
@@ -33,6 +34,7 @@ const HOME_BLOCK_TARGETS: Record<HomeBlockKey, { shown: boolean; selectors: stri
     homeAlbums: { shown: false, selectors: ['[data-sc-shelf="albums"]'] },
     homeLiked: { shown: false, selectors: ['[data-sc-shelf="liked"]'] },
     homeBuzzing: { shown: false, selectors: ['[data-sc-shelf="buzzing"]'] },
+    homeVoiceNotes: { shown: false, selectors: ['[data-sc-shelf="voicenotes"]'] },
     homeNewTracks: { shown: false, selectors: ['.l-sidebar-right .artistShortcutsModule'] },
     homeFollow: { shown: false, selectors: ['.l-sidebar-right .whoToFollowModule'] },
     homeLikes: { shown: true, selectors: ['.l-sidebar-right .likesModule'] },
@@ -81,6 +83,7 @@ export function installHomePage(): void {
         ['albums', /^Albums for(?: (.+))?$/i, (tail) => 'Альбомы для' + who(tail)],
         ['liked', /^Liked by$/i, () => 'Лайкнули'],
         ['buzzing', /^Artists to watch out for$/i, () => 'Артисты, за которыми стоит следить'],
+        ['voicenotes', /^(?:Exclusive )?Voice Notes$/i, () => 'Голосовые от артистов'],
     ];
     const captions: Record<string, string> = {
         'Artist station': 'Станция артиста',

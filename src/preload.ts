@@ -16,6 +16,7 @@ export function installEarlyBlocks(css: string): void {
         ['trending', /^(Trending by genre|В тренде по жанрам)$/i], ['made', /^(Made for|Для)( |$)/i],
         ['curated', /^(Curated by SoundCloud|Подборки SoundCloud)$/i], ['albums', /^(Albums for|Альбомы для)( |$)/i],
         ['liked', /^(Liked by|Лайкнули)$/i], ['buzzing', /^(Artists to watch out for|Артисты, за которыми стоит следить)$/i],
+        ['voicenotes', /^((Exclusive )?Voice Notes|Голосовые от артистов)$/i],
     ];
     const update = (): void => {
         const root = document.documentElement; if (!root) return;

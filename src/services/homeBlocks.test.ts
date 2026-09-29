@@ -32,7 +32,7 @@ it('CSS прячет только выключенные блоки и толь�
     );
     expect(css).not.toContain('.loading');
     // Все полки сайта выключены: заготовка загрузки полок под волной тоже не видна
-    const shelvesOff = homeBlocksCss((key) => !/^home(More|Recent|Mixed|Stations|Trending|Made|Curated|Albums|Liked|Buzzing)$/.test(key));
+    const shelvesOff = homeBlocksCss((key) => !/^home(More|Recent|Mixed|Stations|Trending|Made|Curated|Albums|Liked|Buzzing|VoiceNotes)$/.test(key));
     expect(shelvesOff).toContain('html[data-sc-home] .modular-home-mixed-selection>.loading{display:none!important}');
 });
 
@@ -51,6 +51,14 @@ it('полка, пришедшая позже, получает метку до 
     installHomePage();
     document.body.insertAdjacentHTML('beforeend', shelf('Artists to watch out for'));
     await vi.waitFor(() => expect(document.querySelector('li')?.getAttribute('data-sc-shelf')).toBe('buzzing'));
+});
+
+it('полка голосовых от артистов метится и по умолчанию скрыта', () => {
+    history.replaceState(null, '', '/discover');
+    document.body.innerHTML = shelf('Exclusive Voice Notes');
+    installHomePage();
+    expect(document.querySelector('li')?.getAttribute('data-sc-shelf')).toBe('voicenotes');
+    expect(homeBlocksCss((key) => homeBlockDefaults[key])).toContain('html[data-sc-home] [data-sc-shelf="voicenotes"]');
 });
 
 it('с русским сайтом переводит серверные заголовки и подписи, не трогая ссылки', () => {

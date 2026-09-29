@@ -53,6 +53,7 @@ window.SETTINGS_EN = {
     'Альбомы для тебя': 'Albums for you',
     'Лайкнули': 'Liked by',
     'Артисты, за которыми стоит следить': 'Artists to watch out for',
+    'Голосовые от артистов': 'Exclusive Voice Notes',
     'Справа': 'Sidebar',
     'Новые треки': 'New tracks',
     'Кого послушать': 'Artists you should follow',
