@@ -1852,8 +1852,9 @@ export function installWave(config: WaveConfig, createPlayback: typeof installPl
         const observed: WaveTrack[] = [];
         // Соседи по зерну: похожие на одно зерно голосуют за настроение друг друга
         const observedBy = new Map<number, WaveTrack[]>();
-        // Похожее на from: причина по жанру или режиму; у волны от трека найденное становится зерном дальше
-        const take = (track: WaveTrack, from: WaveTrack): void => {
+        // Похожее на from: причина по жанру или режиму; у волны от трека найденное становится зерном дальше.
+        // station: трек со станции, в журнале и в долях источников он отдельно от похожих
+        const take = (track: WaveTrack, from: WaveTrack, station = false): void => {
             observed.push(track);
             const near = observedBy.get(from.id);
             if (near) near.push(track);
@@ -1866,7 +1867,8 @@ export function installWave(config: WaveConfig, createPlayback: typeof installPl
                 : filter.mode === 'fresh' && isNewArtist(track, p.knownArtists, p.knownNames)
                     ? { kind: 'newArtist' }
                     : { kind: filter.mode === 'fresh' ? 'fresh' : 'similar', seed: seedTitle };
-            if (accept(found, { track, reason }, filter, from.id) && seed && derivedSeeds.length < 100) derivedSeeds.push(track);
+            const trace: WaveCandidate['trace'] = station ? { origin: 'station', seed: from.id, score: null, known: false } : undefined;
+            if (accept(found, { track, reason, trace }, filter, from.id) && seed && derivedSeeds.length < 100) derivedSeeds.push(track);
         };
         let failures = 0;
         const similarTo = (from: WaveTrack): Promise<void> =>
@@ -1976,7 +1978,7 @@ export function installWave(config: WaveConfig, createPlayback: typeof installPl
             try {
                 const tracks = await stationTracks(root);
                 if (disposed || own !== generation) return 0;
-                for (const track of tracks) take(track, root);
+                for (const track of tracks) take(track, root, true);
             } catch (error) {
                 if (own === generation) usedStations.delete(root.id);
                 console.warn('Волна: станция трека не загружена', error);

@@ -555,6 +555,32 @@ it('волна по треку из замкнутого круга похожи
     expect(queued.filter((item) => item.sound.id >= 7000).length).toBeGreaterThan(0);
 });
 
+it('П9: трек со станции уходит в журнал своим источником station, а не как обычное похожее', async () => {
+    const site = fakeSite(closedCircle, stationExtra);
+    fakeExclusions();
+    const signals = { add: vi.fn() };
+    Object.assign((window as unknown as { soundcloudAPI: object }).soundcloudAPI, { waveSignals: signals });
+    const row = listRow();
+    window.eval(waveScript());
+    await vi.advanceTimersByTimeAsync(100);
+    rightClick(row.querySelector('.soundTitle__title')!);
+    choose('wave-track');
+    await vi.advanceTimersByTimeAsync(100);
+    const queued = site.player.replaceQueue.mock.calls[site.player.replaceQueue.mock.calls.length - 1][0] as FakeItem[];
+    const at = queued.findIndex((item) => item.sound.id >= 7000);
+    const circle = queued.findIndex((item) => item.sound.id > 555 && item.sound.id < 560);
+    for (const index of [at, circle]) {
+        position = 0;
+        site.setItems(queued, index);
+        await playFor(40000);
+    }
+    site.setItems(queued, 0);
+    await vi.advanceTimersByTimeAsync(7000);
+    const sent = signals.add.mock.calls.flatMap(([userId, list]) => (userId === 77 ? (list as Array<{ id: number; origin?: string }>) : []));
+    expect(sent.find((signal) => signal.id === queued[at].sound.id)?.origin).toBe('station');
+    expect(sent.find((signal) => signal.id === queued[circle].sound.id)?.origin).toBe('similar');
+});
+
 // Случай «кровью» 24.09.2026: артиста пропустили в обычной волне, потом волна от его трека играла один этот трек
 it('пропуск артиста в прошлой волне не мешает новой волне от его трека', async () => {
     vi.spyOn(Math, 'random').mockReturnValue(0.5);
