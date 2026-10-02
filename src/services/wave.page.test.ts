@@ -2270,6 +2270,38 @@ it('«Давно не слушал» не берёт лайки последни
     expect(forgotten.some((id) => fresh.includes(id))).toBe(false);
 });
 
+it('Ф5: плейлист момента: карточка по отрезку суток из лайков без игравшего за сутки, по три на артиста, хранится до смены отрезка, играет по порядку', async () => {
+    const liked = Array.from({ length: 40 }, (_, i): WaveTrack => ({
+        id: 2001 + i, kind: 'track', duration: 200000, title: 'Like ' + i, user_id: 500 + (i % 10), user: { id: 500 + (i % 10), username: 'Tech' + (i % 10) }, genre: 'Techno', tag_list: '',
+    }));
+    const site = fakeSite(relatedTracks, (name, _path, query) => {
+        if (name === 'soundLikesIds') return { collection: liked.map((track) => track.id) };
+        if (name === 'trackBatch') return batchOf(liked)(query);
+        return undefined;
+    });
+    const shelf = { load: vi.fn(async () => ({ snapshot: null, recent: [], today: [2001, 2002] })), save: vi.fn(async () => true) };
+    const waveTaste = { load: vi.fn(async () => ({ artists: [[500, 1]], tags: [], tracks: [] })) };
+    Object.assign(window, { soundcloudAPI: { waveShelf: shelf, waveTaste } });
+    window.eval(waveScript());
+    await vi.advanceTimersByTimeAsync(200);
+    const card = document.querySelector<HTMLElement>('#sc-wave .scw-card[data-card="-20"]');
+    const date = new Date();
+    const day = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'][date.getDay()];
+    const title = ['Night before ' + day, day + ' morning', day + ' afternoon', day + ' evening'][Math.floor(date.getHours() / 6)];
+    expect(card?.querySelector('.scw-t1')?.textContent).toBe(title);
+    expect(card?.querySelector('.scw-t2')?.textContent).toBe('Techno');
+    const saved = JSON.parse(localStorage.getItem('scDesktopWaveMoment') ?? 'null') as { user: number; card: { ids: number[] } };
+    expect(saved.user).toBe(77);
+    // Игравшее за сутки не берётся, у артиста не больше трёх треков: десять артистов дают тридцать
+    expect(saved.card.ids).toHaveLength(30);
+    expect(saved.card.ids).not.toContain(2001);
+    expect(saved.card.ids).not.toContain(2002);
+    card!.querySelector<HTMLButtonElement>('[data-act="shelf-play"]')!.click();
+    await vi.advanceTimersByTimeAsync(1000);
+    expect(queuedIds(site).slice(0, 10)).toEqual(saved.card.ids.slice(0, 10));
+    expect(document.querySelector('#sc-wave .scw-why')?.textContent).toBe('Your taste: ' + title);
+});
+
 it('П11: «Давно не слушал» по счётчикам из main: пропускаемый лайк уходит, любимое без лайка приходит', async () => {
     const liked = Array.from({ length: 30 }, (_, i): WaveTrack => ({
         id: 2001 + i, kind: 'track', duration: 200000, title: 'Like ' + i, user_id: 500 + (i % 10), user: { id: 500 + (i % 10), username: 'Tech' + (i % 10) }, genre: 'Techno', tag_list: '',

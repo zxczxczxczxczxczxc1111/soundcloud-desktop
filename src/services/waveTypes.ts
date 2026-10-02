@@ -133,6 +133,7 @@ export type WaveTexts = Record<
     | 'presets' | 'presetAll' | 'moodHappy' | 'moodSad' | 'moodAggressive' | 'moodCalm' | 'moodEnergetic' | 'hintPreset' | 'presetShort' | 'whyMoodTag'
     | 'undo' | 'toastLiked' | 'toastUnliked' | 'seedCollecting' | 'seedCollectingAny' | 'seedCollectingArtist' | 'seedCollectingArtistAny' | 'menuArtistAll' | 'seedArtistAll' | 'menuQueueNext' | 'menuQueueLast'
     | 'scoutTitle' | 'scoutCount' | 'scoutKeep' | 'scoutKept' | 'scoutNext' | 'scoutExit'
+    | 'momentNight' | 'momentMorning' | 'momentDay' | 'momentEvening' | 'momentDaysOf' | 'momentDaysOn'
     | 'whyRelatedArtist' | 'whyScMix' | 'whyNeighbors' | 'shelfLiked' | 'seedLiked' | 'whyLikedBy' | 'whyLikedAny'
     | 'traitLessCyr' | 'traitLessInst' | 'traitLessGenre' | 'traitLessMarker' | 'traitLessForeign' | 'forkTitle' | 'forkClose' | 'forkCalm' | 'forkAway'
     | 'pinned' | 'menuPin' | 'menuUnpin' | 'menuWaveGenre' | 'toastPinned' | 'toastUnpinned' | 'toastPinFull' | 'pinPlay' | 'pinRemove',

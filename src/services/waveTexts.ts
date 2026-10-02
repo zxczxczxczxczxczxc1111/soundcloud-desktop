@@ -79,6 +79,9 @@ export const WAVE_TEXTS: Record<'ru' | 'en', WaveTexts> = {
         seedCollecting: 'Собираю волну от {title}', seedCollectingAny: 'Собираю волну…', seedCollectingArtist: 'Собираю треки {title}', seedCollectingArtistAny: 'Собираю треки артиста…',
         menuArtistAll: 'Все треки артиста', seedArtistAll: 'Все треки {seed}', menuQueueNext: 'Слушать следующим', menuQueueLast: 'В конец очереди',
         scoutTitle: 'Разведка', scoutCount: '{n} из {total}', scoutKeep: 'Оставить', scoutKept: 'Оставлено', scoutNext: 'Дальше', scoutExit: 'Выйти из разведки',
+        // Дни недели с воскресенья, как Date.getDay: «утро четверга» и «ночь на четверг»
+        momentNight: 'Ночь на {day}', momentMorning: 'Утро {day}', momentDay: 'День {day}', momentEvening: 'Вечер {day}',
+        momentDaysOf: 'воскресенья,понедельника,вторника,среды,четверга,пятницы,субботы', momentDaysOn: 'воскресенье,понедельник,вторник,среду,четверг,пятницу,субботу',
         whyRelatedArtist: 'Похож на {artist}', whyScMix: 'Из подборки SoundCloud: {name}', whyNeighbors: 'Лайкают слушатели с похожим вкусом',
         shelfLiked: 'Лайкнули твои артисты', seedLiked: 'Что лайкают артисты, которых ты слушаешь', whyLikedBy: 'Лайк от {artist}', whyLikedAny: 'Лайк от артиста, которого ты слушаешь',
         traitLessCyr: 'Меньше русскоязычного в этой волне', traitLessInst: 'Меньше инструменталов в этой волне', traitLessGenre: 'Меньше {genre} в этой волне',
@@ -164,6 +167,8 @@ export const WAVE_TEXTS: Record<'ru' | 'en', WaveTexts> = {
         seedCollecting: 'Building a wave from {title}', seedCollectingAny: 'Building a wave…', seedCollectingArtist: 'Collecting tracks by {title}', seedCollectingArtistAny: 'Collecting the artist’s tracks…',
         menuArtistAll: 'All tracks by artist', seedArtistAll: 'All tracks by {seed}', menuQueueNext: 'Play next', menuQueueLast: 'Add to queue',
         scoutTitle: 'Scout', scoutCount: '{n} of {total}', scoutKeep: 'Keep', scoutKept: 'Kept', scoutNext: 'Next', scoutExit: 'Exit scout',
+        momentNight: 'Night before {day}', momentMorning: '{day} morning', momentDay: '{day} afternoon', momentEvening: '{day} evening',
+        momentDaysOf: 'Sunday,Monday,Tuesday,Wednesday,Thursday,Friday,Saturday', momentDaysOn: 'Sunday,Monday,Tuesday,Wednesday,Thursday,Friday,Saturday',
         whyRelatedArtist: 'Sounds like {artist}', whyScMix: 'From SoundCloud’s {name}', whyNeighbors: 'Liked by listeners with your taste',
         shelfLiked: 'Liked by your artists', seedLiked: 'What the artists you listen to like', whyLikedBy: 'Liked by {artist}', whyLikedAny: 'Liked by an artist you listen to',
         traitLessCyr: 'Less Russian-language music in this wave', traitLessInst: 'Fewer instrumentals in this wave', traitLessGenre: 'Less {genre} in this wave',

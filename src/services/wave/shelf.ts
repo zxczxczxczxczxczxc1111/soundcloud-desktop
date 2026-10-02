@@ -3,6 +3,7 @@
 // вместе с волной (pageHelpers в wave.ts) и зовёт помощников по голому имени, поэтому импорт через пространство имён
 // и разбор в константы. Снимок полки, её треки и набор раздел держит сам; всё, что он берёт у ядра, приходит объектом core
 import * as identity from '../trackIdentity';
+import * as waveGenres from '../waveGenres';
 import * as waveLinks from '../waveLinks';
 import * as wavePicks from '../wavePicks';
 import * as waveTaste from '../waveTaste';
@@ -14,9 +15,10 @@ import type { MenuTarget, Profile, Seed, TasteMaps, WaveReason, WaveState, WaveT
 import type { SitePlayer, WaveWindow } from '../wave';
 
 const { confirmedCopies } = identity;
+const { genreMain } = waveGenres;
 const { canonicalUrl, coversOf, retryDelay } = waveLinks;
 const { capPerArtist, daySample, forgottenPicks, isWaveEligible, shuffleInPlace } = wavePicks;
-const { pickFinds, tasteGroups, tasteOrder, tasteScore } = waveTaste;
+const { pickFinds, tasteForTime, tasteGroups, tasteOrder, tasteScore, tasteSlot } = waveTaste;
 const { countText, fillText, formatTime, localDay } = waveTexts;
 const { interleaveMixes, likedOwner } = sourcesModule;
 
@@ -25,6 +27,8 @@ export interface ShelfCore {
     host: WaveWindow;
     /** Номер карточки «Новые загрузки» радара: у неё свой тон */
     uploadsCard: number;
+    /** Номер карточки «Плейлист момента» (Ф5): она живёт на странице и меняется четыре раза в сутки */
+    momentCard: number;
     isRadarCard(index: number | null | undefined): boolean;
     state(): WaveState;
     active(): boolean;
@@ -100,13 +104,13 @@ export interface ShelfSection {
 
 export function installShelf(core: ShelfCore): ShelfSection {
     const {
-        texts: T, host, uploadsCard: UPLOADS_CARD, isRadarCard, radarCards, radarMix, isExcluded, artistName, paintArt, tracksOf, trackOf, beginSeed, ensureProfile,
+        texts: T, host, uploadsCard: UPLOADS_CARD, momentCard: MOMENT_CARD, isRadarCard, radarCards, radarMix, isExcluded, artistName, paintArt, tracksOf, trackOf, beginSeed, ensureProfile,
         expandLibrary, ensureExclusions, ensureTaste, ensureUser, call, render, showToast, el, button, textButton, trackRow,
     } = core;
     const isId = (value: unknown): value is number => typeof value === 'number' && Number.isSafeInteger(value) && value > 0;
     // by у «Лайкнули твои артисты»: чей лайк у трека, по порядку ids; neighbors у находок: треки от соседей по вкусу
     interface ShelfCard {
-        kind: 'daily' | 'forgotten' | 'liked' | 'group'; title: string; sub: string; ids: number[]; seeds: number[]; keys: string[]; art: string[]; by: string[]; neighbors: number[];
+        kind: 'daily' | 'forgotten' | 'liked' | 'group' | 'moment'; title: string; sub: string; ids: number[]; seeds: number[]; keys: string[]; art: string[]; by: string[]; neighbors: number[];
     }
     interface Shelf { day: string; v: number; cards: ShelfCard[] }
     // Формат сборки полки: 2 это жанры из всех лайков и прослушанного, до восьми, с поджанрами (26.09.2026);
@@ -245,6 +249,109 @@ export function installShelf(core: ShelfCore): ShelfSection {
             const entry = item && isId(item.id) ? heard.get(item.id) : undefined;
             return item && entry ? [{ ...entry, done: count(item.done), early: count(item.early), loops: count(item.loops) }] : [];
         });
+    }
+    // Плейлист момента (Ф5): до 50 треков из лайков и слышанного с плюсом во вкусе, по вкусу этого отрезка суток с его
+    // поправкой вдвойне, без игравшего за сутки, не больше трёх на артиста. Отрезков четыре по шесть часов; карточка
+    // хранится в localStorage до смены отрезка, играющая не меняется. Мало треков или нет вкуса: карточки нет
+    const MOMENT_KEY = 'scDesktopWaveMoment';
+    interface Moment { user: number; day: string; slot: number; card: ShelfCard | null }
+    let moment: Moment | null = null;
+    // Что нужно для сборки: аккаунт, слышанное из индекса и игравшее за сутки; приходит вместе со снимком полки
+    let momentInputs: { user: number; heard: HeardTrack[]; today: number[] } | null = null;
+    let momentPromise: Promise<void> | null = null;
+    let momentFailedAt = 0;
+    try {
+        const saved: unknown = JSON.parse(localStorage.getItem(MOMENT_KEY) || 'null');
+        const entry = saved && typeof saved === 'object' ? (saved as Record<string, unknown>) : null;
+        const card = entry?.card && typeof entry.card === 'object' ? (entry.card as Record<string, unknown>) : null;
+        if (entry && isId(entry.user) && typeof entry.day === 'string' && typeof entry.slot === 'number')
+            moment = {
+                user: entry.user, day: entry.day, slot: entry.slot,
+                card: card && Array.isArray(card.ids) && card.ids.length ? {
+                    kind: 'moment', title: typeof card.title === 'string' ? card.title : '', sub: typeof card.sub === 'string' ? card.sub : '',
+                    ids: card.ids.filter(isId).slice(0, 50), seeds: [], keys: [], art: Array.isArray(card.art) ? card.art.filter((url): url is string => typeof url === 'string').slice(0, 4) : [], by: [], neighbors: [],
+                } : null,
+            };
+    } catch (error) {
+        console.warn('Волна: плейлист момента не прочитан', error);
+    }
+    // «Утро четверга»: часть суток и день недели по-русски в нужном падеже, ночь это «ночь на четверг»
+    function momentName(now: number): string {
+        const date = new Date(now);
+        const part = Math.floor(date.getHours() / 6);
+        const names = (part === 0 ? T.momentDaysOn : T.momentDaysOf).split(',');
+        return fillText([T.momentNight, T.momentMorning, T.momentDay, T.momentEvening][part], { day: names[date.getDay()] ?? '' });
+    }
+    async function buildMoment(inputs: { heard: HeardTrack[]; today: number[] }, day: string, slot: number, now: number): Promise<ShelfCard | null> {
+        const p = await ensureProfile();
+        await Promise.all([ensureExclusions(), ensureTaste()]);
+        const base = core.taste();
+        if (!base) return null;
+        const timed = tasteForTime(base, now);
+        const played = confirmedCopies(inputs.today, core.copyGroups());
+        const usable = (track: WaveTrack): boolean => isWaveEligible(track) && !isExcluded(track) && !played.has(track.id);
+        const liked = p.likedTracks.filter(usable);
+        const likedIds = new Set(liked.map((track) => track.id));
+        const listened = inputs.heard.filter((entry) => !likedIds.has(entry.id) && !p.liked.has(entry.id) && (base.tracks.get(entry.id) ?? 0) > 0).map(heardTrack).filter(usable);
+        const pool = [...liked, ...listened];
+        const weight = new Map(pool.map((track) => {
+            const here = tasteScore(track, timed).score;
+            return [track.id, here + (here - tasteScore(track, base).score)];
+        }));
+        const ordered = daySample(pool, (track) => track.id, (track) => Math.exp(Math.max(-4, Math.min(4, weight.get(track.id) ?? 0))), pool.length, day + ':moment:' + slot);
+        const picked = capPerArtist(ordered, 3).slice(0, 50);
+        if (picked.length < 10) return null;
+        // Подпись: два самых частых жанра карточки
+        const genres = new Map<string, { label: string; count: number }>();
+        for (const track of picked) {
+            const main = genreMain(track.genre);
+            if (!main.key) continue;
+            const entry = genres.get(main.key) ?? { label: main.label, count: 0 };
+            entry.count++;
+            genres.set(main.key, entry);
+        }
+        const [a, b] = [...genres.values()].sort((x, y) => y.count - x.count).map((entry) => capital(entry.label));
+        const sub = a && b ? fillText(T.groupAnd, { a, b }) : a ?? '';
+        return { kind: 'moment', title: momentName(now), sub, ids: picked.map((track) => track.id), seeds: [], keys: [], art: coversOf(picked), by: [], neighbors: [] };
+    }
+    // Карточка текущего отрезка: собирается, когда отрезок сменился и она не играет. Зовётся из отрисовки полки
+    function ensureMoment(): void {
+        const inputs = momentInputs;
+        if (!inputs || momentPromise || document.visibilityState === 'hidden') return;
+        const now = Date.now();
+        const day = localDay(now);
+        const slot = tasteSlot(now);
+        if (moment && moment.user === inputs.user && moment.day === day && moment.slot === slot) return;
+        const current = core.seed();
+        if ((current?.card === MOMENT_CARD && core.active()) || now - momentFailedAt < 10 * 60000) return;
+        momentPromise = buildMoment(inputs, day, slot, now).then((card) => {
+            if (core.disposed()) return;
+            moment = { user: inputs.user, day, slot, card };
+            mixLists.delete(MOMENT_CARD);
+            if (core.openCard() === MOMENT_CARD) core.showCard(null);
+            try {
+                localStorage.setItem(MOMENT_KEY, JSON.stringify(moment));
+            } catch (error) {
+                console.warn('Волна: плейлист момента не сохранён', error);
+            }
+        }, (error: unknown) => {
+            momentFailedAt = Date.now();
+            console.warn('Волна: плейлист момента не собран', error);
+        }).finally(() => {
+            momentPromise = null;
+            render();
+        });
+    }
+    // Карточка по номеру: полка или плейлист момента
+    const cardAt = (index: number): ShelfCard | undefined => (index === MOMENT_CARD ? momentCard() ?? undefined : shelf?.cards[index]);
+    // Сохранённая карточка момента годится только для текущего аккаунта, дня и отрезка
+    function momentCard(): ShelfCard | null {
+        const now = Date.now();
+        const user = momentInputs?.user;
+        if (!moment || !user || moment.user !== user) return null;
+        // Играющая карточка остаётся до конца своей волны, даже если отрезок сменился
+        const playing = core.seed()?.card === MOMENT_CARD && core.active();
+        return playing || (moment.day === localDay(now) && moment.slot === tasteSlot(now)) ? moment.card : null;
     }
     // Подборки на сутки: все лайки из каталога, вкус из main, похожие на любимое.
     // recentMain это прослушанное за 30 дней по журналу клиента, история сайта помнит только последние 200;
@@ -416,7 +523,8 @@ export function installShelf(core: ShelfCore): ShelfSection {
         shelfPromise = (async () => {
             const id = await ensureUser();
             if (!id) throw new Error('Пользователь не определён');
-            const loaded = (await bridge.load(id)) as { snapshot?: unknown; recent?: unknown; heard?: unknown; playlists?: unknown; fresh?: unknown; love?: unknown } | null;
+            const loaded = (await bridge.load(id)) as { snapshot?: unknown; recent?: unknown; today?: unknown; heard?: unknown; playlists?: unknown; fresh?: unknown; love?: unknown } | null;
+            momentInputs = { user: id, heard: asHeard(loaded?.heard), today: Array.isArray(loaded?.today) ? loaded.today.filter(isId).slice(0, 2000) : [] };
             const saved = asShelf(loaded?.snapshot);
             if (saved && saved.day === day && saved.v === SHELF_FORMAT && !shelfRetryAt) {
                 replace(saved);
@@ -453,7 +561,7 @@ export function installShelf(core: ShelfCore): ShelfSection {
             return;
         }
         core.showCard(index);
-        const card = shelf?.cards[index];
+        const card = cardAt(index);
         const loaded = mixLists.get(index);
         if (card && !Array.isArray(loaded) && loaded !== 'loading') {
             const day = shelf?.day;
@@ -470,7 +578,7 @@ export function installShelf(core: ShelfCore): ShelfSection {
     // Волна от карточки: подборка впереди (находки, давно не слушал) или вперемешку с похожими (вкус).
     // fromId: трек из раскрытого списка играет первым, подборка по порядку идёт дальше за ним
     async function startShelf(index: number, fromId = 0): Promise<void> {
-        const card = shelf?.cards[index];
+        const card = cardAt(index);
         if (!card) return;
         const request = core.nextSeedRequest();
         try {
@@ -505,6 +613,9 @@ export function installShelf(core: ShelfCore): ShelfSection {
                 : card.kind === 'liked'
                 ? { kind: 'liked', title, own: ordered, tracks: shuffleInPlace(own.slice()), order: 'fixed', mode: 'fresh', card: index,
                     reasons: new Map(card.ids.map((id, at): [number, WaveReason] => [id, { kind: 'likedBy', artist: card.by[at] ?? '' }])) }
+                // Плейлист момента по порядку вкуса, за ним похожее
+                : card.kind === 'moment'
+                ? { kind: 'group', title, own: ordered, tracks: shuffleInPlace(own.slice()), order: 'fixed', mode: 'similar', card: index }
                 : { kind: card.kind, title, own: ordered, tracks: shuffleInPlace(own.slice()), order: card.kind === 'forgotten' ? 'fixed' : 'blend', mode: 'similar', card: index };
             await beginSeed(request, { seed: next, first });
         } catch (error) {
@@ -556,7 +667,7 @@ export function installShelf(core: ShelfCore): ShelfSection {
             showToast(T.toastFailed);
         });
     }
-    type CardKind = 'radar' | 'uploads' | 'daily' | 'forgotten' | 'liked' | 'group';
+    type CardKind = 'radar' | 'uploads' | 'daily' | 'forgotten' | 'liked' | 'group' | 'moment';
     // Тон карточки по группе: релизы, личные подборки, жанры
     type CardTone = 'release' | 'personal' | 'genre';
     const toneOf = (kind: CardKind): CardTone => (kind === 'radar' || kind === 'uploads' ? 'release' : kind === 'group' ? 'genre' : 'personal');
@@ -629,6 +740,8 @@ export function installShelf(core: ShelfCore): ShelfSection {
         const radar = radarCards();
         const shelfOn = !!host.soundcloudAPI?.waveShelf;
         const current = shelfOn ? shelf : null;
+        if (shelfOn) ensureMoment();
+        const momentShown = current ? momentCard() : null;
         const shelfWait = shelfOn && !current && !!shelfPromise;
         const shelfError = shelfOn && !current && !shelfPromise && !!shelfFailedAt;
         if (!radar.length && !current && !shelfWait && !shelfError) return [];
@@ -648,6 +761,7 @@ export function installShelf(core: ShelfCore): ShelfSection {
             grid.append(node);
         };
         for (const card of radar) add(card.wait ? waitCard('release') : cardNode(card.index, card.title, card.sub, card.art, card.playable, card.index === UPLOADS_CARD ? 'uploads' : 'radar', card.stamp), card.wait ? null : card.index);
+        if (momentShown) add(cardNode(MOMENT_CARD, momentShown.title, momentShown.sub || countText(momentShown.ids.length, T.tracksCount, T.lang), momentShown.art, true, 'moment'), MOMENT_CARD);
         // Все жанры видны, последний ряд может быть неполным (решение владельца 26.09.2026)
         if (current)
             current.cards.forEach((card, index) => {
@@ -672,7 +786,7 @@ export function installShelf(core: ShelfCore): ShelfSection {
     }
     // Треки раскрытой подборки: обложка, название, артист, длительность; играющий трек выделен
     function renderMix(index: number): HTMLElement | null {
-        const card = shelf?.cards[index];
+        const card = cardAt(index);
         if (!card) return null;
         const box = el('div', 'scw-mix');
         box.setAttribute('role', 'region');

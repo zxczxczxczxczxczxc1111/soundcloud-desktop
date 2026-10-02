@@ -452,6 +452,8 @@ export function installWave(config: WaveConfig, createPlayback: typeof installPl
     const RADAR_CARD = -10;
     const UPLOADS_CARD = -11;
     const FANS_CARD = -12;
+    // Плейлист момента (Ф5): карточка полки, которую страница собирает сама по отрезку суток
+    const MOMENT_CARD = -20;
     const isRadarCard = (index: number | null | undefined): boolean => index === RADAR_CARD || index === UPLOADS_CARD || index === FANS_CARD;
 
     const isId = (value: unknown): value is number => typeof value === 'number' && Number.isSafeInteger(value) && value > 0;
@@ -593,6 +595,7 @@ export function installWave(config: WaveConfig, createPlayback: typeof installPl
         texts: T,
         host,
         uploadsCard: UPLOADS_CARD,
+        momentCard: MOMENT_CARD,
         isRadarCard,
         state: () => state,
         active: () => active,
@@ -4415,7 +4418,7 @@ export function installWave(config: WaveConfig, createPlayback: typeof installPl
                     else player.playCurrent({ userInitiated: true });
                     setTimeout(render, 150);
                 } else if (isRadarCard(index)) void radarSection.start(index);
-                else if (index >= 0) void shelfSection.start(index);
+                else if (index >= 0 || index === MOMENT_CARD) void shelfSection.start(index);
                 return;
             }
             case 'pick-start':

@@ -92,6 +92,8 @@ export function registerWaveIpc(ipc: IpcRegistry, deps: WaveIpcDeps): void {
     ipc.handle('soundcloud:wave-shelf:load', async (event, userId: unknown) => {
         if (!isTrustedSoundCloudSender(event)) return null;
         let recent: number[] = [];
+        // Игравшее за сутки: плейлист момента его не повторяет (Ф5)
+        let today: number[] = [];
         type ShelfTrack = { id: number; artist: number; title: string; artistName: string; genre: string; tags: string; path: string; artwork: string; dur: number };
         // Прослушанное от 30 секунд за 90 дней с жанром и тегами: из него тоже строятся жанры полки
         const heard = new Map<number, ShelfTrack>();
@@ -100,6 +102,8 @@ export function registerWaveIpc(ipc: IpcRegistry, deps: WaveIpcDeps): void {
                 const since = Date.now() - 30 * 86400000;
                 const plays = await library.request('tastePlays', userId, Date.now() - 90 * 86400000);
                 recent = [...new Set(plays.filter((play) => play.at >= since).map((play) => play.id))].slice(-5000);
+                const daySince = Date.now() - 86400000;
+                today = [...new Set(plays.filter((play) => play.at >= daySince).map((play) => play.id))].slice(-2000);
                 for (const play of plays)
                     if (play.heard >= 30000 && !heard.has(play.id))
                         heard.set(play.id, { id: play.id, artist: play.artist, title: play.title, artistName: play.artistName, genre: play.genre, tags: play.tags, path: play.path, artwork: play.artwork, dur: play.dur });
@@ -146,7 +150,7 @@ export function registerWaveIpc(ipc: IpcRegistry, deps: WaveIpcDeps): void {
         } catch (error) {
             console.warn('Любовь к трекам для подборок не прочитана:', error);
         }
-        return { snapshot: shelf.load(userId), recent, heard: [...heard.values()].slice(-3000), playlists, fresh, love };
+        return { snapshot: shelf.load(userId), recent, today, heard: [...heard.values()].slice(-3000), playlists, fresh, love };
     });
     ipc.handle('soundcloud:wave-shelf:save', (event, userId: unknown, snapshot: unknown) =>
         isTrustedSoundCloudSender(event) ? shelf.save(userId, snapshot) : false,
