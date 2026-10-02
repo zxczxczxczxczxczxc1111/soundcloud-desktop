@@ -134,9 +134,9 @@ export function installMenu(core: MenuCore): MenuSection {
     }
     async function startSeed(kind: SeedLinkKind, target: MenuTarget, title = ''): Promise<void> {
         const request = core.nextSeedRequest();
-        // Треки артиста и плейлиста грузятся секунды: плашка сразу, название, если оно уже известно
-        const byArtist = kind === 'artist' || kind === 'artistAll';
-        const name = (title || (kind === 'track' ? target.track?.title : byArtist && target.kind === 'track' ? target.track?.user?.username : ''))?.trim();
+        // Треки артиста и плейлиста грузятся секунды: плашка сразу, название, если оно уже известно.
+        // «Все треки артиста» ведут к исполнителю из названия, а не к выложившему каналу: до загрузки его имени нет
+        const name = (title || (kind === 'track' ? target.track?.title : kind === 'artist' && target.kind === 'track' ? target.track?.user?.username : ''))?.trim();
         showToast(kind === 'artistAll' ? (name ? T.seedCollectingArtist.replace('{title}', name) : T.seedCollectingArtistAny) : name ? T.seedCollecting.replace('{title}', name) : T.seedCollectingAny);
         try {
             await Promise.all([ensureProfile(), ensureExclusions()]);
