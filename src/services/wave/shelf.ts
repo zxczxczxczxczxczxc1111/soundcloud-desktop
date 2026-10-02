@@ -10,13 +10,13 @@ import * as waveTexts from '../waveTexts';
 import * as sourcesModule from './sources';
 import type { RadarCard } from './radar';
 import type { ScMix } from './sources';
-import type { MenuTarget, Profile, Seed, TasteMaps, WaveState, WaveTexts, WaveTrack } from '../waveTypes';
+import type { MenuTarget, Profile, Seed, TasteMaps, WaveReason, WaveState, WaveTexts, WaveTrack } from '../waveTypes';
 import type { SitePlayer, WaveWindow } from '../wave';
 
 const { confirmedCopies } = identity;
 const { canonicalUrl, coversOf, retryDelay } = waveLinks;
 const { capPerArtist, daySample, forgottenPicks, isWaveEligible, shuffleInPlace } = wavePicks;
-const { pickFinds, tasteGroups, tasteOrder } = waveTaste;
+const { pickFinds, tasteGroups, tasteOrder, tasteScore } = waveTaste;
 const { countText, fillText, formatTime, localDay } = waveTexts;
 const { interleaveMixes, likedOwner } = sourcesModule;
 
@@ -61,6 +61,8 @@ export interface ShelfCore {
     call(name: string, path: object, query: object): Promise<unknown>;
     /** Подборки SoundCloud на сегодня; пусто, если сайт не ответил */
     scMixes(): Promise<ScMix[]>;
+    /** Свежие лайки соседей по вкусу из кэша; fresh зовётся, когда первый обход соседей нашёл лайки (П14) */
+    neighbors(seeds: number[], fresh: () => void): Promise<Array<{ id: number; count: number }>>;
     render(): void;
     showToast(text: string): void;
     el<K extends keyof HTMLElementTagNameMap>(tag: K, className: string, text?: string): HTMLElementTagNameMap[K];
@@ -102,8 +104,10 @@ export function installShelf(core: ShelfCore): ShelfSection {
         expandLibrary, ensureExclusions, ensureTaste, ensureUser, call, render, showToast, el, button, textButton, trackRow,
     } = core;
     const isId = (value: unknown): value is number => typeof value === 'number' && Number.isSafeInteger(value) && value > 0;
-    // by у «Лайкнули твои артисты»: чей лайк у трека, по порядку ids
-    interface ShelfCard { kind: 'daily' | 'forgotten' | 'liked' | 'group'; title: string; sub: string; ids: number[]; seeds: number[]; keys: string[]; art: string[]; by: string[] }
+    // by у «Лайкнули твои артисты»: чей лайк у трека, по порядку ids; neighbors у находок: треки от соседей по вкусу
+    interface ShelfCard {
+        kind: 'daily' | 'forgotten' | 'liked' | 'group'; title: string; sub: string; ids: number[]; seeds: number[]; keys: string[]; art: string[]; by: string[]; neighbors: number[];
+    }
     interface Shelf { day: string; v: number; cards: ShelfCard[] }
     // Формат сборки полки: 2 это жанры из всех лайков и прослушанного, до восьми, с поджанрами (26.09.2026);
     // 3 это группа по жанру трека, а не по меткам, и не больше SHELF_ARTIST_CAP треков артиста в карточке (26.09.2026);
@@ -193,6 +197,7 @@ export function installShelf(core: ShelfCore): ShelfSection {
                 ids: ids(card.ids), seeds: ids(card.seeds), keys: strings(card.keys), art: strings(card.art),
                 // Имена идут парой к номерам: нестроку заменяет пустая, а не выбрасывает, иначе пары сдвинутся
                 by: Array.isArray(card.by) ? card.by.map((name: unknown) => (typeof name === 'string' ? name : '')) : [],
+                neighbors: ids(card.neighbors),
             };
             if (entry.ids.length) cards.push(entry);
         }
@@ -271,9 +276,31 @@ export function installShelf(core: ShelfCore): ShelfSection {
             }).catch((error: unknown) => console.warn('Волна: похожие для находок не загружены', error))));
         // Слышанное и лайкнутое вместе с подтверждёнными копиями: перезалив той же записи не находка
         const known = confirmedCopies([...p.heard, ...p.liked], core.copyGroups());
-        const finds = pickFinds(candidates, (track) => isExcluded(track) || known.has(track.id), taste, 30);
+        // Соседи по вкусу (П14): до трети находок из свежих лайков тех, кто лайкает то же нишевое, что и ты. Больше соседей
+        // с лайком выше, при равенстве вкус; не больше двух треков артиста. Обход идёт от лайков по вкусу и дослушанного
+        // от двух раз; первый готовый обход пересобирает сегодняшнюю полку
+        const lovedSeeds = loved.filter((entry) => entry.done >= 2 && !p.liked.has(entry.id)).sort((a, b) => b.done - a.done).slice(0, 50).map((entry) => entry.id);
+        const neighborList = (await core.neighbors([...seedPool.slice(0, 100).map((track) => track.id), ...lovedSeeds], neighborsReady)).filter((entry) => !known.has(entry.id)).slice(0, 40);
+        let fromNeighbors: WaveTrack[] = [];
+        if (neighborList.length)
+            try {
+                const count = new Map(neighborList.map((entry) => [entry.id, entry.count]));
+                const usable = (await tracksByIds(neighborList.map((entry) => entry.id))).filter((track) => isWaveEligible(track) && !isExcluded(track));
+                const score = new Map(usable.map((track) => [track.id, taste ? tasteScore(track, taste).score : 0]));
+                usable.sort((a, b) => (count.get(b.id) ?? 0) - (count.get(a.id) ?? 0) || (score.get(b.id) ?? 0) - (score.get(a.id) ?? 0));
+                fromNeighbors = capPerArtist(usable, 2).slice(0, 10);
+            } catch (error) {
+                console.warn('Волна: лайки соседей для находок не загружены', error);
+            }
+        const neighborIds = new Set(fromNeighbors.map((track) => track.id));
+        const related = pickFinds(candidates, (track) => isExcluded(track) || known.has(track.id) || neighborIds.has(track.id), taste, 30 - fromNeighbors.length);
+        // Соседи встают каждым третьим: два из похожих, один от соседей; кончились одни, дальше другие
+        const finds: WaveTrack[] = [];
+        for (let i = 0, r = 0, n = 0; r < related.length || n < fromNeighbors.length; i++)
+            finds.push((i % 3 === 2 && n < fromNeighbors.length) || r >= related.length ? fromNeighbors[n++] : related[r++]);
         for (const track of finds) shelfTracks.set(track.id, track);
-        if (finds.length >= 10) cards.push({ kind: 'daily', title: '', sub: '', ids: finds.map((track) => track.id), seeds: daySeeds.map((track) => track.id), keys: [], art: coversOf(finds), by: [] });
+        if (finds.length >= 10)
+            cards.push({ kind: 'daily', title: '', sub: '', ids: finds.map((track) => track.id), seeds: daySeeds.map((track) => track.id), keys: [], art: coversOf(finds), by: [], neighbors: [...neighborIds] });
 
         // «Лайкнули твои артисты» (П13): подборки SoundCloud «<артист>'s Picks» по кругу, по треку от каждого, до 60.
         // Слышанное и лайкнутое, как у находок, не берётся: волна подборки идёт в режиме «Новое» и пропустила бы его.
@@ -294,7 +321,7 @@ export function installShelf(core: ShelfCore): ShelfSection {
                     const counts = new Map<string, number>();
                     for (const name of by) if (name) counts.set(name, (counts.get(name) ?? 0) + 1);
                     const sub = [...counts].sort((a, b) => b[1] - a[1]).slice(0, 3).map(([name]) => name).join(', ');
-                    cards.push({ kind: 'liked', title: '', sub, ids: picked.map((track) => track.id), seeds: [], keys: [], art: coversOf(picked), by });
+                    cards.push({ kind: 'liked', title: '', sub, ids: picked.map((track) => track.id), seeds: [], keys: [], art: coversOf(picked), by, neighbors: [] });
                 }
             } catch (error) {
                 console.warn('Волна: треки «Лайкнули твои артисты» не загружены', error);
@@ -308,7 +335,7 @@ export function installShelf(core: ShelfCore): ShelfSection {
         const lovedTracks = loved.filter((entry) => entry.done >= 3 && !p.liked.has(entry.id)).map(heardTrack).filter((track) => isWaveEligible(track) && !isExcluded(track));
         const forgotten = forgottenPicks(liked, confirmedCopies([...p.recent, ...recentMain, ...freshLikes], core.copyGroups()), weights, 60, day, love, lovedTracks);
         for (const track of forgotten) if (!shelfTracks.has(track.id)) shelfTracks.set(track.id, track);
-        if (forgotten.length >= 8) cards.push({ kind: 'forgotten', title: '', sub: '', ids: forgotten.map((track) => track.id), seeds: [], keys: [], art: coversOf(forgotten), by: [] });
+        if (forgotten.length >= 8) cards.push({ kind: 'forgotten', title: '', sub: '', ids: forgotten.map((track) => track.id), seeds: [], keys: [], art: coversOf(forgotten), by: [], neighbors: [] });
 
         // До 8 жанров, все видны (решение владельца 26.09.2026). Лайк весит 1 плюс вкус, прослушанное без лайка только
         // своим положительным весом во вкусе (трек плейлиста его получает из плейлиста): пропущенное туда не попадает
@@ -355,9 +382,18 @@ export function installShelf(core: ShelfCore): ShelfSection {
                 keys: group.keys,
                 art: coversOf(shown),
                 by: [],
+                neighbors: [],
             });
         }
         return { day, v: SHELF_FORMAT, cards };
+    }
+    // Первый обход соседей по вкусу готов (П14): сегодняшняя полка собирается заново, чтобы находки получили их лайки
+    // не завтра, а сразу. Играющие находки не трогаются
+    function neighborsReady(): void {
+        const current = core.seed();
+        if (!shelf || shelf.day !== localDay(Date.now()) || (current?.kind === 'daily' && core.active())) return;
+        shelfRetryAt = 1;
+        ensureShelf();
     }
     // Снимок дня или новая сборка; после сбоя сохраняем видимую ошибку, повтор всё реже (retryDelay).
     // Скрытая страница не собирает: блок проверяет только себя, и в трее сборка повторялась бы впустую.
@@ -463,10 +499,12 @@ export function installShelf(core: ShelfCore): ShelfSection {
             // Вкус тасуется всегда
             const ordered = card.kind === 'group' ? shuffleInPlace(own.slice()) : own;
             const next: Seed = card.kind === 'daily'
-                ? { kind: 'daily', title, own: ordered, tracks: shuffleInPlace([...roots, ...own]), order: 'fixed', mode: 'fresh', card: index }
+                ? { kind: 'daily', title, own: ordered, tracks: shuffleInPlace([...roots, ...own]), order: 'fixed', mode: 'fresh', card: index,
+                    reasons: new Map(card.neighbors.map((id): [number, WaveReason] => [id, { kind: 'neighbors' }])) }
                 // «Лайкнули твои артисты» по порядку, за ними новое по похожим, как у находок
                 : card.kind === 'liked'
-                ? { kind: 'liked', title, own: ordered, tracks: shuffleInPlace(own.slice()), order: 'fixed', mode: 'fresh', card: index, likers: new Map(card.ids.map((id, at) => [id, card.by[at] ?? ''])) }
+                ? { kind: 'liked', title, own: ordered, tracks: shuffleInPlace(own.slice()), order: 'fixed', mode: 'fresh', card: index,
+                    reasons: new Map(card.ids.map((id, at): [number, WaveReason] => [id, { kind: 'likedBy', artist: card.by[at] ?? '' }])) }
                 : { kind: card.kind, title, own: ordered, tracks: shuffleInPlace(own.slice()), order: card.kind === 'forgotten' ? 'fixed' : 'blend', mode: 'similar', card: index };
             await beginSeed(request, { seed: next, first });
         } catch (error) {

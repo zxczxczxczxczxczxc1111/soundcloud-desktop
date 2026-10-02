@@ -50,7 +50,7 @@ const { installLibrary } = librarySectionModule;
 const { installRadar } = radarSectionModule;
 const { installShelf } = shelfSectionModule;
 const { installMenu } = menuSectionModule;
-const { installSources, relatedArtistsOf, scMixesOf, likedOwner, interleaveMixes } = waveSourcesModule;
+const { installSources, relatedArtistsOf, scMixesOf, likedOwner, likersOf, tasteNeighbors, likedTracksOf, neighborLikes, interleaveMixes } = waveSourcesModule;
 // Прежние импорты из wave.ts остаются рабочими
 export type { WaveTrack, WaveMode, OpenTrackResult, WaveReason, WaveCandidate, WaveFilter, WaveLinkKind, WaveTexts, TasteMaps, TasteScore, TasteGroup } from './waveTypes';
 export { WAVE_TEXTS, fillText, reasonText, localDay, countText, formatTime, shapeSamples } from './waveTexts';
@@ -471,7 +471,7 @@ export function installWave(config: WaveConfig, createPlayback: typeof installPl
     }
     // Разделы из wave/: сборка с ядром. Стоит до кода, который их зовёт; константы ядра ниже по тексту идут обёртками
     // Похожие артисты, лучшие треки артиста и подборки SoundCloud: раздел в wave/sources.ts
-    const waveSources = installSources({ call, ensureUser, tracksOf: (body) => tracksOf(body) });
+    const waveSources = installSources({ call, backgroundCall, ensureUser, tracksOf: (body) => tracksOf(body) });
     // «Версии этого трека»: раздел в wave/versions.ts
     const versions = installVersions({
         texts: T,
@@ -611,6 +611,7 @@ export function installWave(config: WaveConfig, createPlayback: typeof installPl
         ensureUser,
         call,
         scMixes: () => waveSources.scMixes(),
+        neighbors: (seeds, fresh) => waveSources.neighbors(seeds, fresh),
         render: () => render(),
         showToast,
         el,
@@ -701,8 +702,8 @@ export function installWave(config: WaveConfig, createPlayback: typeof installPl
     // «Моя музыка» кладёт в сессию выбор, режим и номера оставшихся треков, без самих треков: пул на тысячи треков
     // переписывался бы мегабайтами при каждой записи. После перезапуска он собирается заново и идёт с того же места
     function savedSeed(): Seed | null {
-        // Чьи лайки в подборке, знает причина каждого трека в очереди; таблица через мост не передаётся
-        if (seed?.likers) return { ...seed, likers: undefined };
+        // Свою причину трека подборки знает его место в очереди; таблица через мост не передаётся
+        if (seed?.reasons) return { ...seed, reasons: undefined };
         if (seed?.kind !== 'library' || !seed.library) return seed;
         const left = seed.library.left ?? (ownAdded ? ownQueue.map((item) => item.track.id) : seed.own.map((track) => track.id));
         return { ...seed, tracks: [], own: [], library: { pick: seed.library.pick, mode: seed.library.mode, left: left.slice(0, 5000) } };
@@ -1796,6 +1797,7 @@ export function installWave(config: WaveConfig, createPlayback: typeof installPl
                 if (current.order === 'fixed' && ownQueue.length >= BATCH) return ownQueue.length;
             } else if (current.order) {
                 const reason: WaveReason = current.kind === 'daily' ? { kind: 'daily' } : current.kind === 'forgotten' ? { kind: 'forgotten' }
+                    : current.kind === 'liked' ? { kind: 'likedBy', artist: '' }
                     : current.kind === 'artist' ? { kind: 'artistTrack', artist: current.title } : { kind: 'group', name: current.title };
                 // Радар играет выпуск целиком: «Уже слышал» и недавно игравшее в нём остаются, запреты проверены при запуске.
                 // Волна от артиста так же: его лучшее звучит, даже если недавно играло (П3).
@@ -1804,8 +1806,7 @@ export function installWave(config: WaveConfig, createPlayback: typeof installPl
                 for (const track of current.own)
                     accept(ownQueue, {
                         track,
-                        reason: current.kind === 'radar' ? { kind: 'radar', why: radarSection.reason(track.id) }
-                            : current.kind === 'liked' ? { kind: 'likedBy', artist: current.likers?.get(track.id) ?? '' } : reason,
+                        reason: current.reasons?.get(track.id) ?? (current.kind === 'radar' ? { kind: 'radar', why: radarSection.reason(track.id) } : reason),
                     }, ownFilter);
                 // Подборка целиком впереди: похожие понадобятся, когда она кончится
                 if (current.order === 'fixed' && ownQueue.length >= BATCH) return ownQueue.length;
@@ -4686,7 +4687,7 @@ const pageHelpers = [
     artworkUrl, coversOf, formatTime, playEnd, siteSource, moodTags, trackPath, localDay, countText, tasteGroups, capPerArtist, forgottenPicks, daySample, artistNames, performerNames, sharedPerformer, isNewArtist, spreadBy, pickFinds,
     moodList, moodDictionary, trackMood, playlistMood, artistMoods, neighborMood, moodScore,
     ...identity.identityHelpers, ...sources.sourceHelpers, ...libraryMix.libraryHelpers, siteRequires, installPlaybackPage, installPlaybackRecovery,
-    installVersions, installLibrary, installRadar, installShelf, installMenu, installSources, relatedArtistsOf, scMixesOf, likedOwner, interleaveMixes,
+    installVersions, installLibrary, installRadar, installShelf, installMenu, installSources, relatedArtistsOf, scMixesOf, likedOwner, likersOf, tasteNeighbors, likedTracksOf, neighborLikes, interleaveMixes,
 ];
 
 export function waveScript(resume = false): string {

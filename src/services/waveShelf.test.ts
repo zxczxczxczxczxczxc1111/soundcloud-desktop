@@ -44,6 +44,12 @@ it('П13: чей лайк идёт парой к номеру трека, отб
     expect(cleaned?.cards[1]).not.toHaveProperty('by');
 });
 
+it('П14: треки от соседей только у находок и только из самой карточки', () => {
+    const cleaned = cleanShelf({ day: '2026-10-02', cards: [card({ kind: 'daily', title: '', ids: [1, 2, 3], neighbors: [2, 2, 8, 'x'] }), card({ neighbors: [1] })] });
+    expect(cleaned?.cards[0].neighbors).toEqual([2]);
+    expect(cleaned?.cards[1]).not.toHaveProperty('neighbors');
+});
+
 it('отбрасывает чужое и неверное со страницы', () => {
     expect(cleanShelf({ day: '24.09.2026', cards: [] })).toBeNull();
     expect(cleanShelf(null)).toBeNull();

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { interleaveMixes, likedOwner, relatedArtistsOf, scMixesOf, type ScMix } from './sources';
+import { interleaveMixes, likedOwner, likedTracksOf, likersOf, neighborLikes, relatedArtistsOf, scMixesOf, tasteNeighbors, type ScMix } from './sources';
 
 describe('источники SoundCloud', () => {
     it('похожие артисты: только аккаунты с треками, без повторов, мусор отбрасывается', () => {
@@ -47,5 +47,23 @@ describe('источники SoundCloud', () => {
         expect(likedOwner("Liked By HARDX's Picks")).toBe('HARDX');
         expect(likedOwner(' Liked by Lil’ B’s Picks ')).toBe('Lil’ B');
         expect(likedOwner('Weekly Wave')).toBe('Weekly Wave');
+    });
+
+    it('П14: лайкнувшие без повторов, соседи от трёх общих нишевых треков без себя, больше общих выше', () => {
+        expect(likersOf({ collection: [{ id: 5 }, { id: 5 }, { id: -1 }, null, { id: 6 }] })).toEqual([5, 6]);
+        expect(likersOf(null)).toEqual([]);
+        const lists = [[1, 2, 3, 77], [1, 2, 77], [1, 2, 77, 2], [1, 4], [4, 5]];
+        expect(tasteNeighbors(lists, 77)).toEqual([{ id: 1, shared: 4 }, { id: 2, shared: 3 }]);
+        expect(tasteNeighbors(lists, 77, 2, 1)).toEqual([{ id: 1, shared: 4 }]);
+    });
+
+    it('П14: свежие лайки соседей по числу соседей, старое и исходные треки не в счёт', () => {
+        const at = Date.parse('2026-10-01T00:00:00Z');
+        expect(likedTracksOf({ collection: [{ created_at: '2026-10-01T00:00:00Z', track: { id: 9 } }, { created_at: 'вчера', track: { id: 8 } }, { track: null }] }))
+            .toEqual([{ id: 9, at }, { id: 8, at: 0 }]);
+        const since = at - 60 * 86400000;
+        const lists = [[{ id: 10, at }, { id: 11, at }, { id: 12, at: since - 1 }, { id: 10, at }], [{ id: 13, at }, { id: 10, at }, { id: 99, at }]];
+        expect(neighborLikes(lists, since, new Set([99]))).toEqual([{ id: 10, count: 2 }, { id: 11, count: 1 }, { id: 13, count: 1 }]);
+        expect(neighborLikes(lists, since, new Set(), 1)).toEqual([{ id: 10, count: 2 }]);
     });
 });

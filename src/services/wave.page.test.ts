@@ -2179,6 +2179,55 @@ it('П13: «Лайкнули твои артисты» из подборок «<
     expect(section.querySelector('.scw-tile[data-track="8801"] .scw-t3')?.textContent).toBe('Liked by kat');
 });
 
+it('П14: соседи по вкусу находятся фоном по нишевым лайкам, их свежие лайки встают в находки каждым третьим', async () => {
+    // Четыре нишевых лайка (5 тыс. прослушиваний), остальные популярные: лайкнувших спрашивают только у нишевых
+    const liked = Array.from({ length: 30 }, (_, i): WaveTrack => ({
+        id: 2001 + i, kind: 'track', duration: 200000, title: 'Like ' + i, user_id: 500 + (i % 10), user: { id: 500 + (i % 10), username: 'Tech' + (i % 10) },
+        genre: 'Techno', tag_list: '', playback_count: i < 4 ? 5000 : 500000,
+    }));
+    const theirs = [7001, 7002, 7003, 7004].map((id): WaveTrack => ({ id, kind: 'track', duration: 200000, title: 'Theirs ' + id, user_id: id - 6000, user: { id: id - 6000, username: 'N' + id } }));
+    const likers: Record<number, number[]> = { 2001: [901, 902, 77], 2002: [901, 902, 903], 2003: [901, 902], 2004: [901] };
+    const ago = (days: number): string => new Date(Date.now() - days * 86400000).toISOString();
+    const likes: Record<number, Array<[number, number]>> = { 901: [[7001, 1], [7002, 2], [7003, 90]], 902: [[7001, 1], [7004, 5], [2005, 1]] };
+    const site = fakeSite(relatedTracks, (name, path, query) => {
+        if (name === 'soundLikesIds') return { collection: liked.map((track) => track.id) };
+        if (name === 'trackBatch') return batchOf([...liked, ...theirs])(query);
+        if (name === 'trackCategory' && path.category === 'likers') return { collection: (likers[Number(path.id)] ?? []).map((id) => ({ id, kind: 'user' })) };
+        if (name === 'userTrackLikes' && likes[Number(path.id)]) return { collection: likes[Number(path.id)].map(([id, days]) => ({ created_at: ago(days), kind: 'like', track: { id } })) };
+        return undefined;
+    });
+    const shelf = { load: vi.fn(async () => ({ snapshot: null, recent: [] })), save: vi.fn(async () => true) };
+    Object.assign(window, { soundcloudAPI: { waveShelf: shelf } });
+    window.eval(waveScript());
+    await vi.advanceTimersByTimeAsync(100);
+    // Первая сборка без соседей: обход только начался
+    const [, first] = shelf.save.mock.calls[0] as unknown as [number, { cards: Array<{ kind: string; ids: number[]; neighbors?: number[] }> }];
+    expect(first.cards[0].neighbors).toEqual([]);
+    await vi.advanceTimersByTimeAsync(60000);
+    const asked = site.api.callEndpoint.mock.calls.filter(([name]) => name === 'trackCategory').map(([, path]) => (path as { id: number }).id).sort();
+    expect(asked).toEqual([2001, 2002, 2003, 2004]);
+    // Сосед лайкнул от трёх нишевых: 901 и 902, но не 903 и не сам пользователь
+    expect(site.api.callEndpoint.mock.calls.filter(([name]) => name === 'userTrackLikes').map(([, path]) => (path as { id: number }).id)).toEqual(expect.arrayContaining([901, 902]));
+    expect(site.api.callEndpoint.mock.calls.some(([name, path]) => name === 'userTrackLikes' && [903, 77].includes((path as { id: number }).id))).toBe(false);
+    expect(JSON.parse(localStorage.getItem('scDesktopWaveNeighbors') ?? '{}')).toMatchObject({ user: 77, finds: [{ id: 7001, count: 2 }, { id: 7002, count: 1 }, { id: 7004, count: 1 }, { id: 2005, count: 1 }] });
+    // Первый готовый обход пересобрал полку: лайк двух соседей третьим, лайк старше 60 дней и свой лайк не идут
+    expect(shelf.save).toHaveBeenCalledTimes(2);
+    const [, saved] = shelf.save.mock.calls[1] as unknown as [number, { cards: Array<{ kind: string; ids: number[]; neighbors?: number[] }> }];
+    const daily = saved.cards[0];
+    expect(daily.kind).toBe('daily');
+    expect(daily.ids).toHaveLength(30);
+    expect([daily.ids[2], daily.ids[5], daily.ids[8]]).toEqual([7001, 7002, 7004]);
+    expect(daily.neighbors?.slice().sort()).toEqual([7001, 7002, 7004]);
+    expect(daily.ids).not.toContain(7003);
+    expect(daily.ids).not.toContain(2005);
+
+    const section = document.getElementById('sc-wave')!;
+    section.querySelector<HTMLButtonElement>('[data-act="shelf-play"][data-card="0"]')!.click();
+    await vi.advanceTimersByTimeAsync(100);
+    expect(section.querySelector('.scw-tile[data-track="7001"] .scw-t3')?.textContent).toBe('Liked by listeners with your taste');
+    expect(section.querySelector('.scw-why')?.textContent).toBe('Daily find: not played by you yet');
+});
+
 it('полка без модели вкуса (main не ответил) не хранится до полуночи и через 10 минут собирается заново', async () => {
     const liked = Array.from({ length: 30 }, (_, i): WaveTrack => ({
         id: 2001 + i, kind: 'track', duration: 200000, title: 'Like ' + i, user_id: 500 + (i % 5), user: { id: 500 + (i % 5), username: 'Tech' + (i % 5) }, genre: 'Techno', tag_list: 'industrial',

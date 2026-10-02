@@ -1,5 +1,5 @@
-// Источники SoundCloud для подбора, которые волна раньше не брала: похожие артисты, лучшие треки артиста и персональные
-// подборки SoundCloud (Your Mix, Daily Drops, Weekly Wave, Liked By). Раздел страницы волны: installSources уходит на
+// Источники SoundCloud для подбора, которые волна раньше не брала: похожие артисты, лучшие треки артиста, персональные
+// подборки SoundCloud (Your Mix, Daily Drops, Weekly Wave, Liked By) и соседи по вкусу. Раздел страницы волны: installSources уходит на
 // страницу текстом вместе с волной (pageHelpers в wave.ts) и зовёт помощников по голому имени. Ответы живут в памяти
 // страницы, подборки ещё и в localStorage на сутки: SoundCloud обновляет их раз в день
 import * as waveTexts from '../waveTexts';
@@ -62,6 +62,43 @@ export function likedOwner(title: string): string {
     return title.trim().replace(/^liked by\s+/i, '').replace(/[’']s picks$/i, '').trim();
 }
 
+/** Лайкнувшие трек из trackCategory likers: номера аккаунтов без повторов */
+export function likersOf(body: unknown): number[] {
+    const isId = (value: unknown): value is number => typeof value === 'number' && Number.isSafeInteger(value) && value > 0;
+    const list = (body as { collection?: unknown } | null)?.collection;
+    return Array.isArray(list) ? [...new Set(list.map((user: unknown) => (user as { id?: unknown } | null)?.id).filter(isId))] : [];
+}
+
+/** Соседи по вкусу (П14): кто лайкнул не меньше min твоих нишевых треков, до limit, больше общих выше; себя не считает */
+export function tasteNeighbors(likers: number[][], self: number, min = 3, limit = 20): Array<{ id: number; shared: number }> {
+    const counts = new Map<number, number>();
+    for (const list of likers) for (const id of new Set(list)) if (id !== self) counts.set(id, (counts.get(id) ?? 0) + 1);
+    return [...counts].filter(([, shared]) => shared >= min).sort((a, b) => b[1] - a[1]).slice(0, limit).map(([id, shared]) => ({ id, shared }));
+}
+
+/** Лайки из userTrackLikes: номер трека и время лайка; лайк без даты считается старым */
+export function likedTracksOf(body: unknown): Array<{ id: number; at: number }> {
+    const isId = (value: unknown): value is number => typeof value === 'number' && Number.isSafeInteger(value) && value > 0;
+    const list = (body as { collection?: unknown } | null)?.collection;
+    if (!Array.isArray(list)) return [];
+    return list.flatMap((value) => {
+        const entry = value && typeof value === 'object' ? (value as { created_at?: unknown; track?: { id?: unknown } | null }) : null;
+        const id = entry?.track?.id;
+        if (!isId(id)) return [];
+        const at = typeof entry?.created_at === 'string' ? Date.parse(entry.created_at) : 0;
+        return [{ id, at: Number.isFinite(at) ? at : 0 }];
+    });
+}
+
+/** Свежие лайки соседей одним списком: сколько соседей лайкнули трек, больше выше, при равенстве раньше идёт лайк
+ *  более близкого соседа (lists по убыванию общих треков). Лайк до since не в счёт, skip это треки, по которым соседи найдены */
+export function neighborLikes(lists: Array<Array<{ id: number; at: number }>>, since: number, skip: Set<number>, limit = 200): Array<{ id: number; count: number }> {
+    const counts = new Map<number, number>();
+    for (const list of lists)
+        for (const id of new Set(list.filter((like) => like.at >= since && !skip.has(like.id)).map((like) => like.id))) counts.set(id, (counts.get(id) ?? 0) + 1);
+    return [...counts].sort((a, b) => b[1] - a[1]).slice(0, limit).map(([id, count]) => ({ id, count }));
+}
+
 /** Номера подборок вперемешку: по одному из каждой по кругу, без повторов. Подборка SoundCloud сама уже упорядочена,
  *  а круг не даёт одной Your Mix занять весь проход */
 export function interleaveMixes(mixes: ScMix[], kinds: Array<ScMix['kind']>): Array<{ id: number; mix: ScMix }> {
@@ -81,6 +118,8 @@ export function interleaveMixes(mixes: ScMix[], kinds: Array<ScMix['kind']>): Ar
 
 export interface SourcesCore {
     call(name: string, path: object, query: object): Promise<unknown>;
+    /** Фоновый запрос: в очереди после запросов человека и с паузами */
+    backgroundCall(name: string, path: object, query: object): Promise<unknown>;
     ensureUser(): Promise<number>;
     tracksOf(body: unknown): WaveTrack[];
 }
@@ -93,11 +132,14 @@ export interface SourcesSection {
     scMixes(): Promise<ScMix[]>;
     /** Треки по номерам через trackBatch с кэшем раздела */
     tracksByIds(ids: number[]): Promise<WaveTrack[]>;
+    /** Свежие лайки соседей по вкусу из кэша (П14); кэш старше трёх дней обновляется фоном. seeds это твои треки по
+     *  убыванию веса, нишевые из них отбираются здесь. fresh зовётся, когда первый обход нашёл лайки */
+    neighbors(seeds: number[], fresh: () => void): Promise<Array<{ id: number; count: number }>>;
 }
 
 export function installSources(core: SourcesCore): SourcesSection {
     const isId = (value: unknown): value is number => typeof value === 'number' && Number.isSafeInteger(value) && value > 0;
-    const { call, ensureUser, tracksOf } = core;
+    const { call, backgroundCall, ensureUser, tracksOf } = core;
     const HOURS_6 = 6 * 3600000;
     const MIXES_KEY = 'scDesktopWaveScMixes';
     const related = new Map<number, { at: number; found: Promise<RelatedArtist[]> }>();
@@ -185,10 +227,83 @@ export function installSources(core: SourcesCore): SourcesSection {
         if (tracks.size > 3000) for (const id of [...tracks.keys()].slice(0, tracks.size - 3000)) tracks.delete(id);
         return ids.map((id) => tracks.get(id)).filter((track): track is WaveTrack => !!track);
     }
+
+    // Соседи по вкусу (П14): кэш на три дня в localStorage, обход фоном и не чаще раза в час после сбоя
+    const NEIGHBORS_KEY = 'scDesktopWaveNeighbors';
+    const NEIGHBORS_TTL = 3 * 86400000;
+    let neighborsRun: Promise<void> | null = null;
+    let neighborsFailedAt = 0;
+    function readNeighbors(user: number): { at: number; finds: Array<{ id: number; count: number }> } | null {
+        try {
+            const saved = JSON.parse(localStorage.getItem(NEIGHBORS_KEY) || 'null') as { user?: unknown; at?: unknown; finds?: unknown } | null;
+            if (!saved || saved.user !== user || typeof saved.at !== 'number' || !Array.isArray(saved.finds)) return null;
+            const finds = saved.finds.flatMap((value): Array<{ id: number; count: number }> => {
+                const item = value && typeof value === 'object' ? (value as { id?: unknown; count?: unknown }) : null;
+                return item && isId(item.id) && isId(item.count) ? [{ id: item.id, count: item.count }] : [];
+            });
+            return { at: saved.at, finds: finds.slice(0, 200) };
+        } catch (error) {
+            console.warn('Волна: соседи по вкусу из памяти не прочитаны', error);
+            return null;
+        }
+    }
+    function saveNeighbors(user: number, finds: Array<{ id: number; count: number }>): void {
+        try {
+            localStorage.setItem(NEIGHBORS_KEY, JSON.stringify({ user, at: Date.now(), finds }));
+        } catch (error) {
+            console.warn('Волна: соседи по вкусу не сохранены', error);
+        }
+    }
+    // Нишевые это от 1 до 50 тыс. прослушиваний: их лайкают немногие, и общий лайк что-то значит. Число прослушиваний
+    // есть только у свежих треков сайта, каталог лайков его не хранит. До 30 нишевых, их лайкнувшие по 50, соседи это
+    // лайкнувшие от трёх таких треков, их лайки за 60 дней. Обход около 55 фоновых запросов
+    async function refreshNeighbors(user: number, seeds: number[]): Promise<boolean> {
+        const order = new Map(seeds.map((id, index) => [id, index]));
+        const fetched: WaveTrack[] = [];
+        for (let i = 0; i < Math.min(seeds.length, 150); i += 50) fetched.push(...tracksOf(await backgroundCall('trackBatch', {}, { ids: seeds.slice(i, Math.min(i + 50, 150)).join(',') })));
+        const niche = fetched
+            .filter((track) => (track.playback_count ?? 0) >= 1000 && (track.playback_count ?? 0) <= 50000)
+            .sort((a, b) => (order.get(a.id) ?? 0) - (order.get(b.id) ?? 0))
+            .slice(0, 30);
+        const likers: number[][] = [];
+        for (const track of niche)
+            try {
+                likers.push(likersOf(await backgroundCall('trackCategory', { id: track.id, category: 'likers' }, { limit: 50 })));
+            } catch (error) {
+                console.warn('Волна: лайкнувшие трек не загружены', track.id, error);
+            }
+        if (niche.length && !likers.length) throw new Error('Лайкнувшие не загружены');
+        const lists: Array<Array<{ id: number; at: number }>> = [];
+        for (const neighbor of tasteNeighbors(likers, user))
+            try {
+                lists.push(likedTracksOf(await backgroundCall('userTrackLikes', { id: neighbor.id }, { limit: 50 })));
+            } catch (error) {
+                console.warn('Волна: лайки соседа не загружены', neighbor.id, error);
+            }
+        const finds = neighborLikes(lists, Date.now() - 60 * 86400000, new Set(niche.map((track) => track.id)));
+        saveNeighbors(user, finds);
+        return finds.length > 0;
+    }
+    async function neighbors(seeds: number[], fresh: () => void): Promise<Array<{ id: number; count: number }>> {
+        const user = await ensureUser();
+        if (!user) return [];
+        const saved = readNeighbors(user);
+        if ((!saved || Date.now() - saved.at >= NEIGHBORS_TTL) && !neighborsRun && seeds.length && Date.now() - neighborsFailedAt >= 3600000)
+            neighborsRun = refreshNeighbors(user, seeds).then((found) => {
+                if (!saved && found) fresh();
+            }, (error: unknown) => {
+                neighborsFailedAt = Date.now();
+                console.warn('Волна: соседи по вкусу не найдены', error);
+            }).finally(() => {
+                neighborsRun = null;
+            });
+        return saved?.finds ?? [];
+    }
     return {
         relatedArtists: (id) => cached(related, id, async () => relatedArtistsOf(await call('userRelatedArtists', { id }, { limit: 20 }))),
         topTracks: (id) => cached(tops, id, async () => tracksOf(await call('userToptracks', { id }, { limit: 10 })).filter(isWaveEligible)),
         scMixes,
         tracksByIds,
+        neighbors,
     };
 }

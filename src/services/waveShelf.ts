@@ -18,6 +18,8 @@ export interface ShelfCard {
     art: string[];
     /** «Лайкнули твои артисты»: чей лайк у трека, по порядку ids */
     by?: string[];
+    /** Находки дня: треки из лайков соседей по вкусу */
+    neighbors?: number[];
 }
 /** Подборки на местные сутки: собираются один раз, до полуночи одни и те же */
 export interface ShelfSnapshot {
@@ -69,6 +71,7 @@ function cleanCard(value: unknown): ShelfCard | null {
         });
         card.by = card.ids.map((id) => pairs.get(id) ?? '');
     }
+    if (card.kind === 'daily' && Array.isArray(source.neighbors)) card.neighbors = ids(source.neighbors, 60).filter((id) => card.ids.includes(id));
     return card;
 }
 /** Снимок со страницы или из файла; всё, что не проходит проверку, отбрасывается */
