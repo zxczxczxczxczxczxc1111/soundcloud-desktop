@@ -189,7 +189,7 @@ const SHOWN = 'p.heard >= ' + HEARD_MIN_MS;
 const WAVE = "p.source like 'wave:%' and coalesce(p.why, '') not in ('library', 'seedTrack')";
 const OWN = "(p.source = 'site:user-track_likes' or (p.source = 'wave:library' and p.why = 'library'))";
 // Открытие: не подборка из своего и не выбранное кликом. Его повтор за 3 дня это недосмотр волны
-const DISCOVERY = WAVE + " and p.source not in ('wave:library', 'wave:forgotten', 'wave:radar') and coalesce(p.picked, 0) = 0";
+const DISCOVERY = WAVE + " and p.source not in ('wave:library', 'wave:forgotten', 'wave:radar', 'wave:artistAll') and coalesce(p.picked, 0) = 0";
 const MEASURE =
     "count(*) as plays, coalesce(sum(p.end = 'skip' and p.ended_by = 'user' and p.heard < " + COUNTED_MS + '), 0) as early, ' +
     "coalesce(sum(p.end = 'done'), 0) as done, coalesce(sum(p.liked_now = 1), 0) as likes, coalesce(sum(p.more_now = 1), 0) as more, " +
@@ -690,7 +690,7 @@ export class HistoryIndex {
         return this.guarded(userId, ({ db }) =>
             (db.prepare(
                 "select case when p.origin is not null then p.origin when p.why in ('tasteArtist', 'tasteTag') then '' else coalesce(p.why, '') end as key, " +
-                    MEASURE + ' from plays p where ' + JUDGED + ' and ' + WAVE + " and p.source not in ('wave:library', 'wave:forgotten', 'wave:radar') and p.at >= ? and p.at < ? group by key order by plays desc, key",
+                    MEASURE + ' from plays p where ' + JUDGED + ' and ' + WAVE + " and p.source not in ('wave:library', 'wave:forgotten', 'wave:radar', 'wave:artistAll') and p.at >= ? and p.at < ? group by key order by plays desc, key",
             ).all(from, to) as Values[]).map((row) => ({ key: str(row.key), ...toMeasure(row) })),
         );
     }

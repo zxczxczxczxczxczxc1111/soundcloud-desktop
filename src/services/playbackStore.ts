@@ -9,7 +9,7 @@ export interface SavedQueueItem { track: WaveTrack; explicit: boolean; wave: boo
 /** «Моя музыка»: выбранные источники, режим и номера оставшихся треков; сами треки не хранятся, пул собирается заново */
 export interface SavedLibrary { pick: string[]; mode: LibraryMode; left?: number[] }
 export interface SavedSeed {
-    kind: 'track' | 'artist' | 'playlist' | 'daily' | 'forgotten' | 'liked' | 'group' | 'tracks' | 'radar' | 'library'; title: string; tracks: WaveTrack[]; own: WaveTrack[];
+    kind: 'track' | 'artist' | 'artistAll' | 'playlist' | 'daily' | 'forgotten' | 'liked' | 'group' | 'tracks' | 'radar' | 'library'; title: string; tracks: WaveTrack[]; own: WaveTrack[];
     order?: 'fixed' | 'blend' | 'smart'; mode?: 'similar' | 'fresh'; library?: SavedLibrary;
     /** Волна от артиста: его аккаунт для похожих артистов */
     artist?: number;
@@ -93,13 +93,13 @@ export function cleanPlaybackSnapshot(input: unknown): PlaybackSnapshot | null {
     const kind = String(rawSeed.kind);
     const library = cleanSavedLibrary(rawSeed.library);
     // «Моя музыка» без выбора не восстановится: пул не из чего собрать
-    const known = ['track', 'artist', 'playlist', 'daily', 'forgotten', 'liked', 'group', 'tracks', 'radar'].includes(kind) || (kind === 'library' && !!library);
+    const known = ['track', 'artist', 'artistAll', 'playlist', 'daily', 'forgotten', 'liked', 'group', 'tracks', 'radar'].includes(kind) || (kind === 'library' && !!library);
     const seed: SavedSeed | null = known ? {
         kind: kind as SavedSeed['kind'], title: text(rawSeed.title, 200), tracks: tracks(rawSeed.tracks, 5000), own: tracks(rawSeed.own, 5000),
         order: rawSeed.order === 'fixed' || rawSeed.order === 'blend' || rawSeed.order === 'smart' ? rawSeed.order : undefined,
         mode: rawSeed.mode === 'fresh' ? 'fresh' : 'similar',
         ...(kind === 'library' && library ? { library } : {}),
-        ...(kind === 'artist' && isId(rawSeed.artist) ? { artist: rawSeed.artist } : {}),
+        ...((kind === 'artist' || kind === 'artistAll') && isId(rawSeed.artist) ? { artist: rawSeed.artist } : {}),
     } : null;
     return { version: 1, at: Date.now(), items, index, position: typeof value.position === 'number' && Number.isFinite(value.position) ? Math.max(0, Math.min(value.position, 86400000)) : 0,
         paused: value.paused, active: value.active === true, mode: value.mode === 'fresh' ? 'fresh' : 'similar', genre: text(value.genre, 300) || null, seed, fallback: value.fallback === true };

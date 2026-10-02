@@ -131,7 +131,7 @@ export type WaveTexts = Record<
     | 'libraryPlay' | 'libraryPick' | 'libraryLoading' | 'libraryFailed' | 'libraryBuilding' | 'libraryEmpty' | 'libraryList' | 'libraryMore'
     | 'libraryModes' | 'librarySources' | 'libraryPlaying' | 'libraryPaused' | 'libraryPlaylists' | 'libraryHere' | 'libraryUnavailable' | 'libraryUnavailableTip' | 'whyLibrary' | 'whyLibraryLikes' | 'seedLibrary'
     | 'presets' | 'presetAll' | 'moodHappy' | 'moodSad' | 'moodAggressive' | 'moodCalm' | 'moodEnergetic' | 'hintPreset' | 'presetShort' | 'whyMoodTag'
-    | 'undo' | 'toastLiked' | 'toastUnliked' | 'seedCollecting' | 'seedCollectingAny'
+    | 'undo' | 'toastLiked' | 'toastUnliked' | 'seedCollecting' | 'seedCollectingAny' | 'seedCollectingArtist' | 'seedCollectingArtistAny' | 'menuArtistAll' | 'seedArtistAll' | 'menuQueueNext' | 'menuQueueLast'
     | 'whyRelatedArtist' | 'whyScMix' | 'whyNeighbors' | 'shelfLiked' | 'seedLiked' | 'whyLikedBy' | 'whyLikedAny'
     | 'traitLessCyr' | 'traitLessInst' | 'traitLessGenre' | 'traitLessMarker' | 'traitLessForeign' | 'forkTitle' | 'forkClose' | 'forkCalm' | 'forkAway'
     | 'pinned' | 'menuPin' | 'menuUnpin' | 'menuWaveGenre' | 'toastPinned' | 'toastUnpinned' | 'toastPinFull' | 'pinPlay' | 'pinRemove',
@@ -219,7 +219,7 @@ export interface Profile {
 // Волна от трека, артиста или плейлиста из меню по ПКМ: зёрна вместо вкуса, жанр не действует.
 // own это треки самого артиста, они идут в подборку; derived это найденное, от него волна едет дальше.
 // У подборок полки и набора из меню own это сама подборка
-export type SeedKind = WaveLinkKind | 'daily' | 'forgotten' | 'liked' | 'group' | 'tracks' | 'radar' | 'library';
+export type SeedKind = WaveLinkKind | 'artistAll' | 'daily' | 'forgotten' | 'liked' | 'group' | 'tracks' | 'radar' | 'library';
 export interface Seed {
     kind: SeedKind;
     title: string;

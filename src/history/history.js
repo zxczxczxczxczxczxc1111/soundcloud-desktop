@@ -49,6 +49,7 @@
             fromRadar: 'Из радара релизов',
             fromLibrary: 'Из «Моей музыки»',
             fromMix: 'Из подборки',
+            fromArtist: 'Из всех треков артиста',
             away: 'Играло, пока тебя не было у компьютера',
             like: 'Лайк',
             skipped: (t) => 'пропущен на ' + t,
@@ -158,6 +159,7 @@
             fromRadar: 'From Release Radar',
             fromLibrary: 'From My music',
             fromMix: 'From a mix',
+            fromArtist: 'From all tracks by an artist',
             away: 'Played while you were away',
             like: 'Liked',
             skipped: (t) => 'skipped at ' + t,
@@ -329,7 +331,8 @@
         const kind = source.slice(5);
         if (kind === 'radar') return T.fromRadar;
         if (kind === 'library') return T.fromLibrary;
-        return ['daily', 'forgotten', 'group', 'tracks'].includes(kind) ? T.fromMix : T.fromWave;
+        if (kind === 'artistAll') return T.fromArtist;
+        return ['daily', 'forgotten', 'liked', 'group', 'tracks'].includes(kind) ? T.fromMix : T.fromWave;
     }
     // Играющий трек отмечается одной строкой: самой свежей в списке (строки идут от новых к старым)
     const playingKey = (rows) => {

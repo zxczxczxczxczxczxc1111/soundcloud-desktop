@@ -34,7 +34,7 @@ import type { ScMix } from './wave/sources';
 // Разбор версий, сеть подбора и пул «Моей музыки» живут в своих модулях. Функции страницы зовут их по голому имени: в Node имя
 // берётся отсюда, на странице из объявлений identityHelpers и sourceHelpers в той же обёртке.
 // Именованный импорт превратился бы в trackIdentity_1.copyKey и на странице не нашёлся
-const { confirmedCopies, confirmedGroups, copyKey, copyKeys, familyKey, matchLevel, nameKey, searchQueries, trackCredits, versionKey } = identity;
+const { confirmedCopies, confirmedGroups, copyKey, copyKeys, familyKey, matchLevel, nameKey, performerKey, searchQueries, trackCredits, versionKey } = identity;
 const { classifyFailure, createDispatcher, createSearchCache, likeItems, entityItems, syncSource } = sources;
 const { siteRequires } = siteModules;
 // Чистые функции волны разложены по файлам. Здесь они разбираются в константы по той же причине: installWave зовёт их по голому имени
@@ -649,6 +649,7 @@ export function installWave(config: WaveConfig, createPlayback: typeof installPl
         trackOf,
         artistOf,
         artistOwnTracks,
+        artistCatalog,
         playlistTracks,
         resolveUrl,
         beginSeed,
@@ -1798,11 +1799,13 @@ export function installWave(config: WaveConfig, createPlayback: typeof installPl
             } else if (current.order) {
                 const reason: WaveReason = current.kind === 'daily' ? { kind: 'daily' } : current.kind === 'forgotten' ? { kind: 'forgotten' }
                     : current.kind === 'liked' ? { kind: 'likedBy', artist: '' }
-                    : current.kind === 'artist' ? { kind: 'artistTrack', artist: current.title } : { kind: 'group', name: current.title };
+                    : current.kind === 'artist' || current.kind === 'artistAll' ? { kind: 'artistTrack', artist: current.title } : { kind: 'group', name: current.title };
                 // Радар играет выпуск целиком: «Уже слышал» и недавно игравшее в нём остаются, запреты проверены при запуске.
                 // Волна от артиста так же: его лучшее звучит, даже если недавно играло (П3).
                 // Свой список отсекает только отданное сайту в этой подборке, а не всё, что волна отдавала раньше
-                const ownFilter: WaveFilter = { ...filter, taken: new Set(seedGiven), ...(current.kind === 'radar' || current.kind === 'artist' ? { recent: new Set<number>() } : {}) };
+                const ownFilter: WaveFilter = { ...filter, taken: new Set(seedGiven), ...(current.kind === 'radar' || current.kind === 'artist' || current.kind === 'artistAll' ? { recent: new Set<number>() } : {}) };
+                // «Все треки артиста» выбраны руками: сам артист звучит, даже если скрыт или отложен
+                if (current.kind === 'artistAll') ownFilter.excludedArtists = new Set([...filter.excludedArtists].filter((id) => id !== current.artist));
                 for (const track of current.own)
                     accept(ownQueue, {
                         track,
@@ -1814,6 +1817,11 @@ export function installWave(config: WaveConfig, createPlayback: typeof installPl
                 const ownFilter: WaveFilter = { ...filter, taken: new Set(seedGiven) };
                 for (const track of current.own) accept(found, { track, reason: { kind: 'artistTrack', artist: current.title } }, ownFilter);
             }
+        }
+        // «Все треки артиста»: только его каталог, похожих и найденного нет
+        if (seed?.kind === 'artistAll') {
+            exhausted = true;
+            return ownQueue.length;
         }
         const tags = !seed && genre ? parseGenres(genre) : [];
         const keys = tags.length ? genreKeysFor(genre) : [];
@@ -2265,7 +2273,7 @@ export function installWave(config: WaveConfig, createPlayback: typeof installPl
         else render();
     }
     // Подборка кончилась, а треков волны впереди нет: после последнего играет автоплей SoundCloud, если он был включён.
-    // Его станция сменит очередь, и волна закончится сама
+    // Его станция сменит очередь, и волна закончится сама. «Все треки артиста» автоплею не отдаются: там только он
     function releaseAutoplay(p: SitePlayer): void {
         if (autoplayReleased || !fallbackBefore) return;
         autoplayReleased = true;
@@ -2295,7 +2303,7 @@ export function installWave(config: WaveConfig, createPlayback: typeof installPl
             if (added.length) {
                 player.getQueue().add(added);
                 holdAutoplay(player);
-            } else if (exhausted && aheadOfCurrent() === 0) releaseAutoplay(player);
+            } else if (exhausted && aheadOfCurrent() === 0 && seed?.kind !== 'artistAll') releaseAutoplay(player);
         } catch (error) {
             console.warn('Волна: догрузка не удалась', error);
         } finally {
@@ -2569,6 +2577,7 @@ export function installWave(config: WaveConfig, createPlayback: typeof installPl
         switch (current.kind) {
             case 'track': return fillText(T.seedTrack, { seed: current.title });
             case 'artist': return fillText(T.seedArtist, { seed: current.title });
+            case 'artistAll': return fillText(T.seedArtistAll, { seed: current.title });
             case 'playlist': return fillText(T.seedPlaylist, { seed: current.title });
             case 'daily': return short ? T.shelfDaily : T.seedDaily;
             case 'forgotten': return short ? T.shelfForgotten : T.seedForgotten;
@@ -2908,6 +2917,69 @@ export function installWave(config: WaveConfig, createPlayback: typeof installPl
             if (next) list.push(next);
         }
         return list;
+    }
+    // «Все треки артиста» (Ф1): загрузки его аккаунта (до 500) и найденное поиском по имени, где он исполнитель, ремиксер
+    // или в титрах. Песня на чужом канале ведёт к исполнителю из названия, его аккаунт берётся из найденного: чаще всех
+    // выложивший треки под тем же именем. Порядок перемешан, версии одной песни разнесены
+    async function artistCatalog(target: MenuTarget): Promise<{ title: string; artist: number; tracks: WaveTrack[] } | null> {
+        const uploader = await artistOf(target);
+        const track = target.kind === 'artist' ? null : await trackOf(target);
+        const credits = track ? trackCredits(track) : [];
+        const performer = track ? performerKey(trackArtist(track), track.user?.username, credits) : '';
+        const credit = performer.startsWith('a:') ? credits.find((item) => item.role === 'artist' && 'a:' + item.key === performer) : undefined;
+        const name = (credit?.name ?? uploader?.username ?? '').trim();
+        const key = nameKey(name);
+        if (!key && !uploader) return null;
+        const uploads = async (id: number): Promise<WaveTrack[]> => {
+            const list: WaveTrack[] = [];
+            let query: Record<string, string | number> | null = { limit: 50 };
+            for (let page = 0; page < 10 && query && !disposed; page++) {
+                let body: unknown;
+                try {
+                    body = await call('userTracks', { id }, query);
+                } catch (error) {
+                    // Первая страница обязана прийти, дальше играет то, что успело
+                    if (!page) throw error;
+                    console.warn('Волна: загрузки артиста догружены не до конца', error);
+                    break;
+                }
+                const found = tracksOf(body);
+                list.push(...found);
+                if (!found.length) break;
+                query = nextQuery(body);
+            }
+            return list;
+        };
+        const search = async (): Promise<WaveTrack[]> => {
+            const list: WaveTrack[] = [];
+            let query: Record<string, string | number> | null = { q: name, limit: 50 };
+            for (let page = 0; page < 4 && query && !disposed; page++) {
+                let body: unknown;
+                try {
+                    body = await call('searchCategory', { category: 'tracks' }, query);
+                } catch (error) {
+                    console.warn('Волна: поиск треков артиста не ответил', error);
+                    break;
+                }
+                const found = tracksOf(body);
+                list.push(...found.filter((item) => performerNames(item).has(key) || trackCredits(item).some((entry) => entry.key === key)));
+                if (!found.length) break;
+                query = nextQuery(body);
+            }
+            return list;
+        };
+        const direct = !credit && uploader ? uploader.id : 0;
+        const [found, own] = await Promise.all([key ? search() : Promise.resolve([]), direct ? uploads(direct) : Promise.resolve([])]);
+        let id = direct;
+        let mine = own;
+        if (!id) {
+            const counts = new Map<number, number>();
+            for (const item of found) if (nameKey(item.user?.username) === key) counts.set(trackArtist(item), (counts.get(trackArtist(item)) ?? 0) + 1);
+            id = [...counts].sort((a, b) => b[1] - a[1])[0]?.[0] ?? 0;
+            if (id) mine = await uploads(id);
+        }
+        const list = uniqueTracks([...mine, ...found]).filter(isWaveEligible);
+        return { title: name || '…', artist: id, tracks: spreadBy(shuffleInPlace(list), (item) => familyKey(item) || 'id:' + item.id, 3) };
     }
     // Новая волна от зёрен: прошлая подборка сбрасывается, волна сразу играет. Не вышло: тост и обычная волна
     async function beginSeed(request: number, loaded: { seed: Seed; first: WaveTrack | null }): Promise<void> {

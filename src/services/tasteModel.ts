@@ -291,8 +291,8 @@ export function buildTaste(
         }
         if (play.likedNow) likedInPlay.add(play.id);
         // Трек, поданный волной, весит в плюс меньше выбранного руками. Простой системы (away) не штрафуется и плюсом
-        // не считается: музыка играла сама. «Моя музыка» играет собранное самим человеком, это выбор без скидки (Э7)
-        const positive = play.source.startsWith('wave:') && play.source !== 'wave:library' && !play.picked ? P.wavePositive : 1;
+        // не считается: музыка играла сама. «Моя музыка» играет собранное самим человеком, это выбор без скидки (Э7), как и все треки выбранного артиста (Ф1)
+        const positive = play.source.startsWith('wave:') && play.source !== 'wave:library' && play.source !== 'wave:artistAll' && !play.picked ? P.wavePositive : 1;
         const origin = originOf(play.at, item.record, play.likedNow || play.picked, true);
         // Само прослушивание насыщается по суткам, лайк во время него явное действие и идёт целиком.
         // Круг повтора не прослушивание заново: артист и теги за него ничего не получают

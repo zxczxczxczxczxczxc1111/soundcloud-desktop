@@ -53,6 +53,7 @@ it('П3, П4: волна от артиста помнит его аккаунт,
     const loaded = cleanPlaybackSnapshot(saved);
     expect(loaded?.items.map((item) => item.reason)).toEqual([{ kind: 'relatedArtist', artist: 'mightymason' }, { kind: 'scMix', name: 'Your Mix 1' }, { kind: 'neighbors' }, { kind: 'likedBy', artist: 'kat' }]);
     expect(cleanPlaybackSnapshot({ ...saved, seed: { kind: 'liked', title: 'Liked by your artists', tracks: [], own: [{ id: 46 }], order: 'fixed', mode: 'fresh' } })?.seed).toMatchObject({ kind: 'liked', order: 'fixed', mode: 'fresh' });
+    expect(cleanPlaybackSnapshot({ ...saved, seed: { kind: 'artistAll', title: 'Art', tracks: [], own: [{ id: 46 }], order: 'fixed', artist: 900 } })?.seed).toMatchObject({ kind: 'artistAll', order: 'fixed', artist: 900 });
     expect(loaded?.seed).toMatchObject({ kind: 'artist', order: 'smart', artist: 1076674012 });
     expect(cleanPlaybackSnapshot({ ...saved, seed: { ...saved.seed, artist: -5 } })?.seed).not.toHaveProperty('artist');
 });

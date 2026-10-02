@@ -295,7 +295,7 @@ it('ПКМ по треку в списке: меню и волна от этог
 
     const event = rightClick(row.querySelector('.soundTitle__title')!);
     expect(event.defaultPrevented).toBe(true);
-    expect(menuActs()).toEqual(['wave-track', 'wave-artist', 'queue-next', 'queue-last', 'pick', 'more', 'later', 'dislike', 'versions', 'hide-family', 'hide-artist']);
+    expect(menuActs()).toEqual(['wave-track', 'wave-artist', 'artist-all', 'queue-next', 'queue-last', 'pick', 'more', 'later', 'dislike', 'versions', 'hide-family', 'hide-artist']);
     choose('wave-track');
     expect(document.querySelector('.scw-menu')).toBeNull();
     // Трек из списка сайта волне ещё не знаком: плашка без названия, сразу, до ответа сайта
@@ -409,7 +409,7 @@ it('ПКМ по артисту: волна от его треков, его тр
     window.eval(waveScript());
     await vi.advanceTimersByTimeAsync(100);
     rightClick(row.querySelector('.soundTitle__username')!);
-    expect(menuActs()).toEqual(['wave-artist', 'pin', 'later-artist', 'hide-artist']);
+    expect(menuActs()).toEqual(['wave-artist', 'artist-all', 'pin', 'later-artist', 'hide-artist']);
     choose('wave-artist');
     await vi.advanceTimersByTimeAsync(100);
     expect(site.api.callEndpoint).toHaveBeenCalledWith('userToptracks', { id: 900 }, { limit: 20 });
@@ -417,6 +417,45 @@ it('ПКМ по артисту: волна от его треков, его тр
     expect(queued.some((item) => item.sound.id > 9000 && item.sound.id < 9010)).toBe(true);
     expect(queued.some((item) => item.sound.id > 9000000)).toBe(true);
     expect(document.querySelector('#sc-wave .scw-hint')?.textContent).toBe('Wave from artist Art');
+});
+
+it('Ф1: «Все треки артиста»: загрузки по страницам и его версии у других, без похожих; скрытый артист звучит, автоплей в конце не включается', async () => {
+    vi.spyOn(Math, 'random').mockReturnValue(0.5);
+    const track = (id: number, title: string, user: number, username: string): WaveTrack => ({ id, kind: 'track', title, duration: 200000, user_id: user, user: { id: user, username } });
+    const first = [9201, 9202, 9203].map((id, i) => track(id, 'Tune ' + i, 900, 'Art'));
+    const found = [
+        track(9301, 'Art - Tune 0 (Kin Remix)', 950, 'Kin'),
+        track(9302, 'Kin - Night (Art Remix)', 950, 'Kin'),
+        // Слово в названии, но не он, и просто чужое
+        track(9303, 'Artistic Moves', 960, 'Artistic'),
+        track(9304, 'Kin - Day', 950, 'Kin'),
+    ];
+    const site = fakeSite(relatedTracks, (name, path, query) => {
+        if (name === 'userTracks' && path.id === 900)
+            return query.offset === '50' ? { collection: [track(9211, 'Late Tune', 900, 'Art')] } : { collection: first, next_href: 'https://api-v2.soundcloud.com/users/900/tracks?offset=50&limit=50&client_id=x' };
+        if (name === 'searchCategory' && query.q === 'Art') return { collection: found };
+        return siteExtra(name, path, query);
+    });
+    fakeExclusions([], [{ id: 900, title: 'Art', artist: '', url: 'https://soundcloud.com/art' }]);
+    const row = listRow();
+    window.eval(waveScript());
+    await vi.advanceTimersByTimeAsync(100);
+    rightClick(row.querySelector('.soundTitle__username')!);
+    expect(menuActs()).toEqual(['wave-artist', 'artist-all', 'pin', 'later-artist', 'show-artist']);
+    choose('artist-all');
+    expect(document.querySelector('.scw-toast.on')?.textContent).toBe('Collecting the artist’s tracks…');
+    await vi.advanceTimersByTimeAsync(500);
+    expect(site.api.callEndpoint).toHaveBeenCalledWith('userTracks', { id: 900 }, { offset: '50', limit: '50' });
+    const queued = site.player.replaceQueue.mock.calls[site.player.replaceQueue.mock.calls.length - 1][0] as FakeItem[];
+    expect(queued.map((item) => item.sound.id).sort()).toEqual([9201, 9202, 9203, 9211, 9301, 9302]);
+    const section = document.getElementById('sc-wave')!;
+    expect(section.querySelector('.scw-hint')?.textContent).toBe('All tracks by Art');
+    expect(section.querySelector('.scw-why')?.textContent).toBe('By Art');
+    site.setItems(queued, queued.length - 1);
+    await vi.advanceTimersByTimeAsync(1100);
+    // Каталог кончился: дальше не похожее и не автоплей сайта
+    expect(site.player.getQueue().length).toBe(6);
+    expect(site.states.fallbackEnabled).toBe(false);
 });
 
 // В5: закрепления главной
