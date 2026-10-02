@@ -135,7 +135,18 @@ export function registerWaveIpc(ipc: IpcRegistry, deps: WaveIpcDeps): void {
         } catch (error) {
             console.warn('Свежие лайки для подборок не прочитаны:', error);
         }
-        return { snapshot: shelf.load(userId), recent, heard: [...heard.values()].slice(-3000), playlists, fresh };
+        // Любовь к трекам за год для «Давно не слушал» (П11): дослушано, ранних пропусков, кругов повтора с описанием трека
+        let love: Array<ShelfTrack & { done: number; early: number; loops: number }> = [];
+        try {
+            if (typeof userId === 'number' && Number.isSafeInteger(userId) && userId > 0)
+                love = (await library.request('trackLove', userId, Date.now() - 365 * 86400000, 3000)).map((entry) => ({
+                    id: entry.id, artist: entry.artist, title: entry.title, artistName: entry.artistName, genre: entry.genre, tags: entry.tags, path: entry.path,
+                    artwork: entry.artwork, dur: entry.dur, done: entry.done, early: entry.early, loops: entry.loops,
+                }));
+        } catch (error) {
+            console.warn('Любовь к трекам для подборок не прочитана:', error);
+        }
+        return { snapshot: shelf.load(userId), recent, heard: [...heard.values()].slice(-3000), playlists, fresh, love };
     });
     ipc.handle('soundcloud:wave-shelf:save', (event, userId: unknown, snapshot: unknown) =>
         isTrustedSoundCloudSender(event) ? shelf.save(userId, snapshot) : false,

@@ -436,6 +436,30 @@ it('В3: разрез по пресету только по трекам, пос
     expect(q?.presets.map((slice) => [slice.key, slice.plays, slice.early])).toEqual([['sad', 2, 1], ['calm', 1, 0]]);
 });
 
+it('П11: любовь к трекам: дослушано по покрытию, ранние пропуски человеком, круги повтора; простой и перемотка в конец не в счёт', () => {
+    const journal = new Journal();
+    journal.list = [
+        signal({ at: T0, id: 31, title: 'Любимая' }),
+        signal({ at: T0 + 300000, id: 31, looped: true }),
+        signal({ at: T0 + 600000, id: 31, looped: true }),
+        signal({ at: T0 + HOUR, id: 31 }),
+        // Перемотка в конец: done, но покрыто мало
+        signal({ at: T0 + 2 * HOUR, id: 32, heard: 30000, spans: [[0, 30000]], pos: 199000 }),
+        signal({ at: T0 + 3 * HOUR, id: 33, end: 'skip', heard: 5000, pos: 5000, endedBy: 'user' }),
+        // Простой системы и смена самим сайтом не любовь и не пропуск
+        signal({ at: T0 + 4 * HOUR, id: 34, away: true }),
+        signal({ at: T0 + 5 * HOUR, id: 35, end: 'skip', heard: 5000, pos: 5000, endedBy: 'auto' }),
+    ];
+    const index = open(journal);
+    index.sync(USER);
+    const love = index.trackLove(USER, T0 - DAY);
+    expect(love.map((entry) => [entry.id, entry.done, entry.early, entry.loops])).toEqual([[31, 2, 0, 2], [33, 0, 1, 0]]);
+    expect(love[0]).toMatchObject({ artist: 7, title: 'Любимая', dur: 200000 });
+    expect(index.trackLove(USER, T0 + 2 * HOUR).map((entry) => entry.id)).toEqual([33]);
+    expect(index.trackLove(USER, T0 - DAY, 1)).toHaveLength(1);
+    expect(index.trackLove('x', T0)).toEqual([]);
+});
+
 it('круги повтора в замер не идут, смена с порога идёт ранним пропуском, но история и счётчики её не показывают', () => {
     const wave = (patch: Partial<PlaySignal>): PlaySignal => signal({ v: 4, endedBy: 'auto', title: 'Круг', why: 'tasteArtist', origin: 'similar', ...patch });
     const journal = new Journal();

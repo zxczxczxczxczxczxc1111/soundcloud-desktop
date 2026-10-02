@@ -76,6 +76,8 @@ export interface ShelfSection {
     toggle(index: number): void;
     /** Волна от карточки; fromId это трек из раскрытого списка, с которого начать */
     start(index: number, fromId?: number): Promise<void>;
+    /** Трек сыгран: из «Давно не слушал» он запоминается на сутки, повторный запуск начнёт дальше (П11) */
+    notePlayed(id: number): void;
     /** Треки по номерам через trackBatch с кэшем полки */
     tracksByIds(ids: number[]): Promise<WaveTrack[]>;
     track(id: number): WaveTrack | undefined;
@@ -101,10 +103,12 @@ export function installShelf(core: ShelfCore): ShelfSection {
     // 3 это группа по жанру трека, а не по меткам, и не больше SHELF_ARTIST_CAP треков артиста в карточке (26.09.2026);
     // 4 это выборка дня в «Давно не слушал» и жанрах (28.09.2026).
     // Снимок другого формата собирается заново сразу, а не в полночь
-    const SHELF_FORMAT = 4;
+    const SHELF_FORMAT = 5;
     const SHELF_ARTIST_CAP = 5;
     // Прослушанное от 30 секунд из индекса истории: main отдаёт его вместе со снимком
     interface HeardTrack { id: number; artist: number; title: string; artistName: string; genre: string; tags: string; path: string; artwork: string; dur: number; share?: number }
+    // Счётчики любви к треку за год из main (П11)
+    type LovedTrack = HeardTrack & { done: number; early: number; loops: number };
     let shelf: Shelf | null = null;
     let shelfPromise: Promise<void> | null = null;
     let shelfFailedAt = 0;
@@ -126,6 +130,35 @@ export function installShelf(core: ShelfCore): ShelfSection {
             }
     } catch (error) {
         console.warn('Волна: набор не прочитан', error);
+    }
+    // П11: сыгранное из «Давно не слушал» за сутки полки: повторный запуск начинает с первого несыгранного
+    const PLAYED_KEY = 'scDesktopWaveForgottenPlayed';
+    function forgottenPlayed(day: string): Set<number> {
+        try {
+            const saved: unknown = JSON.parse(localStorage.getItem(PLAYED_KEY) || 'null');
+            const entry = saved && typeof saved === 'object' ? (saved as { day?: unknown; ids?: unknown }) : null;
+            return entry?.day === day && Array.isArray(entry.ids) ? new Set(entry.ids.filter(isId).slice(0, 500)) : new Set();
+        } catch (error) {
+            console.warn('Волна: сыгранное из «Давно не слушал» не прочитано', error);
+            return new Set();
+        }
+    }
+    function saveForgottenPlayed(day: string, ids: Set<number>): void {
+        try {
+            if (ids.size) localStorage.setItem(PLAYED_KEY, JSON.stringify({ day, ids: [...ids].slice(-500) }));
+            else localStorage.removeItem(PLAYED_KEY);
+        } catch (error) {
+            console.warn('Волна: сыгранное из «Давно не слушал» не сохранено', error);
+        }
+    }
+    function notePlayed(id: number): void {
+        const current = core.seed();
+        const card = current?.card !== undefined ? shelf?.cards[current.card] : undefined;
+        if (!shelf || current?.kind !== 'forgotten' || card?.kind !== 'forgotten' || !card.ids.includes(id)) return;
+        const played = forgottenPlayed(shelf.day);
+        if (played.has(id)) return;
+        played.add(id);
+        saveForgottenPlayed(shelf.day, played);
     }
     function savePicks(): void {
         try {
@@ -189,11 +222,21 @@ export function installShelf(core: ShelfCore): ShelfSection {
                 ...(typeof item.share === 'number' && item.share > 0 && item.share <= 1 ? { share: item.share } : {}) }];
         });
     }
+    function asLove(list: unknown): LovedTrack[] {
+        if (!Array.isArray(list)) return [];
+        const count = (value: unknown): number => (typeof value === 'number' && Number.isSafeInteger(value) && value >= 0 ? value : 0);
+        const heard = new Map(asHeard(list).map((entry) => [entry.id, entry]));
+        return list.flatMap((value): LovedTrack[] => {
+            const item = value && typeof value === 'object' ? (value as Record<string, unknown>) : null;
+            const entry = item && isId(item.id) ? heard.get(item.id) : undefined;
+            return item && entry ? [{ ...entry, done: count(item.done), early: count(item.early), loops: count(item.loops) }] : [];
+        });
+    }
     // Подборки на сутки: все лайки из каталога, вкус из main, похожие на любимое.
     // recentMain это прослушанное за 30 дней по журналу клиента, история сайта помнит только последние 200;
     // heardMain это прослушанное от 30 секунд за 90 дней и треки плейлистов с жанром и тегами для жанров полки;
     // freshLikes это лайки за 30 дней по датам библиотеки
-    async function buildShelf(day: string, recentMain: number[], heardMain: HeardTrack[], freshLikes: number[]): Promise<Shelf> {
+    async function buildShelf(day: string, recentMain: number[], heardMain: HeardTrack[], freshLikes: number[], loved: LovedTrack[] = []): Promise<Shelf> {
         const p = await ensureProfile();
         await expandLibrary(p);
         await Promise.all([ensureExclusions(), ensureTaste()]);
@@ -224,7 +267,11 @@ export function installShelf(core: ShelfCore): ShelfSection {
         // «Давно не слушал» по истории конкретной версии; другая загрузка засчитывается только подтверждённой связью.
         // Лайк за 30 дней не забыт: его слушали, когда лайкали, хоть и не в клиенте, а свежий лайк весит во вкусе
         // больше всех и иначе встал бы в начало подборки
-        const forgotten = forgottenPicks(liked, confirmedCopies([...p.recent, ...recentMain, ...freshLikes], core.copyGroups()), weights, 60, day);
+        // Вес любви по счётчикам за год (П11); любимое без лайка от трёх дослушиваний тоже идёт
+        const love = new Map(loved.map((entry) => [entry.id, entry]));
+        const lovedTracks = loved.filter((entry) => entry.done >= 3 && !p.liked.has(entry.id)).map(heardTrack).filter((track) => isWaveEligible(track) && !isExcluded(track));
+        const forgotten = forgottenPicks(liked, confirmedCopies([...p.recent, ...recentMain, ...freshLikes], core.copyGroups()), weights, 60, day, love, lovedTracks);
+        for (const track of forgotten) if (!shelfTracks.has(track.id)) shelfTracks.set(track.id, track);
         if (forgotten.length >= 8) cards.push({ kind: 'forgotten', title: '', sub: '', ids: forgotten.map((track) => track.id), seeds: [], keys: [], art: coversOf(forgotten) });
 
         // До 8 жанров, все видны (решение владельца 26.09.2026). Лайк весит 1 плюс вкус, прослушанное без лайка только
@@ -296,7 +343,7 @@ export function installShelf(core: ShelfCore): ShelfSection {
         shelfPromise = (async () => {
             const id = await ensureUser();
             if (!id) throw new Error('Пользователь не определён');
-            const loaded = (await bridge.load(id)) as { snapshot?: unknown; recent?: unknown; heard?: unknown; playlists?: unknown; fresh?: unknown } | null;
+            const loaded = (await bridge.load(id)) as { snapshot?: unknown; recent?: unknown; heard?: unknown; playlists?: unknown; fresh?: unknown; love?: unknown } | null;
             const saved = asShelf(loaded?.snapshot);
             if (saved && saved.day === day && saved.v === SHELF_FORMAT && !shelfRetryAt) {
                 replace(saved);
@@ -306,7 +353,7 @@ export function installShelf(core: ShelfCore): ShelfSection {
             // Прослушанное и треки плейлистов одним списком без повторов: и то и другое идёт в жанры своим весом во вкусе
             const extra = new Map([...asHeard(loaded?.heard), ...asHeard(loaded?.playlists)].map((entry) => [entry.id, entry]));
             const fresh = Array.isArray(loaded?.fresh) ? loaded.fresh.filter(isId).slice(0, 5000) : [];
-            const built = await buildShelf(day, recent, [...extra.values()], fresh);
+            const built = await buildShelf(day, recent, [...extra.values()], fresh, asLove(loaded?.love));
             if (core.disposed()) return;
             replace(built);
             // Без вкуса зёрна находок случайны, «Давно не слушал» идёт только по порядку лайков, жанры без прослушанного:
@@ -367,9 +414,17 @@ export function installShelf(core: ShelfCore): ShelfSection {
             const at = fromId ? own.findIndex((track) => track.id === fromId) : -1;
             const first = at >= 0 ? own[at] : null;
             if (at >= 0) own = [...own.slice(at + 1), ...own.slice(0, at)];
+            // «Давно не слушал» без выбранного трека продолжает с места (П11): сначала несыгранное за сутки по порядку
+            // карточки, сыгранное после. Всё сыграно: круг заново
+            if (card.kind === 'forgotten' && !first && shelf) {
+                const played = forgottenPlayed(shelf.day);
+                const fresh = own.filter((track) => !played.has(track.id));
+                if (fresh.length) own = [...fresh, ...own.filter((track) => played.has(track.id))];
+                else saveForgottenPlayed(shelf.day, new Set());
+            }
             const title = cardTitle(card);
-            // «Давно не слушал» без выбранного трека каждый раз в новом порядке, вкус тасуется всегда
-            const ordered = card.kind === 'group' || (card.kind === 'forgotten' && !first) ? shuffleInPlace(own.slice()) : own;
+            // Вкус тасуется всегда
+            const ordered = card.kind === 'group' ? shuffleInPlace(own.slice()) : own;
             const next: Seed = card.kind === 'daily'
                 ? { kind: 'daily', title, own: ordered, tracks: shuffleInPlace([...roots, ...own]), order: 'fixed', mode: 'fresh', card: index }
                 : { kind: card.kind, title, own: ordered, tracks: shuffleInPlace(own.slice()), order: card.kind === 'forgotten' ? 'fixed' : 'blend', mode: 'similar', card: index };
@@ -587,6 +642,7 @@ export function installShelf(core: ShelfCore): ShelfSection {
         },
         toggle: toggleMix,
         start: startShelf,
+        notePlayed,
         tracksByIds,
         track: (id) => shelfTracks.get(id),
         genreOf: (index) => {

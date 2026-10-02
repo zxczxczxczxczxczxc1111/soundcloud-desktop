@@ -101,6 +101,21 @@ export interface TastePlay {
     artwork: string;
     path: string;
 }
+/** Счётчики трека за период и его описание для полки (П11) */
+export interface TrackLove {
+    id: number;
+    artist: number;
+    done: number;
+    early: number;
+    loops: number;
+    genre: string;
+    tags: string;
+    title: string;
+    artistName: string;
+    artwork: string;
+    path: string;
+    dur: number;
+}
 /** Меры волны: оценимые прослушивания и что с ними стало */
 export interface WaveMeasure {
     /** Дослушанные и переключённые человеком; смена сайтом, закрытие клиента и простой не в счёт */
@@ -677,6 +692,28 @@ export class HistoryIndex {
                 "select case when p.origin is not null then p.origin when p.why in ('tasteArtist', 'tasteTag') then '' else coalesce(p.why, '') end as key, " +
                     MEASURE + ' from plays p where ' + JUDGED + ' and ' + WAVE + " and p.source not in ('wave:library', 'wave:forgotten', 'wave:radar') and p.at >= ? and p.at < ? group by key order by plays desc, key",
             ).all(from, to) as Values[]).map((row) => ({ key: str(row.key), ...toMeasure(row) })),
+        );
+    }
+
+    /** Любовь к трекам с момента since для «Давно не слушал» (П11): дослушано (покрытие от 80%, перемотка в конец не в счёт),
+     *  ранних пропусков человеком и кругов повтора по треку, с описанием трека. Простой системы не в счёт. До limit
+     *  самых дослушиваемых */
+    public trackLove(userId: unknown, since: number, limit = 5000): TrackLove[] {
+        if (!isId(userId)) return [];
+        return this.guarded(userId, ({ db }) =>
+            (db.prepare(
+                'select p.id, max(p.artist) as artist, ' +
+                    "coalesce(sum(coalesce(p.looped, 0) = 0 and ((p.dur > 0 and min(p.heard, coalesce(p.covered, p.heard)) >= p.dur * 0.8) or (p.dur <= 0 and p.end = 'done'))), 0) as done, " +
+                    "coalesce(sum(p.end = 'skip' and p.ended_by = 'user' and p.heard >= ? and p.heard < ? and coalesce(p.looped, 0) = 0), 0) as early, " +
+                    'coalesce(sum(coalesce(p.looped, 0) = 1), 0) as loops, ' +
+                    "coalesce(t.genre, '') as genre, coalesce(t.tags, '') as tags, coalesce(t.title, '') as title, coalesce(t.artist_name, '') as artistName, " +
+                    "coalesce(t.artwork, '') as artwork, coalesce(t.path, '') as path, max(p.dur) as dur " +
+                    'from plays p left join tracks t on t.id = p.id where p.at >= ? and p.away = 0 group by p.id having done > 0 or early > 0 or loops > 0 ' +
+                    'order by done desc, loops desc, p.id limit ?',
+            ).all(HEARD_MIN_MS, COUNTED_MS, since, Math.max(1, Math.min(20000, Math.floor(limit)))) as Values[]).map((row) => ({
+                id: num(row.id), artist: num(row.artist), done: num(row.done), early: num(row.early), loops: num(row.loops),
+                genre: str(row.genre), tags: str(row.tags), title: str(row.title), artistName: str(row.artistName), artwork: str(row.artwork), path: str(row.path), dur: num(row.dur),
+            })),
         );
     }
 

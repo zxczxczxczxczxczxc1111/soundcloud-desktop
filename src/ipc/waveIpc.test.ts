@@ -111,20 +111,24 @@ describe('обработчики волны', () => {
         vi.useFakeTimers();
         vi.setSystemTime(NOW);
         const play = (id: number, at: number, heard: number) => ({ id, at, heard, artist: 1, title: 't', artistName: 'a', genre: 'g', tags: '', path: '/a/t', artwork: '', dur: 180000 });
-        const { ipc, site, shelf } = setup({
+        const { ipc, site, shelf, request } = setup({
             tastePlays: [play(1, NOW - 40 * DAY, 60000), play(2, NOW - DAY, 10000), play(3, NOW - DAY, 90000)],
             playlistTracks: [
                 { id: 5, own: true, upload: { uploader: 9, title: 'p', uploaderName: 'u', genre: 'g', tags: '', duration: 1000 } },
                 { id: 6, own: false, upload: null },
             ],
             libraryMembers: [{ key: 'sc:track:8', added: NOW - DAY }, { key: 'sc:track:9', added: NOW - 60 * DAY }, { key: 'sc:track:x', added: NOW }],
+            trackLove: [{ id: 4, artist: 1, done: 5, early: 1, loops: 2, title: 't', artistName: 'a', genre: 'g', tags: '', path: '/a/t', artwork: '', dur: 180000 }],
         });
-        const result = (await ipc.invoke('soundcloud:wave-shelf:load', site, 11)) as { recent: number[]; heard: Array<{ id: number }>; playlists: Array<{ id: number; share: number }>; fresh: number[] };
+        const result = (await ipc.invoke('soundcloud:wave-shelf:load', site, 11)) as { recent: number[]; heard: Array<{ id: number }>; playlists: Array<{ id: number; share: number }>; fresh: number[]; love: Array<{ id: number; done: number; early: number; loops: number }> };
         expect(result.recent).toEqual([2, 3]);
         expect(result.heard.map((item) => item.id)).toEqual([1, 3]);
         expect(result.playlists.map((item) => item.id)).toEqual([5]);
         expect(result.playlists[0].share).toBeGreaterThan(0);
         expect(result.fresh).toEqual([8]);
+        // П11: любовь к трекам за год
+        expect(result.love).toEqual([expect.objectContaining({ id: 4, done: 5, early: 1, loops: 2, path: '/a/t' })]);
+        expect(request).toHaveBeenCalledWith('trackLove', 11, NOW - 365 * DAY, 3000);
         expect(shelf.load).toHaveBeenCalledWith(11);
     });
     it('П2: дослушанное за час для старта волны: до конца или от 80% покрытия, без простоя и кругов повтора', async () => {
@@ -149,9 +153,9 @@ describe('обработчики волны', () => {
     });
     it('сбой хранилища не валит подборки, неверный пользователь не идёт в хранилище', async () => {
         const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
-        const failing = setup({ tastePlays: new Error('нет'), playlistTracks: new Error('нет'), libraryMembers: new Error('нет') });
-        await expect(failing.ipc.invoke('soundcloud:wave-shelf:load', failing.site, 11)).resolves.toEqual({ snapshot: null, recent: [], heard: [], playlists: [], fresh: [] });
-        expect(warn).toHaveBeenCalledTimes(3);
+        const failing = setup({ tastePlays: new Error('нет'), playlistTracks: new Error('нет'), libraryMembers: new Error('нет'), trackLove: new Error('нет') });
+        await expect(failing.ipc.invoke('soundcloud:wave-shelf:load', failing.site, 11)).resolves.toEqual({ snapshot: null, recent: [], heard: [], playlists: [], fresh: [], love: [] });
+        expect(warn).toHaveBeenCalledTimes(4);
         warn.mockRestore();
         const { ipc, site, request } = setup();
         await expect(ipc.invoke('soundcloud:wave-library:heard', site, -1)).resolves.toEqual([]);

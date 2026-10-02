@@ -19,6 +19,7 @@ export interface LibraryOperations {
     missing: Operation<HistoryIndex['missing']>;
     resolve: Operation<HistoryIndex['resolve']>;
     tastePlays: Operation<HistoryIndex['tastePlays']>;
+    trackLove: Operation<HistoryIndex['trackLove']>;
     profile: Operation<TasteService['profile']>;
     view: Operation<TasteService['view']>;
     setRemoved: Operation<TasteService['setRemoved']>;

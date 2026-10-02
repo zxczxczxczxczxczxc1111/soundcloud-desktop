@@ -29,6 +29,7 @@ function run(request: LibraryRequest): unknown {
         case 'missing': return index.missing(...request.args);
         case 'resolve': return index.resolve(...request.args);
         case 'tastePlays': return index.tastePlays(...request.args);
+        case 'trackLove': return index.trackLove(...request.args);
         case 'profile': return taste.profile(...request.args);
         case 'view': return taste.view(...request.args);
         case 'setRemoved': return taste.setRemoved(...request.args);

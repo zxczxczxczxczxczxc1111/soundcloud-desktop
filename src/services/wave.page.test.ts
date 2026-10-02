@@ -497,7 +497,7 @@ it('В5: плейлист и артист закрепляются из меню
 it('В5: жанр закрепляется со ссылки /tags и с карточки полки, закреплённый жанр включает волну по нему', async () => {
     fakeSite(relatedTracks, siteExtra);
     const snapshot = {
-        day: localDay(Date.now()), v: 4,
+        day: localDay(Date.now()), v: 5,
         cards: [{ kind: 'group', title: 'Techno and Industrial', sub: 'A, B', ids: [5101, 5102], seeds: [], keys: ['techno'], art: [] }],
     };
     Object.assign(window, { soundcloudAPI: { waveExclusions: fakeExclusions(), waveShelf: { load: vi.fn(async () => ({ snapshot, recent: [] })), save: vi.fn(async () => true) } } });
@@ -1679,7 +1679,7 @@ const batchOf = (list: WaveTrack[]) => (query: Record<string, unknown>): WaveTra
 
 it('ошибка подборок видна, повтор восстанавливает полку без перезагрузки страницы', async () => {
     fakeSite(relatedTracks);
-    const snapshot = { day: localDay(Date.now()), v: 4, cards: [{ kind: 'group', title: 'Techno', sub: '', ids: [51], seeds: [], keys: ['techno'], art: [] }] };
+    const snapshot = { day: localDay(Date.now()), v: 5, cards: [{ kind: 'group', title: 'Techno', sub: '', ids: [51], seeds: [], keys: ['techno'], art: [] }] };
     const load = vi.fn().mockRejectedValueOnce(new Error('Offline')).mockResolvedValue({ snapshot, recent: [] });
     Object.assign(window, { soundcloudAPI: { waveShelf: { load, save: vi.fn(async () => true) } } });
     window.eval(waveScript()); await vi.advanceTimersByTimeAsync(100);
@@ -1716,7 +1716,7 @@ it('полка показывает все жанры одной сеткой, �
     const art = ['https://i1.sndcdn.com/artworks-0-t300x300.jpg'];
     const group = (i: number) => ({ kind: 'group', title: 'Genre ' + i, sub: '', ids: [5200 + i], seeds: [], keys: ['g' + i], art });
     const snapshot = {
-        day: localDay(Date.now()), v: 4,
+        day: localDay(Date.now()), v: 5,
         cards: [
             { kind: 'daily', title: '', sub: '', ids: [5101], seeds: [], keys: [], art },
             { kind: 'forgotten', title: '', sub: '', ids: [5102], seeds: [], keys: [], art },
@@ -1740,7 +1740,7 @@ it('полка из снимка дня: находки играют первы�
     const site = fakeSite(relatedTracks, (name, _path, query) => (name === 'trackBatch' ? batchOf(finds)(query) : undefined));
     const art = [0, 1, 2, 3].map((i) => 'https://i1.sndcdn.com/artworks-' + i + '-t300x300.jpg');
     const snapshot = {
-        day: localDay(Date.now()), v: 4,
+        day: localDay(Date.now()), v: 5,
         cards: [
             { kind: 'daily', title: '', sub: '', ids: finds.map((track) => track.id), seeds: [1], keys: [], art },
             { kind: 'group', title: 'Techno and Industrial', sub: 'A, B', ids: [5101, 5102], seeds: [], keys: ['techno'], art: art.slice(0, 1) },
@@ -1795,7 +1795,7 @@ it('раскрытая подборка: треки списком, трек и�
         id: 5001 + i, kind: 'track', user_id: 600 + i, duration: 200000, title: 'Find ' + i, user: { id: 600 + i, username: 'Artist ' + i },
     }));
     const site = fakeSite(relatedTracks, (name, _path, query) => (name === 'trackBatch' ? batchOf(finds)(query) : undefined));
-    const snapshot = { day: localDay(Date.now()), v: 4, cards: [{ kind: 'daily', title: '', sub: '', ids: finds.map((track) => track.id), seeds: [1], keys: [], art: [] }] };
+    const snapshot = { day: localDay(Date.now()), v: 5, cards: [{ kind: 'daily', title: '', sub: '', ids: finds.map((track) => track.id), seeds: [1], keys: [], art: [] }] };
     Object.assign(window, { soundcloudAPI: { waveShelf: { load: vi.fn(async () => ({ snapshot, recent: [] })), save: vi.fn(async () => true) } } });
     window.eval(waveScript());
     await vi.advanceTimersByTimeAsync(100);
@@ -1831,7 +1831,7 @@ it('раскрытая подборка забирает прокрутку и �
     const finds = Array.from({ length: 12 }, (_, i): WaveTrack => ({ id: 5001 + i, kind: 'track', user_id: 600 + i, duration: 200000, title: 'Find ' + i }));
     fakeSite(relatedTracks, (name, _path, query) => (name === 'trackBatch' ? batchOf(finds)(query) : undefined));
     const snapshot = {
-        day: localDay(Date.now()), v: 4,
+        day: localDay(Date.now()), v: 5,
         cards: [
             { kind: 'daily', title: '', sub: '', ids: finds.map((track) => track.id), seeds: [1], keys: [], art: [] },
             { kind: 'group', title: 'Techno', sub: 'A, B', ids: finds.slice(0, 6).map((track) => track.id), seeds: [], keys: ['techno'], art: [] },
@@ -1880,7 +1880,7 @@ it('ссылки в строках и шапке: название на трек
         permalink_url: i === 1 ? 'https://soundcloud.com/artist-1/find-1/s-SeCrEt' : 'https://soundcloud.com/artist-' + i + '/find-' + i,
     }));
     const site = fakeSite(relatedTracks, (name, _path, query) => (name === 'trackBatch' ? batchOf(finds)(query) : undefined));
-    const snapshot = { day: localDay(Date.now()), v: 4, cards: [{ kind: 'daily', title: '', sub: '', ids: finds.map((track) => track.id), seeds: [1], keys: [], art: [] }] };
+    const snapshot = { day: localDay(Date.now()), v: 5, cards: [{ kind: 'daily', title: '', sub: '', ids: finds.map((track) => track.id), seeds: [1], keys: [], art: [] }] };
     Object.assign(window, { soundcloudAPI: { waveShelf: { load: vi.fn(async () => ({ snapshot, recent: [] })), save: vi.fn(async () => true) } } });
     window.eval(waveScript());
     await vi.advanceTimersByTimeAsync(100);
@@ -1931,7 +1931,7 @@ it('повторный запуск карточки играет её цели�
     const finds = Array.from({ length: 12 }, (_, i): WaveTrack => ({ id: 5001 + i, kind: 'track', user_id: 600 + i, duration: 200000, title: 'Find ' + i }));
     const other = Array.from({ length: 12 }, (_, i): WaveTrack => ({ id: 6001 + i, kind: 'track', user_id: 650 + i, duration: 200000, title: 'Other ' + i }));
     const site = fakeSite(relatedTracks, (name, _path, query) => (name === 'trackBatch' ? batchOf([...finds, ...other])(query) : undefined));
-    const snapshot = { day: localDay(Date.now()), v: 4, cards: [
+    const snapshot = { day: localDay(Date.now()), v: 5, cards: [
         { kind: 'daily', title: '', sub: '', ids: finds.map((track) => track.id), seeds: [1], keys: [], art: [] },
         { kind: 'forgotten', title: '', sub: '', ids: other.map((track) => track.id), seeds: [], keys: [], art: [] },
     ] };
@@ -1944,15 +1944,57 @@ it('повторный запуск карточки играет её цели�
         return queuedIds(site);
     };
     expect((await play(0)).slice(0, 3)).toEqual([5001, 5002, 5003]);
-    // «Давно не слушал» без выбранного трека перемешивается: важен состав, а не порядок
-    expect((await play(1)).slice(0, 10).every((id) => id > 6000 && id < 6013)).toBe(true);
+    // «Давно не слушал» без выбранного трека идёт по порядку карточки (П11)
+    expect((await play(1)).slice(0, 10)).toEqual(other.slice(0, 10).map((track) => track.id));
     expect((await play(0)).slice(0, 10)).toEqual(finds.slice(0, 10).map((track) => track.id));
+});
+
+it('П11: «Давно не слушал» продолжает с первого несыгранного за сутки, всё сыграно: круг заново', async () => {
+    const other = Array.from({ length: 12 }, (_, i): WaveTrack => ({ id: 6001 + i, kind: 'track', user_id: 650 + i, duration: 200000, title: 'Other ' + i }));
+    const finds = Array.from({ length: 12 }, (_, i): WaveTrack => ({ id: 5001 + i, kind: 'track', user_id: 600 + i, duration: 200000, title: 'Find ' + i }));
+    const site = fakeSite(relatedTracks, (name, _path, query) => (name === 'trackBatch' ? batchOf([...finds, ...other])(query) : undefined));
+    const snapshot = { day: localDay(Date.now()), v: 5, cards: [
+        { kind: 'daily', title: '', sub: '', ids: finds.map((track) => track.id), seeds: [1], keys: [], art: [] },
+        { kind: 'forgotten', title: '', sub: '', ids: other.map((track) => track.id), seeds: [], keys: [], art: [] },
+    ] };
+    Object.assign(window, { soundcloudAPI: { waveShelf: { load: vi.fn(async () => ({ snapshot, recent: [] })), save: vi.fn(async () => true) } } });
+    window.eval(waveScript());
+    await vi.advanceTimersByTimeAsync(100);
+    const play = async (card: number): Promise<number[]> => {
+        document.querySelector<HTMLButtonElement>('#sc-wave [data-act="shelf-play"][data-card="' + card + '"]')!.click();
+        await vi.advanceTimersByTimeAsync(2000);
+        return queuedIds(site);
+    };
+    // Слушает два трека по нескольку секунд, сайт сам переходит к следующему
+    const listen = async (): Promise<void> => {
+        for (let i = 1; i <= 3; i++) {
+            position = i * 1000;
+            await vi.advanceTimersByTimeAsync(1000);
+        }
+        position = 0;
+        site.setItems(site.player.getQueue().slice() as FakeItem[], site.player.getQueueState().currentIndex + 1);
+        await vi.advanceTimersByTimeAsync(5000);
+    };
+    expect((await play(1))[0]).toBe(6001);
+    await listen();
+    await listen();
+    await play(0);
+    expect((await play(1)).slice(0, 3)).toEqual([6003, 6004, 6005]);
+    expect(JSON.parse(localStorage.getItem('scDesktopWaveForgottenPlayed') ?? '{}')).toMatchObject({ day: localDay(Date.now()), ids: [6001, 6002] });
+    // Всё сыграно: круг заново с начала карточки
+    localStorage.setItem('scDesktopWaveForgottenPlayed', JSON.stringify({ day: localDay(Date.now()), ids: other.map((track) => track.id) }));
+    await play(0);
+    expect((await play(1)).slice(0, 2)).toEqual([6001, 6002]);
+    // Вчерашнее не действует
+    localStorage.setItem('scDesktopWaveForgottenPlayed', JSON.stringify({ day: '2000-01-01', ids: [6001] }));
+    await play(0);
+    expect((await play(1))[0]).toBe(6001);
 });
 
 it('«Назад» после перехода по ссылке: раскрытая подборка на месте, список на прежней прокрутке', async () => {
     const finds = Array.from({ length: 12 }, (_, i): WaveTrack => ({ id: 5001 + i, kind: 'track', user_id: 600 + i, duration: 200000, title: 'Find ' + i }));
     fakeSite(relatedTracks, (name, _path, query) => (name === 'trackBatch' ? batchOf(finds)(query) : undefined));
-    const snapshot = { day: localDay(Date.now()), v: 4, cards: [{ kind: 'daily', title: '', sub: '', ids: finds.map((track) => track.id), seeds: [1], keys: [], art: [] }] };
+    const snapshot = { day: localDay(Date.now()), v: 5, cards: [{ kind: 'daily', title: '', sub: '', ids: finds.map((track) => track.id), seeds: [1], keys: [], art: [] }] };
     Object.assign(window, { soundcloudAPI: { waveShelf: { load: vi.fn(async () => ({ snapshot, recent: [] })), save: vi.fn(async () => true) } } });
     window.eval(waveScript());
     await vi.advanceTimersByTimeAsync(100);
@@ -1996,7 +2038,7 @@ it('снимок дня старого формата пересобираетс
     const [userId, saved] = shelf.save.mock.calls[0] as unknown as [number, { day: string; v: number; cards: Array<{ kind: string; title: string; ids: number[] }> }];
     expect(userId).toBe(77);
     expect(saved.day).toBe(localDay(Date.now()));
-    expect(saved.v).toBe(4);
+    expect(saved.v).toBe(5);
     expect(saved.cards.map((card) => card.kind)).toEqual(['daily', 'forgotten', 'group', 'group']);
     expect(saved.cards[0].ids).toHaveLength(30);
     expect(saved.cards[0].ids.every((id) => id > 2000000)).toBe(true);
@@ -2024,6 +2066,29 @@ it('«Давно не слушал» не берёт лайки последни
     const forgotten = saved.cards.find((card) => card.kind === 'forgotten')?.ids ?? [];
     expect(forgotten).toHaveLength(27);
     expect(forgotten.some((id) => fresh.includes(id))).toBe(false);
+});
+
+it('П11: «Давно не слушал» по счётчикам из main: пропускаемый лайк уходит, любимое без лайка приходит', async () => {
+    const liked = Array.from({ length: 30 }, (_, i): WaveTrack => ({
+        id: 2001 + i, kind: 'track', duration: 200000, title: 'Like ' + i, user_id: 500 + (i % 10), user: { id: 500 + (i % 10), username: 'Tech' + (i % 10) }, genre: 'Techno', tag_list: '',
+    }));
+    fakeSite(relatedTracks, (name, _path, query) => {
+        if (name === 'soundLikesIds') return { collection: liked.map((track) => track.id) };
+        if (name === 'trackBatch') return batchOf(liked)(query);
+        return undefined;
+    });
+    const entry = (id: number, done: number, early: number, loops: number) => ({ id, artist: 900, title: 'Loved ' + id, artistName: 'Fav', genre: 'Techno', tags: '', path: '/fav/' + id, artwork: '', dur: 200000, done, early, loops });
+    const love = [entry(2005, 0, 3, 0), entry(9001, 6, 0, 2), entry(9002, 2, 0, 0)];
+    const shelf = { load: vi.fn(async () => ({ snapshot: null, recent: [], love })), save: vi.fn(async () => true) };
+    Object.assign(window, { soundcloudAPI: { waveShelf: shelf } });
+    window.eval(waveScript());
+    await vi.advanceTimersByTimeAsync(100);
+    const [, saved] = shelf.save.mock.calls[0] as unknown as [number, { cards: Array<{ kind: string; ids: number[] }> }];
+    const forgotten = saved.cards.find((card) => card.kind === 'forgotten')?.ids ?? [];
+    expect(forgotten).toContain(9001);
+    expect(forgotten).not.toContain(9002);
+    expect(forgotten).not.toContain(2005);
+    expect(forgotten).toHaveLength(30);
 });
 
 it('полка без модели вкуса (main не ответил) не хранится до полуночи и через 10 минут собирается заново', async () => {

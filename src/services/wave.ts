@@ -2602,6 +2602,7 @@ export function installWave(config: WaveConfig, createPlayback: typeof installPl
         if (!signal.looped && (signal.end === 'done' || (signal.dur > 0 && covered >= signal.dur * 0.8))) noteDone(signal);
         const heardTrack = known.get(signal.id)?.track;
         if (heardTrack && signal.dur > 0 && covered >= signal.dur * 0.8) releaseTraits(heardTrack);
+        shelfSection.notePlayed(signal.id);
         pendingSignals.push(signal);
         if (pendingSignals.length > 1000) pendingSignals.splice(0, pendingSignals.length - 1000);
         if (signalsTimer === undefined) signalsTimer = setTimeout(flushSignals, 5000);

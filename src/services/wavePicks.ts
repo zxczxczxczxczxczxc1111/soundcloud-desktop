@@ -92,15 +92,27 @@ export function capPerArtist(tracks: WaveTrack[], cap: number): WaveTrack[] {
     });
 }
 
-// «Давно не слушал»: лайки, которых нет среди прослушанного за последние недели. Без seed сначала то, что модель
-// вкуса ценит выше (дослушивал, переслушивал), дальше лайки постарше; с seed (дата) выборка дня с весом 1 + вкус,
-// чтобы каждый день были не те же 60 треков (решение владельца 28.09.2026). liked идёт от новых лайков к старым
-export function forgottenPicks(liked: WaveTrack[], recent: Set<number>, weights: Map<number, number> | null, limit: number, seed = ''): WaveTrack[] {
-    const entries = liked
-        .map((track, order) => ({ track, order, weight: weights?.get(track.id) ?? 0 }))
-        .filter((entry) => entry.weight > -1 && !recent.has(entry.track.id) && isWaveEligible(entry.track));
+// «Давно не слушал»: лайки и любимое без лайка, чего нет среди прослушанного за последние недели. Вес любви (П11):
+// 1 + дослушано + 2 × круги повтора - 2 × ранние пропуски за год плюс вкус трека. Лайк, который рано пропускали и ни
+// разу не дослушали, не берётся; трек без лайка берётся от трёх дослушиваний. Без seed по весу, дальше лайки постарше;
+// с seed (дата) выборка дня с этим весом, чтобы каждый день были не те же 60 треков (решение владельца 28.09.2026).
+// liked идёт от новых лайков к старым, heard это треки со счётчиками любви
+export function forgottenPicks(
+    liked: WaveTrack[], recent: Set<number>, weights: Map<number, number> | null, limit: number, seed = '',
+    love: Map<number, { done: number; early: number; loops: number }> | null = null, heard: WaveTrack[] = [],
+): WaveTrack[] {
+    const likedIds = new Set(liked.map((track) => track.id));
+    const candidates = [...liked, ...heard.filter((track) => !likedIds.has(track.id) && (love?.get(track.id)?.done ?? 0) >= 3)];
+    const entries = candidates
+        .map((track, order) => {
+            const count = love?.get(track.id);
+            const taste = weights?.get(track.id) ?? 0;
+            const fondness = count ? count.done + 2 * count.loops - 2 * count.early : 0;
+            return { track, order, taste, skippedOnly: !!count && count.early > 0 && count.done === 0, weight: 1 + fondness + taste };
+        })
+        .filter((entry) => entry.taste > -1 && !entry.skippedOnly && entry.weight > 0 && !recent.has(entry.track.id) && isWaveEligible(entry.track));
     const ordered = seed
-        ? daySample(entries, (entry) => entry.track.id, (entry) => 1 + entry.weight, limit, seed)
+        ? daySample(entries, (entry) => entry.track.id, (entry) => entry.weight, limit, seed)
         : entries.sort((a, b) => b.weight - a.weight || b.order - a.order).slice(0, limit);
     return ordered.map((entry) => entry.track);
 }

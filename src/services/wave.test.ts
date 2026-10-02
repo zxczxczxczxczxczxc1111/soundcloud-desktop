@@ -605,6 +605,23 @@ describe('подборки', () => {
         expect(today.filter((id) => id > 100 && id <= 120).length).toBeGreaterThan(9);
     });
 
+    it('П11: давно не слушал по любви: дослушивания и круги вверх, пропущенный лайк без дослушиваний не берётся, любимое без лайка от трёх', () => {
+        const liked = [track(1), track(2), track(3), track(4)];
+        const love = new Map([
+            [1, { done: 0, early: 2, loops: 0 }],
+            [2, { done: 4, early: 0, loops: 3 }],
+            [3, { done: 1, early: 1, loops: 0 }],
+            [7, { done: 3, early: 0, loops: 0 }],
+            [8, { done: 2, early: 0, loops: 5 }],
+        ]);
+        const heard = [track(7), track(8), track(2)];
+        // 2: 1 + 4 + 6; 7: 1 + 3; 3: 1 + 1 - 2 = 0 не берётся; 4 без счётчиков 1; 8 без лайка и меньше трёх дослушиваний нет
+        expect(forgottenPicks(liked, new Set(), null, 10, '', love, heard).map((entry) => entry.id)).toEqual([2, 7, 4]);
+        // Вкус прибавляется к весу и по-прежнему отсекает нелюбимое
+        expect(forgottenPicks(liked, new Set(), new Map([[4, 5], [2, -2]]), 10, '', love, heard).map((entry) => entry.id)).toEqual([4, 7]);
+        expect(forgottenPicks(liked, new Set([7]), null, 10, '2026-10-02', love, heard).map((entry) => entry.id).sort()).toEqual([2, 4]);
+    });
+
     it('A01: находки берут знакомый аккаунт и несколько его песен, без слышанного и недоступного', () => {
         const candidates = [
             track(1, { user_id: 50 }), track(2, { user_id: 60 }), track(3, { user_id: 60 }), track(4, { user_id: 70, title: 'Same' }),
