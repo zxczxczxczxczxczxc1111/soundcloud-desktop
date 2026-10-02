@@ -24,7 +24,7 @@ export function installPlaybackRecovery(host: RecoveryHost): PlaybackRecovery {
     function retry(): void {
         const p = host.player();
         if (!online || !p || !intended || pausedByUser || !p.getCurrentSound() || disposed) return;
-        if (attempts >= 3) { show(text('Воспроизведение не восстановилось. Нажми Play для повтора.', 'Playback could not recover. Press Play to retry.')); return; }
+        if (attempts >= 3) { show(text('Воспроизведение не восстановилось. Включи трек ещё раз.', 'Playback could not recover. Press Play to retry.')); return; }
         if (Date.now() - lastAttempt < (attempts + 1) * 5000) return;
         attempts++; lastAttempt = Date.now(); recovering = true;
         show(text('Восстанавливаю воспроизведение…', 'Recovering playback…'));

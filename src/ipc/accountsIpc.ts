@@ -114,7 +114,7 @@ export function registerAccountsIpc(ipc: IpcRegistry, deps: AccountsIpcDeps): vo
             }
             if (store.get('discordRichPresence')) await deps.presence().updatePresence(deps.playback.info);
             else deps.presence().clearActivity();
-        } catch (error) { deps.toast(String(error)); }
+        } catch (error) { deps.toast(error instanceof Error ? error.message : String(error)); }
     });
 
     ipc.on('soundcloud:profile-update', (event, username: unknown) => {

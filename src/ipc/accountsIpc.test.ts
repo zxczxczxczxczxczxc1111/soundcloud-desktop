@@ -100,7 +100,7 @@ describe('аккаунты', () => {
         const failing = setup({}, { network: true, reload: false });
         failing.proxy.apply.mockRejectedValueOnce(new Error('прокси недоступен'));
         await failing.ipc.send('apply-changes', failing.own);
-        expect(failing.deps.toast).toHaveBeenCalledWith('Error: прокси недоступен');
+        expect(failing.deps.toast).toHaveBeenCalledWith('прокси недоступен');
         expect(failing.deps.pending.network).toBe(true);
     });
     it('имя из профиля сайта: только допустимые символы, F1 узнаёт о смене', async () => {

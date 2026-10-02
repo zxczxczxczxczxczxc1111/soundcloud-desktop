@@ -89,7 +89,7 @@ describe('вкус волны', () => {
         expect(tasteReason(byTag, profile)).toEqual({ kind: 'tasteTag', genre: 'dark techno' });
         expect(tasteReason(plain, profile)).toBeNull();
         expect(tasteReason({ ...byArtist, reason: { kind: 'artistTrack', artist: 'X' } }, profile)).toBeNull();
-        expect(reasonText({ kind: 'tasteTag', genre: 'dark techno' }, WAVE_TEXTS.ru)).toBe('В духе dark techno, который ты любишь');
+        expect(reasonText({ kind: 'tasteTag', genre: 'dark techno' }, WAVE_TEXTS.ru)).toBe('Любимый жанр: dark techno');
         // Вес артиста копят прослушивания, лайки и подписка: подпись не утверждает, что его дослушивали
         expect(reasonText({ kind: 'tasteArtist', artist: 'Artist' }, WAVE_TEXTS.ru)).toBe('Ты любишь Artist');
         expect(reasonText({ kind: 'tasteArtist', artist: 'Artist' }, WAVE_TEXTS.en)).toBe('You love Artist');

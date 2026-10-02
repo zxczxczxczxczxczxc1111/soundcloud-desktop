@@ -54,6 +54,7 @@
     "proxyPasswordUnreadable": "Couldn’t read the proxy password. Enter it again.",
     "proxyAddressInvalid": "Invalid proxy host or port",
     "proxyStorageUnavailable": "Secure password storage is unavailable",
+    "adBlockFailed": "The ad blocker didn’t load, ads may show up",
     "saveJournalTitle": "Save diagnostic log",
     "journalFileType": "Log",
     "backupSaveTitle": "Save backup",

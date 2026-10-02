@@ -1211,7 +1211,7 @@ async function init() {
     function applySettingChange(data: SettingChange): void {
         const key = data.key;
         if (key === 'proxyPassword') {
-            try { proxyService.setPassword(data.value); pending.network = true; } catch (error) { queueToastNotification(String(error)); }
+            try { proxyService.setPassword(data.value); pending.network = true; } catch (error) { queueToastNotification(error instanceof Error ? error.message : String(error)); }
             return;
         }
         store.set(key, data.value);
@@ -1295,11 +1295,14 @@ async function init() {
         settingsView: () => settingsManager?.getView()?.webContents,
     });
     try { await proxyService.apply(); } catch (error) {
-        queueToastNotification(String(error));
+        queueToastNotification(error instanceof Error ? error.message : String(error));
         settingsManager.toggle();
         return;
     }
-    await adblockService.setEnabled(store.get('adBlocker') === true).catch((error: unknown) => queueToastNotification(String(error)));
+    await adblockService.setEnabled(store.get('adBlocker') === true).catch((error: unknown) => {
+        console.error('Блокировщик рекламы не загрузился:', error);
+        queueToastNotification(translationService.translate('adBlockFailed'));
+    });
     await contentView.webContents.loadURL('https://soundcloud.com/discover').catch((error: unknown) => console.error('Не удалось загрузить SoundCloud:', error));
     focusTopView();
     // Клиент запущен ссылкой из Discord: трек откроется, когда сайт будет готов

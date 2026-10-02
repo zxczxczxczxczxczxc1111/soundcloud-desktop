@@ -920,7 +920,7 @@ async function initializeSettings() {
     // Карточку собирает main (шаблоны, стоп-листы, запасная обложка), здесь она только рисуется
     function createPlayingPreview(trackInfo, card, options) {
         const fragment = document.createDocumentFragment();
-        fragment.appendChild(createTextElement('activity-header-preview', 'Listening to SoundCloud'));
+        fragment.appendChild(createTextElement('activity-header-preview', tr('Слушает SoundCloud')));
 
         const row = document.createElement('div');
         row.style.display = 'flex';
@@ -1116,6 +1116,6 @@ initializeSettings().catch((error) => {
     // Язык панели applyLanguage ставит в lang, до него остаётся русский из разметки
     document.body.textContent = document.documentElement.lang === 'en'
         ? 'Settings failed to load. Close the panel and open it again.'
-        : 'Не удалось загрузить настройки. Закройте и откройте панель повторно.';
+        : 'Не удалось загрузить настройки. Закрой панель и открой её заново.';
     document.body.style.opacity = '1';
 });

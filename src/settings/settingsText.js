@@ -118,6 +118,7 @@ window.SETTINGS_EN = {
     'Жанр в списке скрытых, Discord его не видит': 'This genre is hidden, Discord doesn’t see it',
     'Так статус видят в Discord': 'How your status looks in Discord',
     'Сейчас ничего не играет': 'Nothing is playing',
+    'Слушает SoundCloud': 'Listening to SoundCloud',
     'Обложка трека': 'Track artwork',
     'Слушать в SoundCloud': 'Listen on SoundCloud',
     'SoundCloud на GitHub': 'SoundCloud on GitHub',
