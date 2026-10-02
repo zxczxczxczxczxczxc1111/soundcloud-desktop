@@ -196,6 +196,8 @@ export function installWave(config: WaveConfig, createPlayback: typeof installPl
     let api: SiteApi | null = null;
     let SoundModel: SoundCtor | null = null;
     let disposed = false;
+    // Громкость трека для дышащего фона блока (Ф3), от 0 до 1
+    let breath = 0;
     let state: State = 'idle';
     let mode: WaveMode = 'similar';
     let genre: string | null = null;
@@ -3367,8 +3369,10 @@ export function installWave(config: WaveConfig, createPlayback: typeof installPl
         '#sc-wave .scw-opt:hover{background:var(--scw-film-strong)}',
         '#sc-wave .scw-opt[aria-selected="true"]{font-weight:600}',
         // Подложка блока в цвет обложки играющего трека (В6): без цвета прозрачна, отступы гасят поля, раскладка та же
-        '.scw-body{display:flex;gap:24px;margin:-12px;padding:12px;border-radius:8px;transition:background-color .3s cubic-bezier(.2,0,0,1)}',
+        '.scw-body{position:relative;isolation:isolate;display:flex;gap:24px;margin:-12px;padding:12px;border-radius:8px;transition:background-color .3s cubic-bezier(.2,0,0,1)}',
         '.scw-body.tinted{background-color:color-mix(in srgb,var(--scw-cover) 18%,transparent)}',
+        // Фон дышит (Ф3): тот же цвет поверх подложки ярче на громких местах трека, внутри границ блока
+        '.scw-body.tinted::before{content:"";position:absolute;inset:0;z-index:-1;border-radius:inherit;background:var(--scw-cover);opacity:calc(var(--scw-breath,0) * .16);transition:opacity .25s linear;pointer-events:none}',
         // Новый блок после смены трека начинает с прошлого цвета, строка названия и обложка проявляются
         '.scw-body.scw-tint-in{animation:scw-tint .3s cubic-bezier(.2,0,0,1)}',
         '@keyframes scw-tint{from{background-color:color-mix(in srgb,var(--scw-cover-from) 18%,transparent)}}',
@@ -3606,7 +3610,8 @@ export function installWave(config: WaveConfig, createPlayback: typeof installPl
         'html.scm-reduce #sc-wave .scw-card .scw-card-play,html.scm-reduce #sc-wave .scw-mix-play{transition:none;transform:none!important}',
         // Переходы играющего трека выключаются целиком: цвет подложки меняется сразу. Скрипт их тогда и не ставит
         'html.scm-reduce .scw-body,html.scm-reduce .scw-swap{transition:none;animation:none}',
-        '@media (prefers-reduced-motion:reduce){.scw-body,.scw-swap{transition:none;animation:none}}',
+        'html.scm-reduce .scw-body::before{display:none}',
+        '@media (prefers-reduced-motion:reduce){.scw-body,.scw-swap{transition:none;animation:none}.scw-body::before{display:none}}',
         // «Меньше анимаций» в F1: без масштаба меню, растворения остаются
         'html.scm-reduce .scw-menu{animation:none}',
     ].join('\n');
@@ -4017,6 +4022,7 @@ export function installWave(config: WaveConfig, createPlayback: typeof installPl
         }
         body.append(info, cover);
         paintTint(body, current ? host.__scmCoverColor?.(coverPath(current.track)) ?? '' : '');
+        if (breath) body.style.setProperty('--scw-breath', String(breath));
         const quick = renderQuick();
         section.append(body, ...renderTiles(), ...(quick ? [quick] : []), ...librarySection.render(), ...shelfSection.render());
         if (swap) {
@@ -4063,6 +4069,29 @@ export function installWave(config: WaveConfig, createPlayback: typeof installPl
             body.style.setProperty('--scw-cover-from', shownTint || 'transparent');
         }
         shownTint = tint;
+    }
+    // Фон дышит (Ф3): громкость по форме волны в текущей точке (среднее пяти отсчётов, около полсекунды) от 0 до 1.
+    // Только пока трек волны играет, блок виден и движение не убавлено; иначе подложка ровная
+    function breathe(): void {
+        let next = 0;
+        const current = isVisible() && !document.hidden && !calm() ? currentCandidate() : null;
+        const sound = current && player?.isPlaying() ? player.getCurrentSound() : null;
+        const samples = current && sound?.id === current.track.id ? samplesFor(current.track) : null;
+        const duration = sound ? durationOf(sound) : 0;
+        if (sound && samples?.length && duration > 0) {
+            const at = Math.floor((positionOf(sound) / duration) * samples.length);
+            let sum = 0;
+            let count = 0;
+            for (let i = Math.max(0, at - 2); i <= Math.min(samples.length - 1, at + 2); i++) {
+                sum += samples[i];
+                count++;
+            }
+            next = count ? Math.max(0, Math.min(1, (sum / count - 0.2) / 0.8)) : 0;
+        }
+        next = Math.round(next * 100) / 100;
+        if (next === breath) return;
+        breath = next;
+        section?.querySelector<HTMLElement>('.scw-body')?.style.setProperty('--scw-breath', String(breath));
     }
     // Средний цвет новой обложки считается после её загрузки: подложка красится, как только он готов
     function tintLate(): void {
@@ -4627,6 +4656,7 @@ export function installWave(config: WaveConfig, createPlayback: typeof installPl
     });
     let tickTimer: ReturnType<typeof setInterval> | undefined;
     let paintTimer: ReturnType<typeof setInterval> | undefined;
+    let breathTimer: ReturnType<typeof setInterval> | undefined;
     let attempts = 0;
     let attachTimer: ReturnType<typeof setTimeout> | undefined;
     function attach(): void {
@@ -4644,6 +4674,7 @@ export function installWave(config: WaveConfig, createPlayback: typeof installPl
             paintTimer = setInterval(() => {
                 if (currentCandidate() && player?.isPlaying()) paint();
             }, 250);
+            breathTimer = setInterval(breathe, 120);
             state = 'loading';
             void queueControls.ready().catch((error: unknown) => console.warn('Сессия пока не восстановлена', error)).finally(() => {
                 if (disposed) return;
@@ -4708,6 +4739,7 @@ export function installWave(config: WaveConfig, createPlayback: typeof installPl
         clearTimeout(siteCheck);
         if (tickTimer !== undefined) clearInterval(tickTimer);
         if (paintTimer !== undefined) clearInterval(paintTimer);
+        if (breathTimer !== undefined) clearInterval(breathTimer);
         if (journalTimer !== undefined) clearTimeout(journalTimer);
         flushJournal();
         finishPlay('stop');

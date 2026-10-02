@@ -1777,8 +1777,43 @@ it('В6: смена трека переходом: прошлая обложка
     }
 });
 
+it('Ф3: подложка блока дышит по форме волны играющего трека, на паузе и при «Меньше анимаций» ровная', async () => {
+    const site = fakeSite((seed) => relatedTracks(seed).map((track) => ({ ...track, waveform_url: 'https://wave.sndcdn.com/w' + track.id + '.json' })));
+    // Первая половина трека тихая, вторая громкая
+    vi.stubGlobal('fetch', vi.fn(async () => ({ ok: true, json: async () => ({ samples: [...Array(900).fill(5), ...Array(900).fill(140)] }) })));
+    const scope = window as unknown as Record<string, unknown>;
+    Object.assign(window, { __scmCoverColor: () => '#123456', __scmLearnCover: () => undefined });
+    const breath = (): number => Number(document.querySelector<HTMLElement>('#sc-wave .scw-body')!.style.getPropertyValue('--scw-breath') || 0);
+    try {
+        window.eval(waveScript());
+        await vi.advanceTimersByTimeAsync(100);
+        document.querySelector<HTMLButtonElement>('#sc-wave .scw-play')!.click();
+        await vi.advanceTimersByTimeAsync(1100);
+        expect(document.querySelector('#sc-wave .scw-body')?.classList.contains('tinted')).toBe(true);
+        position = 20000;
+        await vi.advanceTimersByTimeAsync(300);
+        expect(breath()).toBe(0);
+        position = 150000;
+        await vi.advanceTimersByTimeAsync(300);
+        expect(breath()).toBe(1);
+        site.player.pauseCurrent();
+        await vi.advanceTimersByTimeAsync(1100);
+        expect(breath()).toBe(0);
+        site.player.playCurrent();
+        await vi.advanceTimersByTimeAsync(1100);
+        expect(breath()).toBe(1);
+        document.documentElement.classList.add('scm-reduce');
+        await vi.advanceTimersByTimeAsync(300);
+        expect(breath()).toBe(0);
+    } finally {
+        document.documentElement.classList.remove('scm-reduce');
+        delete scope.__scmCoverColor;
+        delete scope.__scmLearnCover;
+    }
+});
+
 // Треки по id для trackBatch: из списка, остальные заготовкой
-const batchOf = (list: WaveTrack[]) => (query: Record<string, unknown>): WaveTrack[] =>
+const batchOf =(list: WaveTrack[]) => (query: Record<string, unknown>): WaveTrack[] =>
     String(query.ids).split(',').map((id) => list.find((track) => track.id === Number(id)) ?? { id: Number(id), kind: 'track', user_id: 700, duration: 200000, title: 'Seed ' + id });
 
 it('ошибка подборок видна, повтор восстанавливает полку без перезагрузки страницы', async () => {
