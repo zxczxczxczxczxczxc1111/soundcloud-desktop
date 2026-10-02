@@ -40,6 +40,10 @@ window.SETTINGS_EN = {
     'Скрывать Go+, Artist Studio и загрузку в шапке': 'Hide Go+, Artist Studio and Upload in the header',
     'Перемешивать всю очередь': 'Shuffle the whole queue',
     'Сам SoundCloud перемешивает только загруженные треки': 'SoundCloud itself shuffles only the loaded tracks',
+    'Пропускать тишину в начале и конце трека': 'Skip silence at the start and end of a track',
+    'По форме волны: тихое вступление и тихий хвост проматываются': 'Based on the waveform: a silent intro and a silent tail are skipped',
+    'Мягкий конец трека': 'Soft track endings',
+    'Трек, который обрывается громко, плавно затихает в последние секунды': 'A track that ends abruptly fades out over its last seconds',
 
     // Названия полок как на английском сайте
     'Полки': 'Shelves',

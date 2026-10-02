@@ -383,6 +383,11 @@ async function initializeSettings() {
     document.getElementById('fullShuffle')?.addEventListener('change', (e) => {
         ipcRenderer.send('setting-changed', { key: 'fullShuffle', value: e.target.checked });
     });
+    for (const key of ['quietEdges', 'softEnd']) {
+        document.getElementById(key)?.addEventListener('change', (e) => {
+            ipcRenderer.send('setting-changed', { key, value: e.target.checked });
+        });
+    }
     document.getElementById('reduceMotion')?.addEventListener('change', (e) => {
         document.documentElement.classList.toggle('reduce-motion', e.target.checked);
         ipcRenderer.send('setting-changed', { key: 'reduceMotion', value: e.target.checked });

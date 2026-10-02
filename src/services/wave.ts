@@ -28,6 +28,8 @@ import * as librarySectionModule from './wave/library';
 import * as radarSectionModule from './wave/radar';
 import * as shelfSectionModule from './wave/shelf';
 import * as menuSectionModule from './wave/menu';
+import * as quietSectionModule from './wave/quiet';
+import type { QuietOptions } from './wave/quiet';
 import * as waveSourcesModule from './wave/sources';
 import type { ScMix } from './wave/sources';
 
@@ -50,6 +52,7 @@ const { installLibrary } = librarySectionModule;
 const { installRadar } = radarSectionModule;
 const { installShelf } = shelfSectionModule;
 const { installMenu } = menuSectionModule;
+const { installQuiet, quietBounds } = quietSectionModule;
 const { installSources, relatedArtistsOf, scMixesOf, likedOwner, likersOf, tasteNeighbors, likedTracksOf, neighborLikes, interleaveMixes } = waveSourcesModule;
 // Прежние импорты из wave.ts остаются рабочими
 export type { WaveTrack, WaveMode, OpenTrackResult, WaveReason, WaveCandidate, WaveFilter, WaveLinkKind, WaveTexts, TasteMaps, TasteScore, TasteGroup } from './waveTypes';
@@ -121,6 +124,8 @@ export interface WaveWindow extends Window {
     __scWhoAmI?: () => Promise<number>;
     __scSaveSession?: () => Promise<void>;
     __scResume?: () => void;
+    /** Настройки тихих краёв трека из F1 */
+    __scQuietOptions?: (value: unknown) => void;
     __scQueue?: () => void;
     // Горячие клавиши волны из main: лайк, «Не сейчас», «Больше такого», «Встряхнуть»
     __scWaveKey?: (action: string) => boolean;
@@ -173,6 +178,8 @@ interface WaveConfig {
     /** Музыка в этом запуске клиента уже звучала: сессия, сохранённая во время игры, продолжает играть (страница упала
      * или перезагружена). Сразу после запуска клиента сессия встаёт на паузу, чтобы не встречать громкой музыкой */
     resume: boolean;
+    /** Тихое начало и конец трека, затухание громкого конца (Ф2): настройки F1, дальше приходят через __scQuietOptions */
+    quiet: QuietOptions;
 }
 
 export function installWave(config: WaveConfig, createPlayback: typeof installPlaybackPage, createRecovery: typeof installPlaybackRecovery): void {
@@ -668,6 +675,13 @@ export function installWave(config: WaveConfig, createPlayback: typeof installPl
             return Number.isInteger(index) && index >= 0 ? shelfSection.genreOf(index) : '';
         },
     });
+    // Тихое начало и мягкий конец (Ф2): F1 меняет настройки без перезагрузки страницы
+    let quietOptions: QuietOptions = { edges: config.quiet?.edges !== false, fade: config.quiet?.fade !== false };
+    host.__scQuietOptions = (value: unknown) => {
+        const next = value as Partial<Record<keyof QuietOptions, unknown>> | null;
+        if (next && typeof next === 'object') quietOptions = { edges: next.edges !== false, fade: next.fade !== false };
+    };
+    const quietSection = installQuiet({ player: () => player, rawSamples: (track) => waveformOf(track)?.raw ?? null, options: () => quietOptions, disposed: () => disposed });
 
     const wait = (ms: number): Promise<void> => new Promise((resolve) => setTimeout(resolve, ms));
     // Волна и действия пользователя идут сразу; фоновой обход ждёт их, держит шаг в секунду и паузу после 429.
@@ -3607,7 +3621,8 @@ export function installWave(config: WaveConfig, createPlayback: typeof installPl
     let popOpen = false;
     let popQuery = '';
     let hover: number | null = null;
-    const waveforms = new Map<string, number[] | 'pending' | 'failed'>();
+    // Форма волны: сглаженная для рисования и сырая для тихих краёв трека
+    const waveforms = new Map<string, { shape: number[]; raw: number[] } | 'pending' | 'failed'>();
 
     function el<K extends keyof HTMLElementTagNameMap>(tag: K, className: string, text?: string): HTMLElementTagNameMap[K] {
         const node = document.createElement(tag);
@@ -4065,11 +4080,12 @@ export function installWave(config: WaveConfig, createPlayback: typeof installPl
         section?.querySelector('.scw-like[data-act="like"]')?.setAttribute('aria-pressed', String(currentLiked));
     }
 
-    function samplesFor(track: WaveTrack | undefined): number[] | null {
+    const samplesFor = (track: WaveTrack | undefined): number[] | null => waveformOf(track)?.shape ?? null;
+    function waveformOf(track: WaveTrack | undefined): { shape: number[]; raw: number[] } | null {
         const url = track?.waveform_url;
         if (!url || !/^https:\/\/wave\.sndcdn\.com\//.test(url)) return null;
         const cached = waveforms.get(url);
-        if (Array.isArray(cached)) return cached;
+        if (typeof cached === 'object') return cached;
         if (cached) return null;
         waveforms.set(url, 'pending');
         const controller = new AbortController();
@@ -4079,7 +4095,7 @@ export function installWave(config: WaveConfig, createPlayback: typeof installPl
             .then((data: { samples?: unknown }) => {
                 const samples = Array.isArray(data.samples) ? data.samples.filter((value): value is number => typeof value === 'number') : [];
                 if (waveforms.size > 60) waveforms.delete(waveforms.keys().next().value as string);
-                waveforms.set(url, samples.length ? shapeSamples(samples) : 'failed');
+                waveforms.set(url, samples.length ? { shape: shapeSamples(samples), raw: samples } : 'failed');
                 paint();
             })
             .catch((error: unknown) => {
@@ -4716,6 +4732,8 @@ export function installWave(config: WaveConfig, createPlayback: typeof installPl
         delete host.__scResume;
         delete host.__scRadarCollect;
         radarSection.dispose();
+        quietSection.dispose();
+        delete host.__scQuietOptions;
         versions.close();
     };
     host.__disposeWave = dispose;
@@ -4761,10 +4779,15 @@ const pageHelpers = [
     artworkUrl, coversOf, formatTime, playEnd, siteSource, moodTags, trackPath, localDay, countText, tasteGroups, capPerArtist, forgottenPicks, daySample, artistNames, performerNames, sharedPerformer, isNewArtist, spreadBy, pickFinds,
     moodList, moodDictionary, trackMood, playlistMood, artistMoods, neighborMood, moodScore,
     ...identity.identityHelpers, ...sources.sourceHelpers, ...libraryMix.libraryHelpers, siteRequires, installPlaybackPage, installPlaybackRecovery,
-    installVersions, installLibrary, installRadar, installShelf, installMenu, installSources, relatedArtistsOf, scMixesOf, likedOwner, likersOf, tasteNeighbors, likedTracksOf, neighborLikes, interleaveMixes,
+    installVersions, installLibrary, installRadar, installShelf, installMenu, installQuiet, quietBounds, installSources, relatedArtistsOf, scMixesOf, likedOwner, likersOf, tasteNeighbors, likedTracksOf, neighborLikes, interleaveMixes,
 ];
 
-export function waveScript(resume = false): string {
-    const config: WaveConfig = { texts: WAVE_TEXTS, resume };
+/** Смена настроек тихих краёв трека в F1: страница подхватывает без перезагрузки */
+export function waveQuietScript(quiet: QuietOptions): string {
+    return 'window.__scQuietOptions && window.__scQuietOptions(' + JSON.stringify({ edges: quiet.edges === true, fade: quiet.fade === true }) + ')';
+}
+
+export function waveScript(resume = false, quiet: QuietOptions = { edges: true, fade: true }): string {
+    const config: WaveConfig = { texts: WAVE_TEXTS, resume, quiet };
     return '(function(){\n' + pageHelpers.map((helper) => helper.toString()).join('\n') + '\n(' + installWave.toString() + ')(' + JSON.stringify(config) + ', installPlaybackPage, installPlaybackRecovery);\n})();';
 }

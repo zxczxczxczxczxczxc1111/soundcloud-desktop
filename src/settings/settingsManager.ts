@@ -17,6 +17,8 @@ const defaults: Record<string, string | number | boolean> = {
     hideArtistUpsells: true,
     hideHeaderExtras: true,
     fullShuffle: true,
+    quietEdges: true,
+    softEnd: true,
     reduceMotion: false,
     gpuCompatibilityMode: 'auto',
     siteLanguage: 'ru',

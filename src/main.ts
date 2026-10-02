@@ -11,7 +11,7 @@ import { ViewStyles } from './services/viewStyles';
 import { ARTIST_TOOLS_CSS, pageFeaturesScript } from './services/pageFeatures';
 import { fullShuffleScript } from './services/fullShuffle';
 import { homeBlockDefaults, homeBlocksCss, homePageScript, isHomeBlockKey } from './services/homeBlocks';
-import { waveScript } from './services/wave';
+import { waveQuietScript, waveScript } from './services/wave';
 import { pageMotionScript } from './services/pageMotion';
 import { playerAreaScript } from './services/playerArea';
 import { searchLinkScript } from './services/searchLink';
@@ -149,6 +149,8 @@ const store = new Store<Record<string, unknown>>({
         hideArtistUpsells: true,
         hideHeaderExtras: true,
         fullShuffle: true,
+        quietEdges: true,
+        softEnd: true,
         reduceMotion: false,
         siteLanguage: 'ru',
         ...homeBlockDefaults,
@@ -449,6 +451,11 @@ function buildTrayMenu(): Menu {
             },
         },
     ]);
+}
+
+// Тихое начало и конец трека, затухание громкого конца (Ф2): из F1 в волну
+function quietOptions(): { edges: boolean; fade: boolean } {
+    return { edges: store.get('quietEdges', true) !== false, fade: store.get('softEnd', true) !== false };
 }
 
 // Карточка Discord для предпросмотра в F1: трек и то, что из него собрала presenceService
@@ -1169,7 +1176,7 @@ async function init() {
             // Плавность раньше волны: волна берёт у неё цвета обложек
             await contentView.webContents.executeJavaScript(pageMotionScript(store.get('reduceMotion', false) === true));
             await contentView.webContents.executeJavaScript(homePageScript());
-            await contentView.webContents.executeJavaScript(waveScript(playback.playedThisRun));
+            await contentView.webContents.executeJavaScript(waveScript(playback.playedThisRun, quietOptions()));
             await contentView.webContents.executeJavaScript(playerAreaScript());
             await contentView.webContents.executeJavaScript(searchLinkScript());
 
@@ -1247,6 +1254,8 @@ async function init() {
             void contentView.webContents.executeJavaScript(fullShuffleScript(data.value === true)).catch(console.error);
         } else if (key === 'reduceMotion') {
             void contentView.webContents.executeJavaScript(pageMotionScript(data.value === true)).catch(console.error);
+        } else if (key === 'quietEdges' || key === 'softEnd') {
+            void contentView.webContents.executeJavaScript(waveQuietScript(quietOptions())).catch(console.error);
         }
         // Предпросмотр карточки в F1 собирает main: шаблоны, стоп-листы, строка под ником, язык чисел
         if (key.startsWith('discord') || key.startsWith('display') || key === 'statusDisplayType' || key === 'trackParserEnabled' || key === 'siteLanguage') sendPresencePreview();
