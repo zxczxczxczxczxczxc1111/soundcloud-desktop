@@ -460,7 +460,7 @@ describe('подборки', () => {
         expect([1, 3, 5, 11, 21, 22].map((count) => countText(count, ru, 'ru'))).toEqual(['1 трек', '3 трека', '5 треков', '11 треков', '21 трек', '22 трека']);
         expect([1, 5].map((count) => countText(count, WAVE_TEXTS.en.tracksCount, 'en'))).toEqual(['1 track', '5 tracks']);
         expect(reasonText({ kind: 'group', name: 'Techno' }, WAVE_TEXTS.ru)).toBe('Твой вкус: Techno');
-        expect(reasonText({ kind: 'daily' }, WAVE_TEXTS.en)).toBe('Daily find: not played by you yet');
+        expect(reasonText({ kind: 'daily' }, WAVE_TEXTS.en)).toBe('Scout: not played by you yet');
     });
 
     it('делит лайки на вкусы по тегам, трек без тегов идёт за своим артистом, мелкое отбрасывается', () => {

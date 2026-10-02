@@ -108,13 +108,13 @@
             wavePreset: 'Настроение',
             presets: { happy: 'Весёлое', sad: 'Грустное', aggressive: 'Агрессивное', calm: 'Спокойное', energetic: 'Энергичное' },
             sources: {
-                similar: 'Моя волна: похожее', fresh: 'Моя волна: новое', track: 'Волна по треку', artist: 'Волна по артисту', playlist: 'Волна по плейлисту', daily: 'Находки дня',
+                similar: 'Моя волна: похожее', fresh: 'Моя волна: новое', track: 'Волна по треку', artist: 'Волна по артисту', playlist: 'Волна по плейлисту', daily: 'Разведка',
                 forgotten: 'Давно не слушал', group: 'Твой вкус', tracks: 'Волна по набору', radar: 'Радар релизов', library: 'В «Моей музыке»',
             },
             reasons: {
                 similar: 'Похоже на трек', fresh: 'Новое, похоже на трек', newArtist: 'Новый артист', genreFresh: 'Свежее в жанре', genrePopular: 'Популярное в жанре',
                 genreSimilar: 'Жанр и похожее', artistTrack: 'Треки артиста', mood: 'В духе трека', tasteArtist: 'Любимый артист', tasteTag: 'Любимый тег',
-                daily: 'Находка дня', forgotten: 'Давно не звучал', group: 'Твой вкус', version: 'Другая версия', radar: 'Радар релизов', restored: 'Сохранённая очередь',
+                daily: 'Разведка', forgotten: 'Давно не звучал', group: 'Твой вкус', version: 'Другая версия', radar: 'Радар релизов', restored: 'Сохранённая очередь',
                 moodTag: 'Метка настроения',
                 '': 'Не записана',
             },
@@ -218,13 +218,13 @@
             wavePreset: 'Mood',
             presets: { happy: 'Happy', sad: 'Sad', aggressive: 'Aggressive', calm: 'Calm', energetic: 'Energetic' },
             sources: {
-                similar: 'My Wave: Similar', fresh: 'My Wave: New', track: 'Wave from track', artist: 'Wave from artist', playlist: 'Wave from playlist', daily: 'Daily finds',
+                similar: 'My Wave: Similar', fresh: 'My Wave: New', track: 'Wave from track', artist: 'Wave from artist', playlist: 'Wave from playlist', daily: 'Scout',
                 forgotten: 'Not played in a while', group: 'Your taste', tracks: 'Wave from picks', radar: 'Release Radar', library: 'Inside My music',
             },
             reasons: {
                 similar: 'Similar to a track', fresh: 'New, similar to a track', newArtist: 'New artist', genreFresh: 'Fresh in genre', genrePopular: 'Popular in genre',
                 genreSimilar: 'Genre and similar', artistTrack: 'Artist’s tracks', mood: 'In the spirit of a track', tasteArtist: 'Favourite artist', tasteTag: 'Favourite tag',
-                daily: 'Daily find', forgotten: 'Not played in a while', group: 'Your taste', version: 'Another version', radar: 'Release Radar', restored: 'Saved queue',
+                daily: 'Scout', forgotten: 'Not played in a while', group: 'Your taste', version: 'Another version', radar: 'Release Radar', restored: 'Saved queue',
                 moodTag: 'Mood tag',
                 '': 'Not recorded',
             },

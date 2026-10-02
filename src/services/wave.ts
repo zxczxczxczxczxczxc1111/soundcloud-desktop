@@ -29,6 +29,7 @@ import * as radarSectionModule from './wave/radar';
 import * as shelfSectionModule from './wave/shelf';
 import * as menuSectionModule from './wave/menu';
 import * as quietSectionModule from './wave/quiet';
+import * as scoutSectionModule from './wave/scout';
 import type { QuietOptions } from './wave/quiet';
 import * as waveSourcesModule from './wave/sources';
 import type { ScMix } from './wave/sources';
@@ -53,6 +54,7 @@ const { installRadar } = radarSectionModule;
 const { installShelf } = shelfSectionModule;
 const { installMenu } = menuSectionModule;
 const { installQuiet, quietBounds } = quietSectionModule;
+const { installScout, scoutStart } = scoutSectionModule;
 const { installSources, relatedArtistsOf, scMixesOf, likedOwner, likersOf, tasteNeighbors, likedTracksOf, neighborLikes, interleaveMixes } = waveSourcesModule;
 // Прежние импорты из wave.ts остаются рабочими
 export type { WaveTrack, WaveMode, OpenTrackResult, WaveReason, WaveCandidate, WaveFilter, WaveLinkKind, WaveTexts, TasteMaps, TasteScore, TasteGroup } from './waveTypes';
@@ -684,6 +686,20 @@ export function installWave(config: WaveConfig, createPlayback: typeof installPl
         if (next && typeof next === 'object') quietOptions = { edges: next.edges !== false, fade: next.fade !== false };
     };
     const quietSection = installQuiet({ player: () => player, rawSamples: (track) => waveformOf(track)?.raw ?? null, options: () => quietOptions, disposed: () => disposed });
+    // Разведка (Ф4): карточка находок играет треки по 20 секунд с лучшего места
+    const scoutSection = installScout({
+        texts: T,
+        player: () => player,
+        running: () => active && seed?.kind === 'daily' && ownsQueue(),
+        ours: (item) => ours.has(item),
+        samples: (track) => samplesFor(track),
+        candidate: (id) => known.get(id),
+        liked: () => currentLiked,
+        keep: (candidate) => adjustSession(candidate, 1),
+        render: () => render(),
+        el,
+        disposed: () => disposed,
+    });
 
     const wait = (ms: number): Promise<void> => new Promise((resolve) => setTimeout(resolve, ms));
     // Волна и действия пользователя идут сразу; фоновой обход ждёт их, держит шаг в секунду и паузу после 429.
@@ -2267,6 +2283,7 @@ export function installWave(config: WaveConfig, createPlayback: typeof installPl
         return true;
     }
     function end(): void {
+        scoutSection.stop();
         active = false;
         autoplayReleased = false;
         seed = null;
@@ -2999,6 +3016,7 @@ export function installWave(config: WaveConfig, createPlayback: typeof installPl
     }
     // Новая волна от зёрен: прошлая подборка сбрасывается, волна сразу играет. Не вышло: тост и обычная волна
     async function beginSeed(request: number, loaded: { seed: Seed; first: WaveTrack | null }): Promise<void> {
+        scoutSection.stop();
         seed = loaded.seed;
         derivedSeeds = [];
         // Лайки прошлой волны тянули бы новую в сторону, её пропуски отсекали бы артистов новой
@@ -3021,6 +3039,7 @@ export function installWave(config: WaveConfig, createPlayback: typeof installPl
         const keep = !!first && player?.getCurrentSound()?.id === first.id;
         if (first && keep) known.set(first.id, { track: first, reason: { kind: 'seedTrack' } });
         const started = await start(first && !keep ? { track: first, reason: { kind: 'seedTrack' } } : undefined, keep);
+        if (started && request === seedRequest && seed?.kind === 'daily') scoutSection.start(seed.own.map((track) => track.id), first?.id);
         if (started || request !== seedRequest) return;
         if (state === 'empty') {
             try {
@@ -3392,6 +3411,14 @@ export function installWave(config: WaveConfig, createPlayback: typeof installPl
         '.scw-meta{display:flex;align-items:center;gap:16px;margin-top:8px;min-height:32px;flex-wrap:wrap}',
         '.scw-why{flex:1;min-width:0;color:var(--scw-muted);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}',
         '.scw-time{color:var(--scw-muted);font-size:12px;font-variant-numeric:tabular-nums;flex:none}',
+        // Панель разведки (Ф4): счёт, полоса двадцати секунд, «Оставить», «Дальше», выход. Оставленный трек подсвечен, полоса скрыта
+        '.scw-scout{display:flex;align-items:center;gap:12px;margin-top:12px;padding:8px 8px 8px 12px;border-radius:6px;background:var(--scw-film);flex-wrap:wrap}',
+        '.scw-scout-text{flex:none;font-weight:600}',
+        '.scw-scout-count{color:var(--scw-muted);font-weight:400;font-variant-numeric:tabular-nums}',
+        '.scw-scout-bar{flex:1;min-width:48px;height:3px;border-radius:2px;background:var(--scw-film-strong);overflow:hidden}',
+        '.scw-scout-bar>span{display:block;width:0;height:100%;background:#f50;transition:width .25s linear}',
+        '#sc-wave .scw-scout .scw-btn[aria-pressed="true"]{background:var(--scw-btn);color:var(--scw-btn-ink);opacity:1}',
+        'html.scm-reduce .scw-scout-bar>span{transition:none}',
         '#sc-wave .scw-like{width:32px;height:32px;display:grid;place-items:center;border-radius:4px;flex:none}',
         '.scw-like svg{width:18px;height:18px;fill:var(--scw-muted)}',
         '#sc-wave .scw-like:hover{background:var(--scw-film-strong)}',
@@ -3999,7 +4026,8 @@ export function installWave(config: WaveConfig, createPlayback: typeof installPl
             if (genre) meta.append(textButton('drop-genre', T.dropGenre));
             if (mode === 'fresh') meta.append(textButton('to-similar', T.toSimilar));
         } else if (state === 'error' || state === 'unavailable') meta.append(textButton('retry', T.retry));
-        info.append(top, canvas, meta);
+        const scout = current ? scoutSection.panel(current.track.id) : null;
+        info.append(top, canvas, meta, ...(scout ? [scout] : []));
         const cover = el('div', 'scw-cover' + (swap ? ' scw-cross' : ''));
         if (current) {
             if (swap && shownCover && loadedArt.has(shownCover)) {
@@ -4330,6 +4358,7 @@ export function installWave(config: WaveConfig, createPlayback: typeof installPl
             applySettings(mode, control.dataset.genre.trim() || null);
             return;
         }
+        if (control.dataset.act && scoutSection.act(control.dataset.act)) return;
         switch (control.dataset.act) {
             case 'clear-genre':
                 event.stopPropagation();
@@ -4765,6 +4794,7 @@ export function installWave(config: WaveConfig, createPlayback: typeof installPl
         delete host.__scRadarCollect;
         radarSection.dispose();
         quietSection.dispose();
+        scoutSection.dispose();
         delete host.__scQuietOptions;
         versions.close();
     };
@@ -4811,7 +4841,7 @@ const pageHelpers = [
     artworkUrl, coversOf, formatTime, playEnd, siteSource, moodTags, trackPath, localDay, countText, tasteGroups, capPerArtist, forgottenPicks, daySample, artistNames, performerNames, sharedPerformer, isNewArtist, spreadBy, pickFinds,
     moodList, moodDictionary, trackMood, playlistMood, artistMoods, neighborMood, moodScore,
     ...identity.identityHelpers, ...sources.sourceHelpers, ...libraryMix.libraryHelpers, siteRequires, installPlaybackPage, installPlaybackRecovery,
-    installVersions, installLibrary, installRadar, installShelf, installMenu, installQuiet, quietBounds, installSources, relatedArtistsOf, scMixesOf, likedOwner, likersOf, tasteNeighbors, likedTracksOf, neighborLikes, interleaveMixes,
+    installVersions, installLibrary, installRadar, installShelf, installMenu, installQuiet, quietBounds, installScout, scoutStart, installSources, relatedArtistsOf, scMixesOf, likedOwner, likersOf, tasteNeighbors, likedTracksOf, neighborLikes, interleaveMixes,
 ];
 
 /** Смена настроек тихих краёв трека в F1: страница подхватывает без перезагрузки */

@@ -132,6 +132,7 @@ export type WaveTexts = Record<
     | 'libraryModes' | 'librarySources' | 'libraryPlaying' | 'libraryPaused' | 'libraryPlaylists' | 'libraryHere' | 'libraryUnavailable' | 'libraryUnavailableTip' | 'whyLibrary' | 'whyLibraryLikes' | 'seedLibrary'
     | 'presets' | 'presetAll' | 'moodHappy' | 'moodSad' | 'moodAggressive' | 'moodCalm' | 'moodEnergetic' | 'hintPreset' | 'presetShort' | 'whyMoodTag'
     | 'undo' | 'toastLiked' | 'toastUnliked' | 'seedCollecting' | 'seedCollectingAny' | 'seedCollectingArtist' | 'seedCollectingArtistAny' | 'menuArtistAll' | 'seedArtistAll' | 'menuQueueNext' | 'menuQueueLast'
+    | 'scoutTitle' | 'scoutCount' | 'scoutKeep' | 'scoutKept' | 'scoutNext' | 'scoutExit'
     | 'whyRelatedArtist' | 'whyScMix' | 'whyNeighbors' | 'shelfLiked' | 'seedLiked' | 'whyLikedBy' | 'whyLikedAny'
     | 'traitLessCyr' | 'traitLessInst' | 'traitLessGenre' | 'traitLessMarker' | 'traitLessForeign' | 'forkTitle' | 'forkClose' | 'forkCalm' | 'forkAway'
     | 'pinned' | 'menuPin' | 'menuUnpin' | 'menuWaveGenre' | 'toastPinned' | 'toastUnpinned' | 'toastPinFull' | 'pinPlay' | 'pinRemove',

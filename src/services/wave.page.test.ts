@@ -1894,7 +1894,7 @@ it('полка из снимка дня: находки играют первы�
     expect(section.querySelector('.scw-shelf-h')?.textContent).toBe('Mixes');
     const cards = section.querySelectorAll<HTMLButtonElement>('.scw-card[data-card]');
     expect(cards).toHaveLength(2);
-    expect(cards[0].querySelector('.scw-t1')?.textContent).toBe('Daily finds');
+    expect(cards[0].querySelector('.scw-t1')?.textContent).toBe('Scout');
     expect(cards[0].querySelector('.scw-t2')?.textContent).toBe('12 tracks');
     expect(cards[0].querySelector('.scw-art')?.classList.contains('scw-tone-personal')).toBe(true);
     expect(cards[1].querySelector('.scw-art')?.classList.contains('scw-tone-genre')).toBe(true);
@@ -1912,8 +1912,8 @@ it('полка из снимка дня: находки играют первы�
     await vi.advanceTimersByTimeAsync(100);
     const queued = site.player.replaceQueue.mock.calls[site.player.replaceQueue.mock.calls.length - 1][0] as FakeItem[];
     expect(queued.map((item) => item.sound.id)).toEqual(finds.slice(0, 10).map((track) => track.id));
-    expect(section.querySelector('.scw-hint')?.textContent).toBe('Daily finds: tracks you haven’t played yet, until midnight');
-    expect(section.querySelector('.scw-why')?.textContent).toBe('Daily find: not played by you yet');
+    expect(section.querySelector('.scw-hint')?.textContent).toBe('Scout: new to you, 20 seconds from the best part');
+    expect(section.querySelector('.scw-why')?.textContent).toBe('Scout: not played by you yet');
     expect(section.querySelector('[data-act="shelf-play"][data-card="0"]')?.getAttribute('aria-pressed')).toBe('true');
     expect(section.querySelector('.scw-seg')).toBeNull();
     expect(shelf.save).not.toHaveBeenCalled();
@@ -2077,15 +2077,78 @@ it('повторный запуск карточки играет её цели�
     Object.assign(window, { soundcloudAPI: { waveShelf: { load: vi.fn(async () => ({ snapshot, recent: [] })), save: vi.fn(async () => true) } } });
     window.eval(waveScript());
     await vi.advanceTimersByTimeAsync(100);
+    // Разведка перематывает трек к яркому месту, и он становится слышанным: здесь она выключается сразу
     const play = async (card: number): Promise<number[]> => {
         document.querySelector<HTMLButtonElement>('#sc-wave [data-act="shelf-play"][data-card="' + card + '"]')!.click();
-        await vi.advanceTimersByTimeAsync(2000);
+        await vi.advanceTimersByTimeAsync(300);
+        document.querySelector<HTMLButtonElement>('#sc-wave [data-act="scout-exit"]')?.click();
+        await vi.advanceTimersByTimeAsync(1700);
         return queuedIds(site);
     };
     expect((await play(0)).slice(0, 3)).toEqual([5001, 5002, 5003]);
     // «Давно не слушал» без выбранного трека идёт по порядку карточки (П11)
     expect((await play(1)).slice(0, 10)).toEqual(other.slice(0, 10).map((track) => track.id));
     expect((await play(0)).slice(0, 10)).toEqual(finds.slice(0, 10).map((track) => track.id));
+});
+
+it('Ф4: разведка: трек с яркого места 20 секунд и дальше сам, Enter и лайк оставляют, стрелка вправо дальше, выход возвращает обычную игру', async () => {
+    const finds = Array.from({ length: 12 }, (_, i): WaveTrack => ({ id: 5001 + i, kind: 'track', user_id: 600 + i, duration: 200000, title: 'Find ' + i, waveform_url: 'https://wave.sndcdn.com/f' + i + '.json' }));
+    const site = fakeSite(relatedTracks, (name, _path, query) => (name === 'trackBatch' ? batchOf(finds)(query) : undefined));
+    // Тихо до середины, громко со 100-й секунды
+    vi.stubGlobal('fetch', vi.fn(async () => ({ ok: true, json: async () => ({ samples: [...Array(900).fill(5), ...Array(900).fill(140)] }) })));
+    const snapshot = { day: localDay(Date.now()), v: 5, cards: [{ kind: 'daily', title: '', sub: '', ids: finds.map((track) => track.id), seeds: [1], keys: [], art: [] }] };
+    const signals: PlaySignal[] = [];
+    Object.assign(window, { soundcloudAPI: {
+        waveShelf: { load: vi.fn(async () => ({ snapshot, recent: [] })), save: vi.fn(async () => true) },
+        waveSignals: { add: (_user: number, list: PlaySignal[]) => signals.push(...list) },
+    } });
+    window.eval(waveScript());
+    await vi.advanceTimersByTimeAsync(100);
+    document.querySelector<HTMLButtonElement>('#sc-wave [data-act="shelf-play"][data-card="0"]')!.click();
+    await vi.advanceTimersByTimeAsync(1000);
+    const current = (): number => site.player.getCurrentSound()?.id ?? 0;
+    const panel = (): HTMLElement | null => document.querySelector<HTMLElement>('#sc-wave .scw-scout');
+    // Трек играет: позиция идёт вместе со временем
+    const playFor = async (ms: number): Promise<void> => {
+        for (let spent = 0; spent < ms; spent += 250) {
+            position += 250;
+            await vi.advanceTimersByTimeAsync(250);
+        }
+    };
+    expect(current()).toBe(5001);
+    // Громко со 100-й секунды: трек перемотан чуть раньше подъёма, панель считает треки
+    expect(position).toBe(98333);
+    expect(panel()?.querySelector('.scw-scout-text')?.textContent).toBe('Scout 1 of 12');
+    expect(document.querySelector('#sc-wave .scw-hint')?.textContent).toBe('Scout: new to you, 20 seconds from the best part');
+    await playFor(20500);
+    expect(current()).toBe(5002);
+    // Переход разведки сделан не человеком: в журнале смена сайтом, а не пропуск
+    await vi.advanceTimersByTimeAsync(6000);
+    const first = signals.find((signal) => signal.id === 5001);
+    expect(first?.endedBy).toBe('auto');
+
+    // Enter оставляет: трек дослушивается, полоса прячется, кнопка подсвечена
+    document.body.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }));
+    await vi.advanceTimersByTimeAsync(300);
+    const keep = panel()?.querySelector<HTMLButtonElement>('[data-act="scout-keep"]');
+    expect(keep?.getAttribute('aria-pressed')).toBe('true');
+    expect(keep?.textContent).toBe('Kept');
+    expect(panel()?.querySelector<HTMLElement>('.scw-scout-bar')?.hidden).toBe(true);
+    await playFor(25000);
+    expect(current()).toBe(5002);
+
+    // Стрелка вправо: следующий сразу
+    document.body.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowRight', bubbles: true }));
+    await vi.advanceTimersByTimeAsync(300);
+    expect(current()).toBe(5003);
+    expect(panel()?.querySelector('.scw-scout-text')?.textContent).toBe('Scout 3 of 12');
+
+    // Выход: панели нет, трек играет дальше без перехода
+    panel()!.querySelector<HTMLButtonElement>('[data-act="scout-exit"]')!.click();
+    await vi.advanceTimersByTimeAsync(300);
+    expect(panel()).toBeNull();
+    await playFor(25000);
+    expect(current()).toBe(5003);
 });
 
 it('П11: «Давно не слушал» продолжает с первого несыгранного за сутки, всё сыграно: круг заново', async () => {
@@ -2325,7 +2388,7 @@ it('П14: соседи по вкусу находятся фоном по ниш
     section.querySelector<HTMLButtonElement>('[data-act="shelf-play"][data-card="0"]')!.click();
     await vi.advanceTimersByTimeAsync(100);
     expect(section.querySelector('.scw-tile[data-track="7001"] .scw-t3')?.textContent).toBe('Liked by listeners with your taste');
-    expect(section.querySelector('.scw-why')?.textContent).toBe('Daily find: not played by you yet');
+    expect(section.querySelector('.scw-why')?.textContent).toBe('Scout: not played by you yet');
 });
 
 it('полка без модели вкуса (main не ответил) не хранится до полуночи и через 10 минут собирается заново', async () => {
