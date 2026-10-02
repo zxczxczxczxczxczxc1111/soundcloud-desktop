@@ -6,6 +6,7 @@ import { afterEach, beforeEach, expect, it, vi } from 'vitest';
 import { localDay, waveScript, type WaveTrack, type WaveWindow } from './wave';
 import type { PlaybackSnapshot } from './playbackStore';
 import type { PlaySignal } from '../types';
+import { glowPalette } from './wave/glow';
 
 // Поддельный сайт: плеер, API и модель трека через тот же webpackJsonp, что у SoundCloud
 interface FakeItem { sound: { id: number; currentTime?(): number; getMediaDuration?(): number }; explicit?: boolean; sourceInfo?: { type: string } }
@@ -1708,22 +1709,45 @@ it('ожидание рисует заготовки плиток; обложк�
     }
 });
 
-it('В6: смена трека переходом: прошлая обложка под новой, подложка блока от прошлого цвета, поздний цвет, «Меньше анимаций» выключает', async () => {
+it('В6: смена трека переходом: прошлая обложка под новой, цвета обложки на секции, поздняя палитра, «Меньше анимаций» выключает', async () => {
     const withArt = (seed: number): WaveTrack[] => relatedTracks(seed).map((track) => ({
         ...track, permalink_url: 'https://soundcloud.com/a/t' + track.id, artwork_url: 'https://i1.sndcdn.com/artworks-' + track.id + '-large.jpg',
     }));
     const site = fakeSite(withArt);
     const scope = window as unknown as Record<string, unknown>;
     const originalImage = scope.Image;
+    // Обложка одного цвета: красная, синяя, зелёная, жёлтая по порядку, в котором обложки треков считаются;
+    // задержанные обложки грузятся по команде
+    const order: Array<[number, number, number]> = [[200, 40, 40], [40, 60, 200], [40, 180, 60], [220, 180, 40]];
+    const tones = new Map<number, [number, number, number]>();
+    const held: Array<() => void> = [];
+    let hold = false;
     scope.Image = class {
         onload: (() => void) | null = null;
         onerror: (() => void) | null = null;
-        set src(_value: string) { queueMicrotask(() => this.onload?.()); }
+        crossOrigin = '';
+        private url = '';
+        get src(): string { return this.url; }
+        set src(value: string) {
+            this.url = value;
+            const load = (): void => this.onload?.();
+            if (hold) held.push(load);
+            else queueMicrotask(load);
+        }
     };
-    let color: string | undefined = '#123456';
-    Object.assign(window, { __scmCoverColor: (key: string) => (key.startsWith('/a/t') ? color : undefined), __scmLearnCover: () => undefined });
+    const toneOf = (src: string): [number, number, number] => {
+        const id = Number(/artworks-(\d+)-/.exec(src)?.[1]);
+        if (!tones.has(id)) tones.set(id, order[tones.size] ?? [128, 128, 128]);
+        return tones.get(id) ?? [128, 128, 128];
+    };
+    const imageOf = (tone: [number, number, number]): Uint8ClampedArray => new Uint8ClampedArray(Array.from({ length: 24 * 24 }, () => [...tone, 255]).flat());
+    let drawn = '';
+    const context = { imageSmoothingQuality: 'low', drawImage: (image: { src: string }) => { drawn = image.src; }, getImageData: () => ({ data: imageOf(toneOf(drawn)) }) };
+    const getContext = vi.spyOn(HTMLCanvasElement.prototype, 'getContext').mockImplementation((() => context) as unknown as HTMLCanvasElement['getContext']);
+    Object.assign(window, { __scmCoverColor: () => undefined, __scmLearnCover: () => undefined });
     const section = (): HTMLElement => document.getElementById('sc-wave')!;
     const body = (): HTMLElement => section().querySelector<HTMLElement>('.scw-body')!;
+    const light = (): string => section().style.getPropertyValue('--scw-c1');
     const next = async (index: number): Promise<number> => {
         site.setItems(site.player.getQueue().slice(), index);
         await vi.advanceTimersByTimeAsync(1100);
@@ -1735,81 +1759,78 @@ it('В6: смена трека переходом: прошлая обложка
         section().querySelector<HTMLButtonElement>('.scw-play')!.click();
         await vi.advanceTimersByTimeAsync(1100);
         const first = site.player.getQueue().slice()[0].sound.id;
-        // Первый трек после простоя встаёт без перехода, подложка сразу своего цвета
+        // Первый трек после простоя встаёт без перехода, подложка и свет сразу цветов обложки
         expect(section().querySelector('.scw-swap')).toBeNull();
-        expect(body().classList.contains('tinted')).toBe(true);
-        expect(body().style.getPropertyValue('--scw-cover')).toBe('#123456');
+        expect(body().classList.contains('lit')).toBe(true);
+        expect(light()).toBe(glowPalette(imageOf([200, 40, 40]))[0]);
+        expect(section().style.getPropertyValue('--scw-c3')).toBe(glowPalette(imageOf([200, 40, 40]))[2]);
 
-        color = '#654321';
         const second = await next(1);
         expect(section().querySelector('.scw-top .scw-swap .scw-track')?.textContent).toBe('Rel ' + Math.floor(second / 1000) + '-' + (second % 1000));
         const layers = [...section().querySelectorAll<HTMLElement>('.scw-cover.scw-cross .scw-img')];
         expect(layers.map((layer) => layer.style.backgroundImage)).toEqual(['url("https://i1.sndcdn.com/artworks-' + first + '-t500x500.jpg")', 'url("https://i1.sndcdn.com/artworks-' + second + '-t500x500.jpg")']);
         expect(layers.every((layer) => layer.classList.contains('on'))).toBe(true);
-        expect(body().classList.contains('scw-tint-in')).toBe(true);
-        expect(body().style.getPropertyValue('--scw-cover-from')).toBe('#123456');
-        expect(body().style.getPropertyValue('--scw-cover')).toBe('#654321');
+        expect(light()).toBe(glowPalette(imageOf([40, 60, 200]))[0]);
 
-        // Цвет новой обложки ещё не посчитан: подложка гаснет, а когда цвет готов, красится без пересборки блока
-        color = undefined;
+        // Палитра новой обложки ещё считается: свет не гаснет и стоит прошлых цветов, готовая встаёт без пересборки блока
+        hold = true;
         await next(2);
-        expect(body().classList.contains('tinted')).toBe(false);
-        expect(body().style.getPropertyValue('--scw-cover-from')).toBe('#654321');
+        expect(body().classList.contains('lit')).toBe(true);
+        expect(section().querySelector('.scw-glow')?.classList.contains('off')).toBe(false);
+        expect(light()).toBe(glowPalette(imageOf([40, 60, 200]))[0]);
         const kept = body();
-        color = '#abcdef';
-        await vi.advanceTimersByTimeAsync(1100);
+        hold = false;
+        for (const load of held.splice(0)) load();
         expect(body()).toBe(kept);
-        expect(kept.classList.contains('tinted')).toBe(true);
-        expect(kept.style.getPropertyValue('--scw-cover')).toBe('#abcdef');
+        expect(light()).toBe(glowPalette(imageOf([40, 180, 60]))[0]);
 
         // «Меньше анимаций»: трек и цвет меняются сразу, без переходов
         document.documentElement.classList.add('scm-reduce');
-        color = '#fedcba';
         await next(3);
-        expect(section().querySelector('.scw-swap, .scw-cross, .scw-tint-in')).toBeNull();
+        await vi.advanceTimersByTimeAsync(10);
+        expect(section().querySelector('.scw-swap, .scw-cross')).toBeNull();
         expect(section().querySelectorAll('.scw-cover .scw-img')).toHaveLength(1);
-        expect(body().style.getPropertyValue('--scw-cover')).toBe('#fedcba');
+        expect(light()).toBe(glowPalette(imageOf([220, 180, 40]))[0]);
     } finally {
         document.documentElement.classList.remove('scm-reduce');
         scope.Image = originalImage;
+        getContext.mockRestore();
         delete scope.__scmCoverColor;
         delete scope.__scmLearnCover;
     }
 });
 
-it('Ф3: подложка блока дышит по форме волны играющего трека, на паузе и при «Меньше анимаций» ровная', async () => {
-    const site = fakeSite((seed) => relatedTracks(seed).map((track) => ({ ...track, waveform_url: 'https://wave.sndcdn.com/w' + track.id + '.json' })));
-    // Первая половина трека тихая, вторая громкая
-    vi.stubGlobal('fetch', vi.fn(async () => ({ ok: true, json: async () => ({ samples: [...Array(900).fill(5), ...Array(900).fill(140)] }) })));
-    const scope = window as unknown as Record<string, unknown>;
-    Object.assign(window, { __scmCoverColor: () => '#123456', __scmLearnCover: () => undefined });
-    const breath = (): number => Number(document.querySelector<HTMLElement>('#sc-wave .scw-body')!.style.getPropertyValue('--scw-breath') || 0);
-    try {
-        window.eval(waveScript());
-        await vi.advanceTimersByTimeAsync(100);
-        document.querySelector<HTMLButtonElement>('#sc-wave .scw-play')!.click();
-        await vi.advanceTimersByTimeAsync(1100);
-        expect(document.querySelector('#sc-wave .scw-body')?.classList.contains('tinted')).toBe(true);
-        position = 20000;
-        await vi.advanceTimersByTimeAsync(300);
-        expect(breath()).toBe(0);
-        position = 150000;
-        await vi.advanceTimersByTimeAsync(300);
-        expect(breath()).toBe(1);
-        site.player.pauseCurrent();
-        await vi.advanceTimersByTimeAsync(1100);
-        expect(breath()).toBe(0);
-        site.player.playCurrent();
-        await vi.advanceTimersByTimeAsync(1100);
-        expect(breath()).toBe(1);
-        document.documentElement.classList.add('scm-reduce');
-        await vi.advanceTimersByTimeAsync(300);
-        expect(breath()).toBe(0);
-    } finally {
-        document.documentElement.classList.remove('scm-reduce');
-        delete scope.__scmCoverColor;
-        delete scope.__scmLearnCover;
-    }
+it('Ф3: свет блока: три пятна плывут, пока трек волны играет; на паузе замирают, пересобранный блок продолжает с той же фазы; до запуска света нет', async () => {
+    const site = fakeSite(relatedTracks);
+    const section = (): HTMLElement => document.getElementById('sc-wave')!;
+    const glow = (): HTMLElement => section().querySelector<HTMLElement>('.scw-glow')!;
+    const phase = (): number => -parseFloat(glow().style.getPropertyValue('--scw-glow-t'));
+    window.eval(waveScript());
+    await vi.advanceTimersByTimeAsync(100);
+    expect(glow().classList.contains('off')).toBe(true);
+    expect(section().querySelector('.scw-body')?.classList.contains('lit')).toBe(false);
+    section().querySelector<HTMLButtonElement>('.scw-play')!.click();
+    await vi.advanceTimersByTimeAsync(1100);
+    expect(glow().querySelectorAll('i')).toHaveLength(3);
+    expect(glow().classList.contains('off')).toBe(false);
+    expect(glow().classList.contains('idle')).toBe(false);
+    expect(section().querySelector('.scw-body')?.classList.contains('lit')).toBe(true);
+    // Трек без обложки: оранжевая палитра SoundCloud
+    expect(section().style.getPropertyValue('--scw-c1')).toBe('#ff5500');
+    // Десять секунд игры, потом пауза: блок пересобран, движение продолжается с набежавшей фазы и замирает
+    await vi.advanceTimersByTimeAsync(10000);
+    site.player.pauseCurrent();
+    await vi.advanceTimersByTimeAsync(1100);
+    expect(glow().classList.contains('idle')).toBe(true);
+    const paused = phase();
+    expect(paused).toBeGreaterThan(9.5);
+    expect(paused).toBeLessThan(13);
+    // Пауза в фазу не входит
+    await vi.advanceTimersByTimeAsync(5000);
+    site.player.playCurrent();
+    await vi.advanceTimersByTimeAsync(1100);
+    expect(glow().classList.contains('idle')).toBe(false);
+    expect(phase() - paused).toBeLessThan(1.5);
 });
 
 // Треки по id для trackBatch: из списка, остальные заготовкой
@@ -2094,8 +2115,8 @@ it('повторный запуск карточки играет её цели�
 it('Ф4: разведка: трек с яркого места 20 секунд и дальше сам, Enter и лайк оставляют, стрелка вправо дальше, выход возвращает обычную игру', async () => {
     const finds = Array.from({ length: 12 }, (_, i): WaveTrack => ({ id: 5001 + i, kind: 'track', user_id: 600 + i, duration: 200000, title: 'Find ' + i, waveform_url: 'https://wave.sndcdn.com/f' + i + '.json' }));
     const site = fakeSite(relatedTracks, (name, _path, query) => (name === 'trackBatch' ? batchOf(finds)(query) : undefined));
-    // Тихо до середины, громко со 100-й секунды
-    vi.stubGlobal('fetch', vi.fn(async () => ({ ok: true, json: async () => ({ samples: [...Array(900).fill(5), ...Array(900).fill(140)] }) })));
+    // Тихо до середины, громко со 100-й секунды. Тихо, но не тишина: тишину в начале перемотало бы тихое начало (Ф2)
+    vi.stubGlobal('fetch', vi.fn(async () => ({ ok: true, json: async () => ({ samples: [...Array(900).fill(30), ...Array(900).fill(140)] }) })));
     const snapshot = { day: localDay(Date.now()), v: 5, cards: [{ kind: 'daily', title: '', sub: '', ids: finds.map((track) => track.id), seeds: [1], keys: [], art: [] }] };
     const signals: PlaySignal[] = [];
     Object.assign(window, { soundcloudAPI: {

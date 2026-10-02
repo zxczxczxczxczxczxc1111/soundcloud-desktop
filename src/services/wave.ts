@@ -30,6 +30,7 @@ import * as shelfSectionModule from './wave/shelf';
 import * as menuSectionModule from './wave/menu';
 import * as quietSectionModule from './wave/quiet';
 import * as scoutSectionModule from './wave/scout';
+import * as glowModule from './wave/glow';
 import type { QuietOptions } from './wave/quiet';
 import * as waveSourcesModule from './wave/sources';
 import type { ScMix } from './wave/sources';
@@ -55,6 +56,7 @@ const { installShelf } = shelfSectionModule;
 const { installMenu } = menuSectionModule;
 const { installQuiet, quietBounds } = quietSectionModule;
 const { installScout, scoutStart } = scoutSectionModule;
+const { glowPalette } = glowModule;
 const { installSources, relatedArtistsOf, scMixesOf, likedOwner, likersOf, tasteNeighbors, likedTracksOf, neighborLikes, interleaveMixes } = waveSourcesModule;
 // Прежние импорты из wave.ts остаются рабочими
 export type { WaveTrack, WaveMode, OpenTrackResult, WaveReason, WaveCandidate, WaveFilter, WaveLinkKind, WaveTexts, TasteMaps, TasteScore, TasteGroup } from './waveTypes';
@@ -200,8 +202,13 @@ export function installWave(config: WaveConfig, createPlayback: typeof installPl
     let api: SiteApi | null = null;
     let SoundModel: SoundCtor | null = null;
     let disposed = false;
-    // Громкость трека для дышащего фона блока (Ф3), от 0 до 1
-    let breath = 0;
+    // Свет блока (Ф3): сколько мс пятна уже проплыли (растёт только пока играет) и время прошлого шага; палитра по адресу
+    // обложки, пустая, пока считается
+    let glowTime = 0;
+    let glowAt = 0;
+    const glowPalettes = new Map<string, string[]>();
+    // Свет у чёрно-белой обложки и без обложки: оранжевый SoundCloud, как сыгранная часть формы волны, и его соседи
+    const GLOW_FALLBACK = ['#ff5500', '#e0301e', '#ff9a52'];
     let state: State = 'idle';
     let mode: WaveMode = 'similar';
     let genre: string | null = null;
@@ -397,7 +404,10 @@ export function installWave(config: WaveConfig, createPlayback: typeof installPl
     // drawFrom: когда начала расти форма нового трека (0 - не растёт), drawFor - трек, чья форма ещё не пришла
     let shownTrack = 0;
     let shownCover = '';
+    // Палитра света, которая сейчас стоит на секции
     let shownTint = '';
+    // Состояние света в прошлом блоке: новый начинает с него и уходит в своё переходом
+    let glowShown = { lit: false, idle: true };
     let drawFrom = 0;
     let drawFor = 0;
     // «Меньше анимаций» в F1 (класс от плавности сайта) или системная настройка
@@ -3417,12 +3427,28 @@ export function installWave(config: WaveConfig, createPlayback: typeof installPl
         '#sc-wave .scw-opt[aria-selected="true"]{font-weight:600}',
         // Подложка блока в цвет обложки играющего трека (В6): без цвета прозрачна, отступы гасят поля, раскладка та же
         '.scw-body{position:relative;isolation:isolate;display:flex;gap:24px;margin:-12px;padding:12px;border-radius:8px;transition:background-color .3s cubic-bezier(.2,0,0,1)}',
-        '.scw-body.tinted{background-color:color-mix(in srgb,var(--scw-cover) 18%,transparent)}',
-        // Фон дышит (Ф3): тот же цвет поверх подложки ярче на громких местах трека, внутри границ блока
-        '.scw-body.tinted::before{content:"";position:absolute;inset:0;z-index:-1;border-radius:inherit;background:var(--scw-cover);opacity:calc(var(--scw-breath,0) * .16);transition:opacity .25s linear;pointer-events:none}',
-        // Новый блок после смены трека начинает с прошлого цвета, строка названия и обложка проявляются
-        '.scw-body.scw-tint-in{animation:scw-tint .3s cubic-bezier(.2,0,0,1)}',
-        '@keyframes scw-tint{from{background-color:color-mix(in srgb,var(--scw-cover-from) 18%,transparent)}}',
+        '.scw-body.lit{background-color:color-mix(in srgb,var(--scw-c1) 10%,transparent)}',
+        // Свет блока (Ф3): три мягких пятна цветов обложки медленно плывут за блоком внутри его границ, на паузе замирают
+        // и притухают, без трека гаснут. Цвета висят на секции и при смене трека перетекают за 1,2 с, подложка с ними.
+        // Блок пересобирается на каждое событие: отрицательная задержка --scw-glow-t продолжает движение с той же фазы,
+        // а новый слой начинает в состоянии прошлого и уходит в своё переходом
+        '@property --scw-c1{syntax:"<color>";inherits:true;initial-value:transparent}',
+        '@property --scw-c2{syntax:"<color>";inherits:true;initial-value:transparent}',
+        '@property --scw-c3{syntax:"<color>";inherits:true;initial-value:transparent}',
+        '#sc-wave{transition:--scw-c1 1.2s ease,--scw-c2 1.2s ease,--scw-c3 1.2s ease}',
+        '.scw-glow{position:absolute;inset:0;z-index:-1;border-radius:inherit;overflow:hidden;pointer-events:none;transition:opacity .6s ease}',
+        '.scw-glow.idle{opacity:.55}',
+        '.scw-glow.off{opacity:0}',
+        '.scw-glow>i{position:absolute;top:-45%;width:62%;height:190%;border-radius:50%;mix-blend-mode:screen;will-change:transform;animation:20s ease-in-out infinite alternate;animation-delay:var(--scw-glow-t,0s)}',
+        '.scw-glow.idle>i{animation-play-state:paused}',
+        '.scw-glow>i:nth-child(1){left:46%;background:radial-gradient(closest-side,color-mix(in srgb,var(--scw-c1) 70%,transparent),color-mix(in srgb,var(--scw-c1) 30%,transparent) 50%,transparent);animation-name:scw-drift-a;animation-duration:17s}',
+        '.scw-glow>i:nth-child(2){left:20%;background:radial-gradient(closest-side,color-mix(in srgb,var(--scw-c2) 60%,transparent),color-mix(in srgb,var(--scw-c2) 25%,transparent) 50%,transparent);animation-name:scw-drift-b;animation-duration:23s}',
+        '.scw-glow>i:nth-child(3){left:60%;background:radial-gradient(closest-side,color-mix(in srgb,var(--scw-c3) 55%,transparent),color-mix(in srgb,var(--scw-c3) 24%,transparent) 50%,transparent);animation-name:scw-drift-c;animation-duration:29s}',
+        // Каждое пятно в своём ритме плывёт, растёт и сжимается, разгорается и тает; ease-in-out на каждом отрезке
+        '@keyframes scw-drift-a{0%{transform:translate(0,0) scale(1);opacity:1}35%{transform:translate(-22%,10%) scale(1.18);opacity:.5}70%{transform:translate(-8%,-12%) scale(.92);opacity:.95}100%{transform:translate(-32%,6%) scale(1.08);opacity:.7}}',
+        '@keyframes scw-drift-b{0%{transform:translate(-10%,8%) scale(.9);opacity:.45}40%{transform:translate(25%,-8%) scale(1.1);opacity:1}75%{transform:translate(48%,10%) scale(1);opacity:.55}100%{transform:translate(15%,-4%) scale(1.15);opacity:.9}}',
+        '@keyframes scw-drift-c{0%{transform:translate(15%,-8%) scale(1.1);opacity:.8}45%{transform:translate(-18%,12%) scale(.9);opacity:.35}100%{transform:translate(-30%,-6%) scale(1.05);opacity:1}}',
+        // Строка названия и обложка нового трека проявляются
         '.scw-swap{animation:scw-fade .25s cubic-bezier(.2,0,0,1)}',
         '.scw-cover.scw-cross .scw-img{transition-duration:.3s}',
         '.scw-info{flex:1;min-width:0;display:flex;flex-direction:column}',
@@ -3664,9 +3690,10 @@ export function installWave(config: WaveConfig, createPlayback: typeof installPl
         '@media (prefers-reduced-motion:reduce){.scw-tip,.scw-toast,.scw-card .scw-art::before,.scw-card .scw-art::after,#sc-wave .scw-card-play,#sc-wave .scw-mix-play{transition:none}.scw-menu{animation:none}#sc-wave .scw-card .scw-card-play,#sc-wave .scw-mix-play{transform:none!important}}',
         'html.scm-reduce #sc-wave .scw-card .scw-card-play,html.scm-reduce #sc-wave .scw-mix-play{transition:none;transform:none!important}',
         // Переходы играющего трека выключаются целиком: цвет подложки меняется сразу. Скрипт их тогда и не ставит
-        'html.scm-reduce .scw-body,html.scm-reduce .scw-swap{transition:none;animation:none}',
-        'html.scm-reduce .scw-body::before{display:none}',
-        '@media (prefers-reduced-motion:reduce){.scw-body,.scw-swap{transition:none;animation:none}.scw-body::before{display:none}}',
+        // Пятна света стоят на месте, цвета обложки меняются сразу
+        'html.scm-reduce .scw-body,html.scm-reduce .scw-swap,html.scm-reduce .scw-glow,html.scm-reduce .scw-glow>i,html.scm-reduce #sc-wave{transition:none;animation:none}',
+        // :nth-child(n) поднимает вес до правил отдельных пятен, иначе их animation-name перебивает
+        '@media (prefers-reduced-motion:reduce){.scw-body,.scw-swap,.scw-glow,.scw-glow>i:nth-child(n),#sc-wave{transition:none;animation:none}}',
         // «Меньше анимаций» в F1: без масштаба меню, растворения остаются
         'html.scm-reduce .scw-menu{animation:none}',
     ].join('\n');
@@ -4076,11 +4103,29 @@ export function installWave(config: WaveConfig, createPlayback: typeof installPl
             cover.setAttribute('aria-hidden', 'true');
             cover.innerHTML = '<svg viewBox="0 0 200 200" fill="none"><circle cx="100" cy="100" r="76" stroke="currentColor" opacity=".07"/><circle cx="100" cy="100" r="57" stroke="currentColor" opacity=".12"/><path d="M48 96v8m13-22v36m13-43v50m13-61v72m13-84v96m13-75v54m13-44v34m13-43v52m13-36v20" stroke="currentColor" stroke-width="3" stroke-linecap="round" opacity=".7"/></svg>';
         }
-        body.append(info, cover);
-        paintTint(body, current ? host.__scmCoverColor?.(coverPath(current.track)) ?? '' : '');
-        if (breath) body.style.setProperty('--scw-breath', String(breath));
+        // Слой света пересоздаётся с блоком: пятна продолжают движение с той же фазы, свет и подложка в состоянии
+        // прошлого блока. Цвета новой обложки ещё считаются: остаются прошлые, потом перетекают
+        const glow = el('div', 'scw-glow');
+        glow.setAttribute('aria-hidden', 'true');
+        glow.style.setProperty('--scw-glow-t', (-glowTime / 1000).toFixed(2) + 's');
+        glow.append(el('i', ''), el('i', ''), el('i', ''));
+        const glowFrom = glowShown;
+        const glowWant = { lit: !!current, idle: !playing };
+        glowShown = glowWant;
+        body.classList.toggle('lit', glowFrom.lit);
+        glow.classList.toggle('off', !glowFrom.lit);
+        glow.classList.toggle('idle', glowFrom.idle);
+        body.append(glow, info, cover);
+        if (current) applyPalette(glowPaletteOf(current.track));
         const quick = renderQuick();
         section.append(body, ...renderTiles(), ...(quick ? [quick] : []), ...librarySection.render(), ...shelfSection.render());
+        // Состояние сменилось: слой уже посчитан в прошлом, класс нового даёт переход, а не рывок
+        if (glowFrom.lit !== glowWant.lit || glowFrom.idle !== glowWant.idle) {
+            void glow.offsetWidth;
+            body.classList.toggle('lit', glowWant.lit);
+            glow.classList.toggle('off', !glowWant.lit);
+            glow.classList.toggle('idle', glowWant.idle);
+        }
         if (swap) {
             // Уже загруженная обложка встала бы сразу: проявление поверх прошлой запускается с нуля
             const image = cover.lastElementChild;
@@ -4114,51 +4159,77 @@ export function installWave(config: WaveConfig, createPlayback: typeof installPl
         if (revealUntil && Date.now() < revealUntil) section.querySelector('.scw-shelf .scw-mix')?.scrollIntoView({ block: 'nearest' });
         paint();
     }
-    // Подложка блока цветом обложки; новая начинает с прошлого цвета, без цвета гаснет до прозрачной
-    function paintTint(body: HTMLElement, tint: string): void {
-        if (tint) {
-            body.classList.add('tinted');
-            body.style.setProperty('--scw-cover', tint);
-        }
-        if (tint !== shownTint && !calm()) {
-            body.classList.add('scw-tint-in');
-            body.style.setProperty('--scw-cover-from', shownTint || 'transparent');
-        }
-        shownTint = tint;
+    // Палитра обложки на секцию: подложка блока первым цветом, пятна всеми тремя. Секция не пересобирается, поэтому
+    // цвета перетекают переходом; пустая палитра (ещё считается) оставляет прошлые
+    function applyPalette(palette: string[]): void {
+        if (!palette.length || !section) return;
+        const key = palette.join(' ');
+        if (key === shownTint) return;
+        shownTint = key;
+        palette.forEach((color, i) => section?.style.setProperty('--scw-c' + (i + 1), color));
     }
-    // Фон дышит (Ф3): громкость по форме волны в текущей точке (среднее пяти отсчётов, около полсекунды) от 0 до 1.
-    // Только пока трек волны играет, блок виден и движение не убавлено; иначе подложка ровная
-    function breathe(): void {
-        let next = 0;
-        const current = isVisible() && !document.hidden && !calm() ? currentCandidate() : null;
-        const sound = current && player?.isPlaying() ? player.getCurrentSound() : null;
-        const samples = current && sound?.id === current.track.id ? samplesFor(current.track) : null;
-        const duration = sound ? durationOf(sound) : 0;
-        if (sound && samples?.length && duration > 0) {
-            const at = Math.floor((positionOf(sound) / duration) * samples.length);
-            let sum = 0;
-            let count = 0;
-            for (let i = Math.max(0, at - 2); i <= Math.min(samples.length - 1, at + 2); i++) {
-                sum += samples[i];
-                count++;
+    // Время движения пятен растёт только пока трек волны играет: пересобранный блок продолжает с той же фазы,
+    // а после паузы пятна трогаются с места, где замерли
+    function glowTick(): void {
+        const now = performance.now();
+        const playing = active && !!player?.isPlaying();
+        if (playing && glowAt) glowTime += now - glowAt;
+        glowAt = now;
+        const glow = section?.querySelector<HTMLElement>('.scw-glow');
+        if (glow && glow.classList.contains('idle') === playing) {
+            glow.classList.toggle('idle', !playing);
+            glowShown = { ...glowShown, idle: !playing };
+        }
+    }
+    // Палитра света по обложке играющего трека: считается один раз на обложку по уменьшенной копии той же картинки, она
+    // приходит из кэша. Пиксели читаются только у хостов с CORS (i1-i4); нет обложки, чужой хост или чёрно-белая
+    // обложка: оранжевая палитра SoundCloud. Пока палитра считается, стоят цвета прошлой обложки, потом tintLate()
+    function glowPaletteOf(track: WaveTrack): string[] {
+        const url = artworkUrl(track, 't500x500');
+        const known = url ? glowPalettes.get(url) : GLOW_FALLBACK;
+        if (known !== undefined) return known;
+        const remember = (palette: string[]): void => {
+            if (glowPalettes.size > 200) glowPalettes.delete(glowPalettes.keys().next().value as string);
+            glowPalettes.set(url, palette);
+        };
+        if (!/^https:\/\/i\d+\.sndcdn\.com\//.test(url)) {
+            remember(GLOW_FALLBACK);
+            return GLOW_FALLBACK;
+        }
+        // Пустой список до ответа: повторный вызов не запускает вторую загрузку
+        glowPalettes.set(url, []);
+        const image = new Image();
+        image.crossOrigin = 'anonymous';
+        image.onload = () => {
+            if (disposed) return;
+            let palette: string[] = [];
+            try {
+                const canvas = document.createElement('canvas');
+                canvas.width = canvas.height = 24;
+                const pen = canvas.getContext('2d', { willReadFrequently: true });
+                if (pen) {
+                    pen.imageSmoothingQuality = 'high';
+                    pen.drawImage(image, 0, 0, 24, 24);
+                    palette = glowPalette(pen.getImageData(0, 0, 24, 24).data);
+                }
+            } catch (error) {
+                console.debug('Волна: цвета света по обложке не посчитаны', error);
             }
-            next = count ? Math.max(0, Math.min(1, (sum / count - 0.2) / 0.8)) : 0;
-        }
-        next = Math.round(next * 100) / 100;
-        if (next === breath) return;
-        breath = next;
-        section?.querySelector<HTMLElement>('.scw-body')?.style.setProperty('--scw-breath', String(breath));
+            remember(palette.length ? palette : GLOW_FALLBACK);
+            tintLate();
+        };
+        image.onerror = () => {
+            if (disposed) return;
+            remember(GLOW_FALLBACK);
+            tintLate();
+        };
+        image.src = url;
+        return [];
     }
-    // Средний цвет новой обложки считается после её загрузки: подложка красится, как только он готов
+    // Палитра новой обложки считается после её загрузки: цвета перетекают в неё, как только она готова
     function tintLate(): void {
-        const current = shownTint ? null : currentCandidate();
-        const tint = current ? host.__scmCoverColor?.(coverPath(current.track)) : undefined;
-        const body = tint ? section?.querySelector<HTMLElement>('.scw-body') : null;
-        if (!body || !tint) return;
-        // Уже вставленный блок меняет цвет плавным переходом подложки, а не анимацией от прошлого
-        shownTint = tint;
-        body.classList.add('tinted');
-        body.style.setProperty('--scw-cover', tint);
+        const current = currentCandidate();
+        if (current) applyPalette(glowPaletteOf(current.track));
     }
     function updateLike(): void {
         // Класс scw-like у всех трёх кнопок ряда, сердце только по data-act
@@ -4713,7 +4784,7 @@ export function installWave(config: WaveConfig, createPlayback: typeof installPl
     });
     let tickTimer: ReturnType<typeof setInterval> | undefined;
     let paintTimer: ReturnType<typeof setInterval> | undefined;
-    let breathTimer: ReturnType<typeof setInterval> | undefined;
+    let glowTimer: ReturnType<typeof setInterval> | undefined;
     let attempts = 0;
     let attachTimer: ReturnType<typeof setTimeout> | undefined;
     function attach(): void {
@@ -4731,7 +4802,7 @@ export function installWave(config: WaveConfig, createPlayback: typeof installPl
             paintTimer = setInterval(() => {
                 if (currentCandidate() && player?.isPlaying()) paint();
             }, 250);
-            breathTimer = setInterval(breathe, 120);
+            glowTimer = setInterval(glowTick, 250);
             state = 'loading';
             void queueControls.ready().catch((error: unknown) => console.warn('Сессия пока не восстановлена', error)).finally(() => {
                 if (disposed) return;
@@ -4796,7 +4867,7 @@ export function installWave(config: WaveConfig, createPlayback: typeof installPl
         clearTimeout(siteCheck);
         if (tickTimer !== undefined) clearInterval(tickTimer);
         if (paintTimer !== undefined) clearInterval(paintTimer);
-        if (breathTimer !== undefined) clearInterval(breathTimer);
+        if (glowTimer !== undefined) clearInterval(glowTimer);
         if (journalTimer !== undefined) clearTimeout(journalTimer);
         flushJournal();
         finishPlay('stop');
@@ -4870,7 +4941,7 @@ const pageHelpers = [
     artworkUrl, coversOf, formatTime, playEnd, siteSource, moodTags, trackPath, localDay, countText, tasteGroups, capPerArtist, forgottenPicks, daySample, artistNames, performerNames, sharedPerformer, isNewArtist, spreadBy, pickFinds,
     moodList, moodDictionary, trackMood, playlistMood, artistMoods, neighborMood, moodScore,
     ...identity.identityHelpers, ...sources.sourceHelpers, ...libraryMix.libraryHelpers, siteRequires, installPlaybackPage, installPlaybackRecovery,
-    installVersions, installLibrary, installRadar, installShelf, installMenu, installQuiet, quietBounds, installScout, scoutStart, installSources, relatedArtistsOf, scMixesOf, likedOwner, likersOf, tasteNeighbors, likedTracksOf, neighborLikes, interleaveMixes,
+    installVersions, installLibrary, installRadar, installShelf, installMenu, installQuiet, quietBounds, installScout, scoutStart, glowPalette, installSources, relatedArtistsOf, scMixesOf, likedOwner, likersOf, tasteNeighbors, likedTracksOf, neighborLikes, interleaveMixes,
 ];
 
 /** Смена настроек тихих краёв трека в F1: страница подхватывает без перезагрузки */
