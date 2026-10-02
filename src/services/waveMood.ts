@@ -75,6 +75,25 @@ export function trackMood(track: WaveTrack): MoodScores {
     return scores;
 }
 
+// Настроение по названиям чужих плейлистов с треком (П12): название разбирается словарём как метка или жанр, и
+// слова как в названии трека. Каждое совпавшее название слабое свидетельство 0,4, несколько складываются как
+// независимые: два плейлиста «sad» дают 0,64
+export function playlistMood(titles: string[]): MoodScores {
+    const dict = moodDictionary();
+    const scores = { happy: 0, sad: 0, aggressive: 0, calm: 0, energetic: 0 };
+    for (const mood of moodList()) {
+        const entry = dict[mood];
+        const words = new RegExp(entry.words, 'u');
+        let rest = 1;
+        for (const title of titles) {
+            const label = { id: 0, genre: title, tag_list: '' };
+            if (words.test(title.toLowerCase()) || trackMatchesGenre(label, entry.tags) || trackMatchesGenre(label, entry.genres)) rest *= 0.6;
+        }
+        scores[mood] = 1 - rest;
+    }
+    return scores;
+}
+
 // Сколько известных треков каждого исполнителя с каким настроением: для переноса на его треки без меток.
 // Настроение трека засчитывается от 0,5
 export function artistMoods(tracks: WaveTrack[], moodOf: (track: WaveTrack) => MoodScores): Map<number, ArtistMoods> {

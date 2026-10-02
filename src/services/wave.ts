@@ -43,7 +43,7 @@ const { normalizeTag, tagKeys, tagShares, trackLang, genreKeys, genreEnglish, ge
 const { classifyLink, classifyTag, canonicalUrl, trackPath, artworkUrl, coversOf, playEnd, siteSource, retryDelay } = waveLinks;
 const { trackArtist, rememberRecent, isWaveEligible, freshEnough, acceptCandidate, pickSpaced, spacingKeys, spacingGap, shuffleInPlace, capPerArtist, forgottenPicks, daySample, artistNames, performerNames, sharedPerformer, isNewArtist, spreadBy } = wavePicks;
 const { tasteMaps, tasteSlot, tasteForTime, sourceBias, trackTraits, seriesTrait, tasteScore, tasteOrder, tasteReason, applyTasteReasons, tasteGroups, moodTags, pickFinds } = waveTaste;
-const { moodList, moodDictionary, trackMood, artistMoods, neighborMood, moodScore } = waveMood;
+const { moodList, moodDictionary, trackMood, playlistMood, artistMoods, neighborMood, moodScore } = waveMood;
 // Разделы страницы волны в wave/: объявления уходят на страницу рядом с installWave и зовутся по голому имени
 const { installVersions } = versionsSection;
 const { installLibrary } = librarySectionModule;
@@ -58,7 +58,7 @@ export { normalizeTag, tagKeys, tagShares, trackLang, genreKeys, genreEnglish, g
 export { classifyLink, classifyTag, canonicalUrl, trackPath, artworkUrl, playEnd, siteSource, retryDelay } from './waveLinks';
 export { trackArtist, rememberRecent, isWaveEligible, freshEnough, acceptCandidate, pickSpaced, spacingKeys, spacingGap, shuffleInPlace, capPerArtist, forgottenPicks, daySample, artistNames, performerNames, sharedPerformer, isNewArtist, spreadBy } from './wavePicks';
 export { tasteMaps, tasteSlot, tasteForTime, sourceBias, trackTraits, seriesTrait, tasteScore, tasteOrder, tasteReason, applyTasteReasons, tasteGroups, moodTags, pickFinds } from './waveTaste';
-export { moodList, moodDictionary, trackMood, artistMoods, neighborMood, moodScore } from './waveMood';
+export { moodList, moodDictionary, trackMood, playlistMood, artistMoods, neighborMood, moodScore } from './waveMood';
 export type { WaveMood, MoodScores, ArtistMoods } from './waveMood';
 
 export interface SiteSound {
@@ -1444,16 +1444,91 @@ export function installWave(config: WaveConfig, createPlayback: typeof installPl
     }
     // Пресет действует только у обычной волны: у волны от трека, артиста или подборки своё настроение
     const activePreset = (): WaveMood | null => (seed ? null : preset);
-    // Настроение трека один раз на трек: словарь разбирается регулярными выражениями
+    // Настроение трека один раз на трек: словарь разбирается регулярными выражениями. Настроение по плейлистам
+    // с треком (П12) добавляется как независимое свидетельство
     const moodCache = new Map<number, MoodScores>();
     function moodOf(track: WaveTrack): MoodScores {
         let scores = moodCache.get(track.id);
         if (!scores) {
             scores = trackMood(track);
+            const listed = playlistMoods().get(track.id);
+            if (listed) for (const mood of moodList()) scores[mood] = 1 - (1 - scores[mood]) * (1 - listed[mood]);
             if (moodCache.size > 5000) moodCache.clear();
             moodCache.set(track.id, scores);
         }
         return scores;
+    }
+    // П12: настроение по плейлистам с треком навсегда в localStorage, до 5000 треков, старые вытесняются; пустой ответ
+    // тоже хранится (нули). Запись [id, happy, sad, aggressive, calm, energetic]
+    const PLAYLIST_MOODS_KEY = 'scDesktopWavePlaylistMoods';
+    let playlistMoodMap: Map<number, MoodScores> | null = null;
+    const playlistMoodPending = new Set<number>();
+    function playlistMoods(): Map<number, MoodScores> {
+        if (playlistMoodMap) return playlistMoodMap;
+        const map = new Map<number, MoodScores>();
+        try {
+            const saved: unknown = JSON.parse(localStorage.getItem(PLAYLIST_MOODS_KEY) || '[]');
+            for (const row of Array.isArray(saved) ? saved.slice(-5000) : []) {
+                if (!Array.isArray(row) || row.length !== 6 || !isId(row[0]) || !row.slice(1).every((value) => typeof value === 'number' && value >= 0 && value <= 1)) continue;
+                const [id, happy, sad, aggressive, calm, energetic] = row as number[];
+                map.set(id, { happy, sad, aggressive, calm, energetic });
+            }
+        } catch (error) {
+            console.warn('Волна: настроение по плейлистам не прочитано', error);
+        }
+        playlistMoodMap = map;
+        return map;
+    }
+    function savePlaylistMoods(): void {
+        const map = playlistMoods();
+        const round = (value: number): number => Math.round(value * 100) / 100;
+        try {
+            localStorage.setItem(PLAYLIST_MOODS_KEY, JSON.stringify([...map].slice(-5000).map(([id, s]) => [id, round(s.happy), round(s.sad), round(s.aggressive), round(s.calm), round(s.energetic)])));
+        } catch (error) {
+            console.warn('Волна: настроение по плейлистам не сохранено', error);
+        }
+    }
+    // Фоном до 10 треков добивки пресета без жанра и меток: их плейлисты (до 20) разбираются словарём. Подошедшее
+    // настроению после ответа уходит из добивки в пул
+    function lookupPlaylistMoods(candidates: WaveCandidate[]): void {
+        const map = playlistMoods();
+        const list = candidates
+            .filter((candidate) => !(candidate.track.genre ?? '').trim() && !(candidate.track.tag_list ?? '').trim() && !map.has(candidate.track.id) && !playlistMoodPending.has(candidate.track.id))
+            .slice(0, 10);
+        if (!list.length) return;
+        const own = generation;
+        for (const candidate of list) playlistMoodPending.add(candidate.track.id);
+        void Promise.all(list.map(async (candidate) => {
+            try {
+                const body = await backgroundCall('playlistsWithoutAlbumsForTrack', { trackId: candidate.track.id }, { limit: 20 });
+                const titles = collection(body).flatMap((item) => {
+                    const title = item && typeof item === 'object' ? (item as { title?: unknown }).title : null;
+                    return typeof title === 'string' && title.trim() ? [title.slice(0, 200)] : [];
+                });
+                map.delete(candidate.track.id);
+                map.set(candidate.track.id, playlistMood(titles.slice(0, 20)));
+                moodCache.delete(candidate.track.id);
+            } catch (error) {
+                console.warn('Волна: плейлисты трека не загружены', error);
+            } finally {
+                playlistMoodPending.delete(candidate.track.id);
+            }
+        })).then(() => {
+            while (map.size > 5000) {
+                const oldest = map.keys().next().value;
+                if (oldest === undefined) break;
+                map.delete(oldest);
+            }
+            savePlaylistMoods();
+            artistMoodMap = null;
+            if (disposed || own !== generation || !activePreset()) return;
+            const ids = new Set(list.map((candidate) => candidate.track.id));
+            const fit = moodReserve.filter((entry) => ids.has(entry.candidate.track.id) && presetScore(entry.candidate.track, null) >= 0.5);
+            if (!fit.length) return;
+            moodReserve = moodReserve.filter((entry) => !fit.includes(entry));
+            pool.push(...fit.map((entry) => entry.candidate));
+            rerankPool();
+        });
     }
     // Перенос настроения от исполнителя: по лайкам, истории сайта и всему, что пришло из похожих в этой волне
     const moodSample: WaveTrack[] = [];
@@ -1931,6 +2006,7 @@ export function installWave(config: WaveConfig, createPlayback: typeof installPl
         if (tasks.length && failures === tasks.length && !found.length) throw new Error('Источники волны не ответили');
         // Пресет: в пул идёт подходящее настроению (от 0,5), остальное ждёт в добивке по убыванию оценки
         const matched = mood ? splitByMood(found, observed, observedBy) : found;
+        if (mood) lookupPlaylistMoods(found.filter((candidate) => !matched.includes(candidate)));
         // По вкусу, если профиль есть; без него как раньше, перемешиванием
         const current = taste;
         if (current) {
@@ -4600,7 +4676,7 @@ const pageHelpers = [
     normalizeTag, tagKeys, tagShares, trackLang, genreKeys, genreEnglish, genreCanon, genrePhrases, genreParts, genreMain, parseGenres, formatGenres, genreKeysFor, classifyLink, classifyTag, canonicalUrl, trackMatchesGenre, trackArtist, rememberRecent, retryDelay,
     isWaveEligible, freshEnough, acceptCandidate, pickSpaced, spacingKeys, spacingGap, tasteMaps, tasteSlot, tasteForTime, sourceBias, trackTraits, seriesTrait, tasteScore, tasteOrder, tasteReason, applyTasteReasons, shuffleInPlace, topGenres, fillText, reasonText, shapeSamples,
     artworkUrl, coversOf, formatTime, playEnd, siteSource, moodTags, trackPath, localDay, countText, tasteGroups, capPerArtist, forgottenPicks, daySample, artistNames, performerNames, sharedPerformer, isNewArtist, spreadBy, pickFinds,
-    moodList, moodDictionary, trackMood, artistMoods, neighborMood, moodScore,
+    moodList, moodDictionary, trackMood, playlistMood, artistMoods, neighborMood, moodScore,
     ...identity.identityHelpers, ...sources.sourceHelpers, ...libraryMix.libraryHelpers, siteRequires, installPlaybackPage, installPlaybackRecovery,
     installVersions, installLibrary, installRadar, installShelf, installMenu, installSources, relatedArtistsOf, scMixesOf, interleaveMixes,
 ];

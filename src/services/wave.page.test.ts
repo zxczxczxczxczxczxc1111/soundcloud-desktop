@@ -852,6 +852,45 @@ it('В3: пресет берёт подходящее настроению, ищ
     expect(document.querySelector('#sc-wave .scw-hint')?.textContent).toBe('Similar to what you play and like, mood: sad. Few matches in your taste, adding the closest ones');
 });
 
+it('П12: в пресете треки без жанра и меток узнают настроение по плейлистам с ними, ответ хранится и второй раз не спрашивается', async () => {
+    localStorage.setItem('scDesktopWave', JSON.stringify({ preset: 'sad' }));
+    const mixed = (seed: number): WaveTrack[] => Array.from({ length: 8 }, (_, i) => ({ id: seed * 1000 + i, kind: 'track', user_id: seed * 10 + i, duration: 200000, title: 'Rel ' + seed + '-' + i, genre: i < 3 ? 'Emo' : i < 5 ? '' : 'Techno' }));
+    const extra: Extra = (name, path) => {
+        if (name !== 'playlistsWithoutAlbumsForTrack') return undefined;
+        const id = (path as { trackId: number }).trackId;
+        return { collection: id % 1000 === 3 ? [{ title: 'sad songs' }, { title: 'грустное на ночь' }, { title: 'Mix' }] : [] };
+    };
+    let site = fakeSite(mixed, extra);
+    window.eval(waveScript());
+    await vi.advanceTimersByTimeAsync(100);
+    document.querySelector<HTMLButtonElement>('#sc-wave .scw-play')!.click();
+    // Фоновые запросы идут через диспетчер с паузами
+    await vi.advanceTimersByTimeAsync(15000);
+    const asked = (): number[] => site.api.callEndpoint.mock.calls.filter(([name]) => name === 'playlistsWithoutAlbumsForTrack').map(([, path]) => (path as { trackId: number }).trackId);
+    const first = asked();
+    // Спрашиваются только треки без жанра и меток, не больше десяти за проход, до двадцати плейлистов
+    expect(first.length).toBeGreaterThan(0);
+    expect(first.every((id) => id % 1000 === 3 || id % 1000 === 4)).toBe(true);
+    expect(site.api.callEndpoint).toHaveBeenCalledWith('playlistsWithoutAlbumsForTrack', { trackId: first[0] }, { limit: 20 });
+    const saved = new Map((JSON.parse(localStorage.getItem('scDesktopWavePlaylistMoods') ?? '[]') as number[][]).map((row) => [row[0], row]));
+    const sad = saved.get(first.find((id) => id % 1000 === 3) ?? 0);
+    expect(sad?.[2]).toBeCloseTo(0.64, 2);
+    expect(saved.get(first.find((id) => id % 1000 === 4) ?? 0)).toEqual([expect.any(Number), 0, 0, 0, 0, 0]);
+    // Грустный по плейлистам трек ушёл из добивки в подходящее и стоит в очереди раньше техно
+    const queued = site.player.getQueue().slice().map((item) => item.sound.id);
+    const listed = queued.findIndex((id) => id % 1000 === 3);
+    const techno = queued.findIndex((id) => id % 1000 >= 5);
+    if (listed >= 0 && techno >= 0) expect(listed).toBeLessThan(techno);
+
+    window.dispatchEvent(new Event('pagehide'));
+    site = fakeSite(mixed, extra);
+    window.eval(waveScript());
+    await vi.advanceTimersByTimeAsync(100);
+    document.querySelector<HTMLButtonElement>('#sc-wave .scw-play')!.click();
+    await vi.advanceTimersByTimeAsync(1100);
+    expect(asked().filter((id) => first.includes(id))).toEqual([]);
+});
+
 it('В3: ранний пропуск в пресете опускает аккаунт и теги именно в этом пресете, сигнал пишет пресет', async () => {
     localStorage.setItem('scDesktopWave', JSON.stringify({ preset: 'sad' }));
     const sad = (seed: number): WaveTrack[] => Array.from({ length: 8 }, (_, i) => ({ id: seed * 1000 + i, kind: 'track', user_id: seed * 10 + i, duration: 200000, title: 'Rel ' + seed + '-' + i, genre: 'Emo' }));

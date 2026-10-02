@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { artistMoods, moodDictionary, moodList, moodScore, neighborMood, trackMood } from './waveMood';
+import { artistMoods, moodDictionary, moodList, moodScore, neighborMood, playlistMood, trackMood } from './waveMood';
 import type { WaveTrack } from './waveTypes';
 
 const track = (id: number, extra: Partial<WaveTrack> = {}): WaveTrack => ({ id, kind: 'track', user_id: 1, duration: 180000, title: 'Track ' + id, ...extra });
@@ -84,4 +84,17 @@ describe('перенос и соседи', () => {
         expect(moodScore(0.5, undefined, 0, 'sad')).toBeCloseTo(0.5);
         expect(moodScore(0.5, { count: 3, hits: { happy: 0, sad: 3, aggressive: 0, calm: 0, energetic: 0 } }, 1, 'sad')).toBeCloseTo(1 - 0.5 * 0.4 * 0.7);
     });
+});
+
+it('П12: настроение по названиям плейлистов: каждое совпавшее 0,4, несколько складываются, чужое не в счёт', () => {
+    const one = playlistMood(['my sad songs']);
+    expect(one.sad).toBeCloseTo(0.4, 6);
+    expect(one.happy).toBe(0);
+    const two = playlistMood(['Sad Rap 2024', 'грустное на ночь', 'Workout']);
+    expect(two.sad).toBeCloseTo(0.64, 6);
+    expect(two.energetic).toBeCloseTo(0.4, 6);
+    // Жанр из карты настроений в названии тоже метка: phonk агрессивный
+    expect(playlistMood(['PHONK']).aggressive).toBeCloseTo(0.4, 6);
+    expect(playlistMood(['Mix', 'Likes', '']).sad).toBe(0);
+    expect(playlistMood([])).toEqual({ happy: 0, sad: 0, aggressive: 0, calm: 0, energetic: 0 });
 });
