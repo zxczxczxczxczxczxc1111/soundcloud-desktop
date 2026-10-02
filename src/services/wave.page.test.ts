@@ -2915,6 +2915,41 @@ it('P7: радар первым на полке, список с «Already heard
     expect(section.querySelector('[data-act="radar-rebuild"]')).toBeNull();
 });
 
+it('П10: фанатские работы выпуска отдельной карточкой «Remixes & edits» со своей подсказкой и волной', async () => {
+    const edition = {
+        ...radarEditionOf('2026-09-25', 1, radarCutoff), algorithm: 6,
+        uploads: [radarItem(8101, { kind: 'upload' }), radarItem(8201, { kind: 'upload', fan: true })],
+    };
+    const radar = {
+        view: vi.fn(async () => ({ edition, editions: radarEditions.slice(0, 1) })),
+        found: vi.fn(async () => []),
+        rebuild: vi.fn(async () => ({ published: false, waiting: true, edition: null })),
+        state: vi.fn(async () => ({ phase: 'published', period: '2026-09-25', error: '', updated: 1 })),
+    };
+    Object.assign(window, { soundcloudAPI: { radar } });
+    const site = fakeSite(relatedTracks, (name, _path, query) => (name === 'trackBatch' ? batchOf(radarTracks)(query) : undefined));
+    window.eval(waveScript());
+    await vi.advanceTimersByTimeAsync(100);
+    const section = document.getElementById('sc-wave')!;
+    const cards = [...section.querySelectorAll<HTMLElement>('.scw-card[data-card]')];
+    expect(cards.map((card) => card.dataset.card)).toEqual(['-10', '-11', '-12']);
+    expect(cards.map((card) => card.querySelector('.scw-t1')?.textContent)).toEqual(['Release Radar', 'New uploads', 'Remixes & edits']);
+    expect(cards.slice(1).map((card) => card.querySelector('.scw-t2')?.textContent)).toEqual(['1 track', '1 track']);
+    section.querySelector<HTMLButtonElement>('[data-act="shelf-open"][data-card="-12"]')!.click();
+    await vi.advanceTimersByTimeAsync(100);
+    expect([...section.querySelectorAll<HTMLElement>('.scw-mix .scw-row[data-track]')].map((row) => row.dataset.track)).toEqual(['8201']);
+    expect(section.querySelector('.scw-mix-title b')?.textContent).toBe('Remixes & edits');
+    expect(section.querySelector('.scw-mix .scw-hint')?.textContent).toContain('channels you don’t follow');
+    section.querySelector<HTMLButtonElement>('[data-act="mix-play"]')!.click();
+    await vi.advanceTimersByTimeAsync(100);
+    const queued = (site.player.replaceQueue.mock.calls[site.player.replaceQueue.mock.calls.length - 1][0] as FakeItem[]).map((item) => item.sound.id);
+    expect(queued[0]).toBe(8201);
+    // «Новые загрузки» без фанатской работы
+    section.querySelector<HTMLButtonElement>('[data-act="shelf-open"][data-card="-11"]')!.click();
+    await vi.advanceTimersByTimeAsync(100);
+    expect([...section.querySelectorAll<HTMLElement>('.scw-mix .scw-row[data-track]')].map((row) => row.dataset.track)).toEqual(['8101']);
+});
+
 it('группы радара: строка на исполнителя, метка EP из альбомов аккаунта, раскрытие в порядке альбома, трек группы и «Слушать все»', async () => {
     const edition = {
         period: '2026-09-25', revision: 1, created: radarCutoff, cutoff: radarCutoff, status: 'complete', algorithm: 3, taste: 1,

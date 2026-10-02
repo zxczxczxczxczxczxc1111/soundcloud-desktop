@@ -4,7 +4,7 @@ import { join } from 'node:path';
 import { afterEach, expect, it } from 'vitest';
 import {
     RADAR_PARAMS, RadarService, buildRadar, cleanRadarItem, coverageComplete, creditNames, exclusionFilter, freshness, heardIds, heardLast, radarCoverage, radarSources,
-    scoreUpload, selectEdition, selectRadar, type RadarCandidate, type RadarCoverage, type RadarInput,
+    scoreUpload, selectEdition, selectRadar, fanWork, archiveTitle, archiveLast, type RadarCandidate, type RadarCoverage, type RadarInput,
 } from './radar';
 import { tasteMaps } from './wave';
 import { RecommendStore, type StoredUpload } from './recommendStore';
@@ -126,7 +126,7 @@ it('«Не нравится» с подтверждёнными копиями, 
 });
 
 const candidate = (id: number, base: number, direction: string, extra: Partial<RadarCandidate> = {}): RadarCandidate => ({
-    key: 'sc:track:' + id, id, base, direction, family: 'f' + id, uploader: id, kind: 'release', at: CUTOFF - DAY, heard: false, linked: true, reason: { kind: 'taste' }, performer: 'u:' + id, ...extra,
+    key: 'sc:track:' + id, id, base, direction, family: 'f' + id, uploader: id, kind: 'release', at: CUTOFF - DAY, heard: false, linked: true, reason: { kind: 'taste' }, performer: 'u:' + id, fan: false, archive: false, ...extra,
 });
 
 it('A12: редкий устойчивый вкус получает место при сопоставимом качестве, слабое ради разнообразия не подставляется', () => {
@@ -247,6 +247,55 @@ it('«Новые загрузки»: сборный канал с десятью
     const fromHub = [...edition.items, ...edition.uploads].filter((item) => item.id >= 100 && item.id < 110);
     expect(fromHub.length).toBeGreaterThan(0);
     expect(edition.uploads.filter((item) => item.id >= 100 && item.id < 110)).toHaveLength(Math.min(RADAR_PARAMS.perUploader, fromHub.length));
+});
+
+it('П10: фанатские работы отдельно от релизов и новых загрузок, архивные записи вниз своего списка', () => {
+    const edition = buildRadar(input([
+        upload(61, 'Night Drive', 1, 'Artist'),
+        // Перезалив чужой песни и ремикс чужой песни самим загрузчиком: фанатские работы
+        upload(62, 'Artist - Hit', 2, 'Vibes'),
+        upload(63, 'Artist - Hit (Vibes Remix)', 2, 'Vibes', { createdAt: CUTOFF - 2 * DAY }),
+        // С ISRC, с датой релиза или от подписки это уже не фанатская работа
+        upload(64, 'Artist - Tune', 3, 'Other', { isrc: 'QZ1234567890' }),
+        upload(65, 'Artist - Theme', 4, 'Label', { releaseDay: '2020-01-01' }),
+        upload(66, 'Artist - Song', 5, 'Friend'),
+        // Своя запись с годом в названии без даты релиза: архив
+        upload(67, 'Live at Club (2008)', 1, 'Artist', { createdAt: CUTOFF - 2 * DAY }),
+        upload(68, 'Morning', 1, 'Artist', { createdAt: CUTOFF - 4 * DAY }),
+        // Любимый аккаунт выложил запись с годом в названии: без архива встал бы первым
+        upload(69, 'Classic (1979)', 6, 'Oldies'),
+    ], { follows: [5], profile: { artists: [[1, 3], [2, 1], [3, 1], [4, 1], [5, 1], [6, 6]], credits: [['artist', 2]], tags: [['phonk', 1]], families: [], markers: [], tracks: [] } }))!;
+    const fans = edition.uploads.filter((item) => item.fan).flatMap((item) => item.group ?? [item.id]);
+    expect(fans.sort()).toEqual([62, 63]);
+    // Перезалив с ISRC, запись со старой датой релиза и чужая песня у подписки остаются новыми загрузками
+    expect(edition.uploads.filter((item) => !item.fan).flatMap((item) => item.group ?? [item.id]).sort()).toEqual([64, 65, 66]);
+    expect(edition.items.flatMap((item) => item.group ?? [item.id])).not.toContain(62);
+    // Архив в группе исполнителя не ведёт, а отдельной строкой встаёт в конец списка
+    expect(edition.items.find((item) => item.group?.includes(67))?.id).not.toBe(67);
+    expect(edition.items.map((item) => item.id).slice(-1)).toEqual([69]);
+    expect(edition.items.length).toBeGreaterThan(1);
+    expect(edition.algorithm).toBe(6);
+    // Пометка переживает чтение выпуска из файла
+    const stored = edition.uploads.find((item) => item.fan);
+    expect(cleanRadarItem(JSON.parse(JSON.stringify(stored)))).toMatchObject({ fan: true });
+    expect(cleanRadarItem({ ...JSON.parse(JSON.stringify(stored)), fan: 'yes' })).not.toHaveProperty('fan');
+});
+
+it('П10: признаки фанатской работы и архива по отдельности', () => {
+    const credits = (title: string, uploader: string) => trackCredits({ id: 1, title, user: { id: 1, username: uploader } });
+    expect(fanWork('Vibes', credits('Artist - Hit', 'Vibes'))).toBe(true);
+    expect(fanWork('Vibes', credits('Artist - Hit (Vibes Remix)', 'Vibes'))).toBe(true);
+    expect(fanWork('Artist', credits('Artist - Hit', 'Artist'))).toBe(false);
+    expect(fanWork('Artist', credits('Artist & Guest - Hit', 'Artist'))).toBe(false);
+    expect(fanWork('Artist', credits('Hit', 'Artist'))).toBe(false);
+    expect(archiveTitle('1979', CUTOFF)).toBe(true);
+    expect(archiveTitle('Song (Live 2008)', CUTOFF)).toBe(true);
+    expect(archiveTitle('Song 2023', CUTOFF)).toBe(false);
+    expect(archiveTitle('Song 2021', CUTOFF)).toBe(true);
+    expect(archiveTitle('Track 12008', CUTOFF)).toBe(false);
+    expect(archiveTitle('Summer Mix', CUTOFF)).toBe(false);
+    const archived = [{ id: 1, archive: true }, { id: 2, archive: false }, { id: 3, archive: true }, { id: 4, archive: false }];
+    expect(archiveLast(archived).map((item) => item.id)).toEqual([2, 4, 1, 3]);
 });
 
 it('история выпусков: направление, которого давно не было, получает большую прибавку', () => {

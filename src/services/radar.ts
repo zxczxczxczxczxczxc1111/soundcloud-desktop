@@ -13,9 +13,10 @@ const DAY = 86400000;
 
 /** Параметры радара; version растёт при каждом изменении их смысла и попадает в выпуск.
  *  4: потолок аккаунта и в «Новых загрузках» (26.09.2026).
- *  5: прибавка свежести только последним трём дням окна, недобор открытий отдаётся связанным (28.09.2026) */
+ *  5: прибавка свежести только последним трём дням окна, недобор открытий отдаётся связанным (28.09.2026).
+ *  6: фанатские работы отдельной карточкой, архивные записи вниз своего списка (02.10.2026) */
 export const RADAR_PARAMS = {
-    version: 5,
+    version: 6,
     /** Окно свежести версии, дни до отсечки. Неделя между выпусками (решение владельца 25.09.2026, было 28) */
     windowDays: 7,
     /** Последние дни окна получают небольшую прибавку. Меньше окна: при равных днях она доставалась всем */
@@ -36,6 +37,11 @@ export const RADAR_PARAMS = {
     linkWeight: 0.3,
     /** Сколько «Новых загрузок» показывать отдельно */
     uploadsSize: 30,
+    /** Фанатские работы (перезалив, ремикс, эдит чужой песни не подписки без ISRC и даты релиза): своя карточка, до стольких */
+    fansSize: 30,
+    /** Архив: год в названии старше стольких лет у записи без даты релиза в окне, штраф к оценке */
+    archiveYears: 5,
+    archivePenalty: 0.3,
     /** «Все найденные»: не больше */
     foundSize: 300,
     /** Прибавка недопредставленному направлению не больше этой величины (раздел 6.2) */
@@ -111,6 +117,10 @@ export interface RadarCandidate {
     reason: RadarReason;
     /** Исполнитель для группы выпуска (performerKey): свой загрузчик или исполнитель у сборного канала */
     performer: string;
+    /** Фанатская работа: чужая песня у аккаунта не из подписок, без ISRC и даты релиза */
+    fan: boolean;
+    /** Архивная запись: в названии год старше archiveYears, даты релиза в окне нет */
+    archive: boolean;
 }
 export interface RadarPick extends RadarCandidate {
     bonus: number;
@@ -141,10 +151,34 @@ export function scoreUpload(upload: StoredUpload, kind: Freshness, at: number, m
                     ? { kind: 'tag', tag: score.tagKey }
                     : { kind: 'taste' };
     const linked = followed || score.artist >= RADAR_PARAMS.linkWeight || score.creditBest >= RADAR_PARAMS.linkWeight || score.track > 0 || score.family > 0;
+    const credits = Array.isArray(upload.credits) ? upload.credits : [];
+    const dated = /^\d{4}-\d{2}-\d{2}$/.test(upload.releaseDay);
+    const archive = !(kind === 'release' && dated) && archiveTitle(upload.title, to);
     return {
-        key: upload.key, id: upload.id, base, direction: score.tagKey || tagShares(upload.genre, upload.tags, [upload.uploaderName])[0]?.[0] || '', family: familyKey(track) || upload.key,
-        uploader: upload.uploader, kind, at, heard, linked, reason, performer: performerKey(upload.uploader, upload.uploaderName, Array.isArray(upload.credits) ? upload.credits : []),
+        key: upload.key, id: upload.id, base: archive ? Math.max(0, base - RADAR_PARAMS.archivePenalty) : base,
+        direction: score.tagKey || tagShares(upload.genre, upload.tags, [upload.uploaderName])[0]?.[0] || '', family: familyKey(track) || upload.key,
+        uploader: upload.uploader, kind, at, heard, linked, reason, performer: performerKey(upload.uploader, upload.uploaderName, credits),
+        fan: !followed && !upload.isrc && !dated && fanWork(upload.uploaderName, credits), archive,
     };
+}
+
+/** Чужая песня: исполнители в титрах есть, загрузчика среди них нет. Ремикс и эдит чужой песни сюда же, даже если
+ *  загрузчик указан ремиксером (П10): это переделка, а не релиз исполнителя */
+export function fanWork(uploaderName: string, credits: TrackCredit[]): boolean {
+    const own = nameKey(uploaderName);
+    const artists = credits.filter((credit) => credit.role === 'artist' && credit.key);
+    return artists.length > 0 && !artists.some((credit) => credit.key === own);
+}
+
+/** Архив по названию: год 1950-2099 отдельным числом не позже чем archiveYears лет до года отсечки («1979», «(Live 2008)») */
+export function archiveTitle(title: string, to: number): boolean {
+    const limit = new Date(to).getUTCFullYear() - RADAR_PARAMS.archiveYears;
+    return Array.from(title.matchAll(/(?<!\d)(19[5-9]\d|20\d\d)(?!\d)/g), (match) => Number(match[1])).some((year) => year <= limit);
+}
+
+/** Архивные записи вниз своего списка, порядок внутри частей прежний */
+export function archiveLast<T extends { archive: boolean }>(items: T[]): T[] {
+    return [...items.filter((item) => !item.archive), ...items.filter((item) => item.archive)];
 }
 
 /** Группы выпуска (решение владельца 26.09.2026): записи одного исполнителя одного вида одной строкой, как один трек
@@ -386,6 +420,8 @@ export interface RadarItem {
     after?: boolean;
     /** Все записи группы исполнителя по дате, включая эту; только если записей больше одной */
     group?: number[];
+    /** Фанатская работа: в выпуске лежит в uploads и показывается карточкой «Ремиксы и эдиты» (алгоритм 6) */
+    fan?: true;
 }
 export interface RadarEdition {
     period: string;
@@ -421,6 +457,7 @@ export function cleanRadarItem(value: unknown): RadarItem | null {
         at: number(item.at), heard: item.heard === true, score: number(item.score), base: number(item.base), bonus: number(item.bonus),
         penalty: number(item.penalty), direction: text(item.direction, 80), reason: cleanReason,
         ...(group.length > 1 && group.includes(id) ? { group } : {}),
+        ...(item.fan === true ? { fan: true as const } : {}),
     };
 }
 
@@ -445,6 +482,7 @@ export interface RadarInput {
 }
 const round = (value: number): number => Math.round(value * 1000) / 1000;
 const asItem = (pick: RadarPick, upload: StoredUpload, group: RadarCandidate[] = []): RadarItem => ({
+    ...(pick.fan ? { fan: true as const } : {}),
     key: pick.key, id: pick.id, title: upload.title, artist: upload.uploaderName, kind: pick.kind === 'upload' ? 'upload' : 'release', at: pick.at,
     heard: pick.heard, score: round(pick.score), base: round(pick.base), bonus: round(pick.bonus), penalty: round(pick.penalty), direction: pick.direction, reason: pick.reason,
     ...(group.length > 1 ? { group: group.map((member) => member.id) } : {}),
@@ -521,13 +559,15 @@ export function buildRadar(input: RadarInput): RadarEdition | null {
     const byKey = new Map(input.uploads.map((upload) => [upload.key, upload]));
     const releases: RadarCandidate[] = [];
     const fresh: RadarCandidate[] = [];
-    for (const candidate of radarCandidates(input, input.cutoff - P.windowDays * DAY, input.cutoff)) (candidate.kind === 'release' ? releases : fresh).push(candidate);
+    const fans: RadarCandidate[] = [];
+    for (const candidate of radarCandidates(input, input.cutoff - P.windowDays * DAY, input.cutoff)) (candidate.fan ? fans : candidate.kind === 'release' ? releases : fresh).push(candidate);
     const complete = coverageComplete(input.coverage);
     if (!releases.length && !complete) return null;
     // Отбор идёт по ведущим групп: потолок аккаунта считает группы, остальные записи исполнителя едут в group
     const releaseGroups = performerGroups(releases);
     const freshGroups = performerGroups(fresh);
-    const groupOf = new Map([...releaseGroups, ...freshGroups].map((entry) => [entry.lead.key, entry.group]));
+    const fanGroups = performerGroups(fans);
+    const groupOf = new Map([...releaseGroups, ...freshGroups, ...fanGroups].map((entry) => [entry.lead.key, entry.group]));
     const item = (pick: RadarPick): RadarItem | null => {
         const upload = byKey.get(pick.key);
         return upload ? asItem(pick, upload, groupOf.get(pick.key)) : null;
@@ -541,9 +581,13 @@ export function buildRadar(input: RadarInput): RadarEdition | null {
         coverage: input.coverage,
         algorithm: P.version,
         taste: input.tasteVersion,
-        items: selectEdition(releaseGroups.map((entry) => entry.lead), input.history).map(item).filter((entry): entry is RadarItem => entry !== null),
-        // Тот же потолок аккаунта, что в основном списке: сборный канал с тридцатью исполнителями иначе занимает все места
-        uploads: selectRadar(freshGroups.map((entry) => entry.lead), [], P.uploadsSize, P.perUploader).map(item).filter((entry): entry is RadarItem => entry !== null),
+        items: archiveLast(selectEdition(releaseGroups.map((entry) => entry.lead), input.history)).map(item).filter((entry): entry is RadarItem => entry !== null),
+        // Тот же потолок аккаунта, что в основном списке: сборный канал с тридцатью исполнителями иначе занимает все места.
+        // Фанатские работы лежат там же с пометкой fan, без смены схемы хранилища
+        uploads: [
+            ...archiveLast(selectRadar(freshGroups.map((entry) => entry.lead), [], P.uploadsSize, P.perUploader)),
+            ...archiveLast(selectRadar(fanGroups.map((entry) => entry.lead), [], P.fansSize, P.perUploader)),
+        ].map(item).filter((entry): entry is RadarItem => entry !== null),
     };
 }
 

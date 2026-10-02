@@ -18,7 +18,7 @@ const { coversOf, retryDelay } = waveLinks;
 const { isWaveEligible } = wavePicks;
 const { countText, fillText, formatTime } = waveTexts;
 
-/** Карточка радара на полке: выпуск или «Новые загрузки»; wait это заготовка, пока выпуск читается */
+/** Карточка радара на полке: выпуск, «Новые загрузки» или «Ремиксы и эдиты»; wait это заготовка, пока выпуск читается */
 export interface RadarCard { index: number; title: string; sub: string; art: string[]; playable: boolean; wait: boolean; stamp: string }
 
 export interface RadarCore {
@@ -28,6 +28,7 @@ export interface RadarCore {
     /** Номера карточек радара на полке: отрицательные и не -1 */
     radarCard: number;
     uploadsCard: number;
+    fansCard: number;
     isRadarCard(index: number | null | undefined): boolean;
     active(): boolean;
     disposed(): boolean;
@@ -79,14 +80,16 @@ export interface RadarSection {
 
 export function installRadar(core: RadarCore): RadarSection {
     const {
-        texts: T, host, radarCard: RADAR_CARD, uploadsCard: UPLOADS_CARD, isRadarCard, addMany, isExcluded, artistName, tracksByIds, beginSeed, ensureProfile,
+        texts: T, host, radarCard: RADAR_CARD, uploadsCard: UPLOADS_CARD, fansCard: FANS_CARD, isRadarCard, addMany, isExcluded, artistName, tracksByIds, beginSeed, ensureProfile,
         ensureExclusions, ensureUser, call, render, showToast, el, button, textButton, trackRow,
     } = core;
     const isId = (value: unknown): value is number => typeof value === 'number' && Number.isSafeInteger(value) && value > 0;
     // group: все записи группы исполнителя по дате, включая эту; пусто, если запись одна
-    interface RadarRow { id: number; title: string; artist: string; kind: 'release' | 'upload'; heard: boolean; reason: RadarReason; after: boolean; group: number[] }
+    interface RadarRow { id: number; title: string; artist: string; kind: 'release' | 'upload'; heard: boolean; reason: RadarReason; after: boolean; group: number[]; fan: boolean }
+    // fans: фанатские работы из uploads выпуска (алгоритм 6), у старых выпусков пусто
     interface RadarEditionView {
         period: string; revision: number; cutoff: number; status: 'complete' | 'partial'; checked: number; total: number; algorithm: number; items: RadarRow[]; uploads: RadarRow[];
+        fans: RadarRow[];
     }
     // Релиз аккаунта из userAlbums: вид (album, ep, single, compilation), число треков и их порядок
     interface RadarAlbum { kind: string; title: string; count: number; ids: number[] }
@@ -132,7 +135,7 @@ export function installRadar(core: RadarCore): RadarSection {
             const group = Array.isArray(item.group) ? item.group.filter(isId) : [];
             return [{
                 id: item.id, title: text(item.title), artist: text(item.artist), kind: item.kind === 'upload' ? 'upload' : 'release', heard: item.heard === true, reason,
-                after: item.after === true, group: group.length > 1 && group.includes(item.id) ? group : [],
+                after: item.after === true, group: group.length > 1 && group.includes(item.id) ? group : [], fan: item.fan === true,
             }];
         });
     }
@@ -151,10 +154,11 @@ export function installRadar(core: RadarCore): RadarSection {
         const edition = source.edition && typeof source.edition === 'object' ? (source.edition as Record<string, unknown>) : null;
         const number = (item: unknown): number => (typeof item === 'number' && Number.isFinite(item) ? item : 0);
         const coverage = edition?.coverage && typeof edition.coverage === 'object' ? (edition.coverage as Record<string, unknown>) : {};
+        const side = asRadarRows(edition?.uploads);
         const next: RadarEditionView | null = edition && typeof edition.period === 'string' ? {
             period: edition.period, revision: number(edition.revision), cutoff: number(edition.cutoff), status: edition.status === 'complete' ? 'complete' : 'partial',
             checked: number(coverage.checked) + number(coverage.searchesDone), total: number(coverage.accounts) + number(coverage.searches),
-            algorithm: number(edition.algorithm), items: asRadarRows(edition.items), uploads: asRadarRows(edition.uploads),
+            algorithm: number(edition.algorithm), items: asRadarRows(edition.items), uploads: side.filter((row) => !row.fan), fans: side.filter((row) => row.fan),
         } : null;
         const same = !!next && !!radarEdition && radarKey(next) === radarKey(radarEdition);
         // Играет прежний выпуск: карточка нового больше не «играющая»
@@ -170,6 +174,7 @@ export function installRadar(core: RadarCore): RadarSection {
         if (same) return;
         mixLists.delete(RADAR_CARD);
         mixLists.delete(UPLOADS_CARD);
+        mixLists.delete(FANS_CARD);
         radarFound = null;
         radarShowFound = false;
         radarGroupOpen = 0;
@@ -229,21 +234,25 @@ export function installRadar(core: RadarCore): RadarSection {
         const edition = radarEdition;
         if (!edition) return;
         try {
-            await radarTracksOf([...edition.items.slice(0, 4), ...edition.uploads.slice(0, 4)].map((row) => row.id));
+            await radarTracksOf([...edition.items.slice(0, 4), ...edition.uploads.slice(0, 4), ...edition.fans.slice(0, 4)].map((row) => row.id));
             if (radarEdition !== edition) return;
             const covers = (rows: RadarRow[]): string[] => coversOf(rows.slice(0, 4).map((row) => radarTracks.get(row.id)).filter((track): track is WaveTrack => !!track));
             radarArt.set(RADAR_CARD, covers(edition.items));
             radarArt.set(UPLOADS_CARD, covers(edition.uploads));
+            radarArt.set(FANS_CARD, covers(edition.fans));
             render();
         } catch (error) {
             console.warn('Радар: обложки не загружены', error);
         }
     }
-    // Позиции карточки: выпуск, «Новые загрузки» или «Все найденные» с фильтрами
+    // Боковые карточки выпуска: «Новые загрузки» и «Ремиксы и эдиты»
+    const sideRows = (edition: RadarEditionView, index: number): RadarRow[] | null => (index === UPLOADS_CARD ? edition.uploads : index === FANS_CARD ? edition.fans : null);
+    // Позиции карточки: выпуск, боковая карточка или «Все найденные» с фильтрами
     function radarRows(index: number): RadarRow[] {
         const edition = radarEdition;
         if (!edition) return [];
-        if (index === UPLOADS_CARD) return legacyGroups(edition, edition.uploads);
+        const side = sideRows(edition, index);
+        if (side) return legacyGroups(edition, side);
         if (!radarShowFound) return legacyGroups(edition, edition.items);
         const found = radarFound?.key === radarKey(edition) && Array.isArray(radarFound.rows) ? radarFound.rows : [];
         return found.filter((row) => (radarKind === 'all' || row.kind === radarKind) && !(radarHideHeard && row.heard));
@@ -274,7 +283,8 @@ export function installRadar(core: RadarCore): RadarSection {
     function loadRadarTracks(index: number): void {
         // Старый выпуск склеивается по загруженным трекам: грузятся все его строки, а не только уже склеенные
         const edition = radarEdition;
-        const all = edition && index === UPLOADS_CARD ? edition.uploads : edition && !radarShowFound ? edition.items : radarRows(index);
+        const side = edition ? sideRows(edition, index) : null;
+        const all = side ?? (edition && !radarShowFound ? edition.items : radarRows(index));
         const ids = all.map((row) => row.id);
         const shown = (): WaveTrack[] => radarRows(index).map((row) => radarTracks.get(row.id)).filter((track): track is WaveTrack => !!track && isWaveEligible(track));
         if (ids.every((id) => radarTracks.has(id))) {
@@ -485,11 +495,14 @@ export function installRadar(core: RadarCore): RadarSection {
         const cards: RadarCard[] = [{ index: RADAR_CARD, title: T.radar, sub, art: radarArt.get(RADAR_CARD) ?? [], playable: edition.items.length > 0, wait: false, stamp }];
         if (edition.uploads.length)
             cards.push({ index: UPLOADS_CARD, title: T.radarUploads, sub: countText(edition.uploads.length, T.tracksCount, T.lang), art: radarArt.get(UPLOADS_CARD) ?? [], playable: true, wait: false, stamp });
+        if (edition.fans.length)
+            cards.push({ index: FANS_CARD, title: T.radarFans, sub: countText(edition.fans.length, T.tracksCount, T.lang), art: radarArt.get(FANS_CARD) ?? [], playable: true, wait: false, stamp });
         return cards;
     }
     // Подпись под названием раскрытого радара: число, полнота обхода, ревизия, идущий сбор новой недели
     function radarStatusLine(index: number, edition: RadarEditionView): string {
-        if (index === UPLOADS_CARD) return countText(edition.uploads.length, T.tracksCount, T.lang);
+        const side = sideRows(edition, index);
+        if (side) return countText(side.length, T.tracksCount, T.lang);
         const parts = [countText(edition.items.length, T.tracksCount, T.lang)];
         parts.push(edition.status === 'complete' ? T.radarComplete : fillText(T.radarCoverage, { checked: String(edition.checked), total: String(edition.total) }));
         if (edition.revision > 1) parts.push(fillText(T.radarRevision, { n: String(edition.revision) }));
@@ -520,7 +533,7 @@ export function installRadar(core: RadarCore): RadarSection {
             if (at >= 0) own = lead ? [...own.slice(at + 1), ...own.slice(0, at + 1)] : [...own.slice(at + 1), ...own.slice(0, at)];
             radarReasons.clear();
             for (const row of rows) radarReasons.set(row.id, radarWhy(row));
-            const title = index === UPLOADS_CARD ? T.radarUploads : T.radar + ', ' + radarDate(edition.cutoff);
+            const title = index === UPLOADS_CARD ? T.radarUploads : index === FANS_CARD ? T.radarFans : T.radar + ', ' + radarDate(edition.cutoff);
             await beginSeed(request, { seed: { kind: 'radar', title, own, tracks: own.slice(), order: 'fixed', mode: 'similar', card: index }, first });
         } catch (error) {
             if (request !== core.seedRequest()) return;
@@ -531,8 +544,8 @@ export function installRadar(core: RadarCore): RadarSection {
     // Раскрытый радар: шапка со статусом и архивом, фильтры «Всех найденных», метки у строк
     function renderRadarMix(index: number): HTMLElement {
         const edition = radarEdition;
-        const uploads = index === UPLOADS_CARD;
-        const title = uploads ? T.radarUploads : edition ? T.radar + ', ' + radarDate(edition.cutoff) : T.radar;
+        const uploads = index === UPLOADS_CARD || index === FANS_CARD;
+        const title = index === UPLOADS_CARD ? T.radarUploads : index === FANS_CARD ? T.radarFans : edition ? T.radar + ', ' + radarDate(edition.cutoff) : T.radar;
         const box = el('div', 'scw-mix');
         box.setAttribute('role', 'region');
         box.setAttribute('aria-label', title);
@@ -586,7 +599,7 @@ export function installRadar(core: RadarCore): RadarSection {
         // Крестик в одной группе с кнопками выпуска: в узком окне они уходят строкой ниже вместе
         (tools ?? head).append(close);
         box.append(head);
-        if (uploads) box.append(el('div', 'scw-hint', T.radarUploadsHint));
+        if (uploads) box.append(el('div', 'scw-hint', index === FANS_CARD ? T.radarFansHint : T.radarUploadsHint));
         if (!uploads && radarShowFound) {
             const chips = el('div', 'scw-mix-tools scw-filters');
             const kinds: Array<[typeof radarKind, string]> = [['all', T.radarAll], ['release', T.radarReleases], ['upload', T.radarPosts]];

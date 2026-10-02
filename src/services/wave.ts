@@ -440,7 +440,8 @@ export function installWave(config: WaveConfig, createPlayback: typeof installPl
     // Радар на полке: номера карточек отрицательные и не -1, -1 в обработчике кнопок значит «подборки нет»
     const RADAR_CARD = -10;
     const UPLOADS_CARD = -11;
-    const isRadarCard = (index: number | null | undefined): boolean => index === RADAR_CARD || index === UPLOADS_CARD;
+    const FANS_CARD = -12;
+    const isRadarCard = (index: number | null | undefined): boolean => index === RADAR_CARD || index === UPLOADS_CARD || index === FANS_CARD;
 
     const isId = (value: unknown): value is number => typeof value === 'number' && Number.isSafeInteger(value) && value > 0;
     // Играющая волна больше не привязана к карточке: радара (выпуск сменился) или подборки (полка пересобрана)
@@ -549,6 +550,7 @@ export function installWave(config: WaveConfig, createPlayback: typeof installPl
         host,
         radarCard: RADAR_CARD,
         uploadsCard: UPLOADS_CARD,
+        fansCard: FANS_CARD,
         isRadarCard,
         active: () => active,
         disposed: () => disposed,
