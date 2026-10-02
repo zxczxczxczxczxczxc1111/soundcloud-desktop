@@ -5,7 +5,7 @@ import {
     applyTasteReasons, tagKeys, tasteMaps, tasteOrder, tasteReason, tasteScore, type TasteMaps, type WaveCandidate, type WaveFilter, type WaveTrack,
     countText, forgottenPicks, localDay, pickFinds, tasteGroups, capPerArtist, artistNames, isNewArtist, spreadBy, genreCanon, genreParts, genreMain,
     rememberRecent, retryDelay, genreEnglish, tagShares, performerNames, sharedPerformer,
-    trackLang, tasteSlot, tasteForTime, sourceBias,
+    trackLang, tasteSlot, tasteForTime, sourceBias, trackTraits, seriesTrait,
 } from './wave';
 import { copyKeys, familyKey, versionKey } from './trackIdentity';
 
@@ -365,6 +365,22 @@ it('П6: язык трека по названию, имени, жанру и м
     // Языка нет во вкусе: как вес ноль против любимого
     expect(tasteScore(by('Lonely (Instrumental)'), taste).lang).toBeCloseTo(-0.5 * 30 / 31, 6);
     expect(tasteScore(by('Кровью'), tasteMaps({}) as TasteMaps).lang).toBe(0);
+});
+
+it('П7: общий признак серии пропусков: самый узкий из общих, латиница не признак, прижатое и жанр волны пропускаются', () => {
+    const by = (id: number, title: string, username: string, genre = ''): WaveTrack => track(id, { title, genre, user_id: id, user: { id, username } });
+    const slowedA = by(1, 'Кровью (slowed)', 'Канал', 'Phonk');
+    const slowedB = by(2, 'Night (Slowed + Reverb)', 'Chan', 'Phonk');
+    expect(trackTraits(slowedA).map((trait) => trait.kind + ':' + trait.key)).toEqual(['marker:slowed', 'lang:cyr', 'genre:phonk']);
+    expect(seriesTrait([slowedA, slowedB])).toEqual({ kind: 'marker', key: 'slowed', label: 'slowed' });
+    expect(seriesTrait([slowedA, slowedB], ['marker:slowed'])).toEqual({ kind: 'genre', key: 'phonk', label: 'phonk' });
+    expect(seriesTrait([slowedA, slowedB], ['marker:slowed', 'genre:phonk'])).toBeNull();
+    expect(seriesTrait([by(3, 'Песня', 'Артист'), by(4, 'Другая', 'Второй')])).toMatchObject({ kind: 'lang', key: 'cyr' });
+    expect(seriesTrait([by(5, 'Song', 'A'), by(6, 'Tune', 'B')])).toBeNull();
+    // Чужой канал: в названии другой исполнитель
+    expect(seriesTrait([by(7, 'Star - Song', 'Reupload'), by(8, 'Other - Tune', 'Fan Channel')])).toMatchObject({ kind: 'foreign' });
+    expect(seriesTrait([slowedA])).toBeNull();
+    expect(trackTraits(by(9, 'Song (Super Slowed)', 'A'))[0]).toEqual({ kind: 'marker', key: 'superslowed', label: 'super slowed' });
 });
 
 it('П5: вкус на сейчас прибавляет поправки текущего отрезка суток только к известным ключам', () => {

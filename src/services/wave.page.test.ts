@@ -692,6 +692,82 @@ it('В2.14: три ранних пропуска подряд берут нов�
     next.remove();
 });
 
+it('П7: два ранних пропуска с общим признаком прижимают его до конца волны, плашка его называет, «Отменить» снимает', async () => {
+    vi.spyOn(Math, 'random').mockReturnValue(0.5);
+    // У каждого зерна первые четыре похожих с русским названием, остальные латиницей
+    const site = fakeSite((seed) => relatedTracks(seed).map((track, i) => (i < 4 ? { ...track, title: 'Песня ' + track.id } : track)));
+    window.eval(waveScript());
+    await vi.advanceTimersByTimeAsync(100);
+    document.querySelector<HTMLButtonElement>('#sc-wave .scw-play')!.click();
+    await vi.advanceTimersByTimeAsync(1100);
+    const next = nextButton();
+    const cyr = (id: number): boolean => id % 1000 < 4;
+    expect(cyr(site.player.getCurrentSound()!.id)).toBe(true);
+    await skipNow(site, next);
+    expect(document.querySelector('.scw-toast')).toBeNull();
+    expect(cyr(site.player.getCurrentSound()!.id)).toBe(true);
+    await skipNow(site, next);
+    expect(document.querySelector('.scw-toast')?.textContent).toBe('Less Russian-language music in this waveUndo');
+    // Впереди сначала латиница: кириллица прижата
+    const ahead = (): number[] => site.player.getQueue().slice(site.player.getQueueState().currentIndex + 1).map((item) => item.sound.id);
+    const first = ahead().slice(0, 3);
+    expect(first.length).toBe(3);
+    expect(first.some(cyr)).toBe(false);
+    next.remove();
+});
+
+it('П8: три быстрых пропуска открывают «Куда дальше?» с разными направлениями, выбор играет трек, крестик и две минуты закрывают', async () => {
+    vi.spyOn(Math, 'random').mockReturnValue(0.5);
+    // Любимые аккаунты у первых двух зёрен, спокойный жанр у части треков, подборка SoundCloud, незнакомые у третьего зерна
+    const named = (track: WaveTrack): WaveTrack => ({ ...track, user: { id: track.user_id, username: 'Artist ' + track.user_id } });
+    const site = fakeSite((seed) => relatedTracks(seed).map((track, i) => named(i >= 4 ? { ...track, genre: 'Ambient' } : track)), (name, _path, query) => {
+        if (name === 'mixedSelections') return { collection: [{ urn: 'soundcloud:selections:your-moods', items: { collection: [{ kind: 'system-playlist', urn: 'soundcloud:system-playlists:your-moods:77:1', title: 'Your Mix 1', tracks: Array.from({ length: 20 }, (_, i) => ({ id: 8801 + i, kind: 'track' })) }] } }] };
+        if (name === 'trackBatch' && typeof query.ids === 'string') return { collection: query.ids.split(',').map(Number).filter((id) => id >= 8800).map((id) => ({ id, kind: 'track', title: 'Mix ' + id, duration: 200000, user_id: id, user: { id, username: 'U' + id } })) };
+        return undefined;
+    });
+    const favorites = [10, 11, 12, 13, 14, 15, 16, 20, 21, 22, 23, 24, 25, 26].map((id) => [id, 2]);
+    Object.assign(window, { soundcloudAPI: { waveTaste: { load: vi.fn(async () => ({ artists: favorites, tags: [], tracks: [] })) } } });
+    window.eval(waveScript());
+    await vi.advanceTimersByTimeAsync(100);
+    document.querySelector<HTMLButtonElement>('#sc-wave .scw-play')!.click();
+    await vi.advanceTimersByTimeAsync(1100);
+    const next = nextButton();
+    for (let i = 0; i < 3; i++) await skipNow(site, next);
+    const options = (): HTMLElement[] => [...document.querySelectorAll<HTMLElement>('#sc-wave .scw-tile[data-fork]')];
+    expect(document.querySelector('#sc-wave .scw-fork-h')?.textContent).toBe('Where to next?');
+    expect(options().length).toBeGreaterThanOrEqual(4);
+    expect(options().length).toBeLessThanOrEqual(5);
+    const labels = options().map((tile) => tile.querySelector('.scw-t3')?.textContent);
+    expect(labels).toContain('Calmer');
+    expect(labels).toContain('From SoundCloud’s Your Mix 1');
+    expect(labels.some((label) => label?.startsWith('You love'))).toBe(true);
+    // Блок на экране: плашка не нужна
+    expect(document.querySelector('.scw-toast.on')).toBeNull();
+    const queued = site.player.getQueue().slice().map((item) => item.sound.id);
+    const chosen = Number(options()[1].dataset.fork);
+    expect(queued).not.toContain(chosen);
+    options()[1].click();
+    await vi.advanceTimersByTimeAsync(1100);
+    expect(site.player.getCurrentSound()!.id).toBe(chosen);
+    expect(options()).toHaveLength(0);
+    // Выбор не считается пропуском: ещё два быстрых пропуска развилку не открывают
+    for (let i = 0; i < 2; i++) await skipNow(site, next);
+    expect(options()).toHaveLength(0);
+    await skipNow(site, next);
+    expect(options().length).toBeGreaterThanOrEqual(4);
+    document.querySelector<HTMLButtonElement>('#sc-wave [data-act="fork-close"]')!.click();
+    expect(options()).toHaveLength(0);
+    // Блок волны не на экране (другая страница сайта): плашка зовёт на главную
+    const section = document.getElementById('sc-wave')!;
+    Object.defineProperty(section, 'offsetParent', { configurable: true, get: () => null });
+    for (let i = 0; i < 3; i++) await skipNow(site, next);
+    expect(options().length).toBeGreaterThanOrEqual(4);
+    expect(document.querySelector('.scw-toast.on')?.textContent).toBe('Looking for something else? Options are on the home page');
+    await vi.advanceTimersByTimeAsync(121000);
+    expect(options()).toHaveLength(0);
+    next.remove();
+});
+
 it('В2.9: лайк трека волны сразу ставит похожие на него первыми впереди', async () => {
     const site = fakeSite(relatedTracks);
     document.body.insertAdjacentHTML('beforeend', '<div class="playControls"><button class="playbackSoundBadge__like"></button></div>');

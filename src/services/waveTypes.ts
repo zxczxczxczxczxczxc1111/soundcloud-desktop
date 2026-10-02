@@ -130,6 +130,7 @@ export type WaveTexts = Record<
     | 'presets' | 'presetAll' | 'moodHappy' | 'moodSad' | 'moodAggressive' | 'moodCalm' | 'moodEnergetic' | 'hintPreset' | 'presetShort' | 'whyMoodTag'
     | 'undo' | 'toastLiked' | 'toastUnliked' | 'seedCollecting' | 'seedCollectingAny'
     | 'whyRelatedArtist' | 'whyScMix' | 'whyNeighbors'
+    | 'traitLessCyr' | 'traitLessInst' | 'traitLessGenre' | 'traitLessMarker' | 'traitLessForeign' | 'forkTitle' | 'forkClose' | 'forkCalm' | 'forkAway'
     | 'pinned' | 'menuPin' | 'menuUnpin' | 'menuWaveGenre' | 'toastPinned' | 'toastUnpinned' | 'toastPinFull' | 'pinPlay' | 'pinRemove',
     string
 >;
@@ -150,6 +151,14 @@ export interface TasteMaps {
     contexts: Map<number, { artists: Map<number, number>; tags: Map<string, number> }>;
     /** Источники волны за 14 дней: дослушано и ранних пропусков по исходной причине (П9) */
     sources: Map<string, { done: number; early: number }>;
+}
+
+/** Общий признак серии ранних пропусков (П7): пометка версии, язык, главный жанр или чужой канал */
+export interface SeriesTrait {
+    kind: 'marker' | 'lang' | 'genre' | 'foreign';
+    key: string;
+    /** Как назвать в плашке: пометка или жанр в написании трека */
+    label: string;
 }
 
 export interface TasteScore {

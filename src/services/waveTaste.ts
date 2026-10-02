@@ -4,10 +4,10 @@
 import * as identity from './trackIdentity';
 import * as waveGenres from './waveGenres';
 import * as wavePicks from './wavePicks';
-import type { TasteGroup, TasteMaps, TasteScore, WaveCandidate, WaveReason, WaveTrack } from './waveTypes';
+import type { SeriesTrait, TasteGroup, TasteMaps, TasteScore, WaveCandidate, WaveReason, WaveTrack } from './waveTypes';
 
 const { copyKey, copyKeys, familyKey, nameKey, parseTrackTitle, trackCredits } = identity;
-const { genreCanon, genreParts, normalizeTag, tagKeys, tagShares, trackLang } = waveGenres;
+const { genreCanon, genreMain, genreParts, normalizeTag, tagKeys, tagShares, trackLang } = waveGenres;
 const { capPerArtist, isWaveEligible, shuffleInPlace, spreadBy, trackArtist } = wavePicks;
 
 // Ответ main недоверенный: берутся только пары [id или ключ, конечное число]. Старый профиль без новых частей даёт пустые
@@ -63,6 +63,34 @@ export function tasteForTime(base: TasteMaps, now: number): TasteMaps {
     const tags = new Map(base.tags);
     for (const [key, delta] of shift.tags) if (tags.has(key)) tags.set(key, (tags.get(key) ?? 0) + delta);
     return { ...base, artists, tags };
+}
+
+// Признаки трека для серии пропусков (П7): пометки версии, язык кроме латиницы (она у большинства и ничего не
+// различает), главный жанр, чужой канал (в названии другой исполнитель, загрузчик не он)
+export function trackTraits(track: WaveTrack): SeriesTrait[] {
+    const traits: SeriesTrait[] = [];
+    const parsed = parseTrackTitle(track.title);
+    const names: Record<string, string> = { superslowed: 'super slowed', sped: 'sped up', supersped: 'super sped up', bassboost: 'bass boosted' };
+    for (const marker of new Set(parsed.version.map((item) => item.split(':')[0]))) if (marker) traits.push({ kind: 'marker', key: marker, label: names[marker] ?? marker });
+    const lang = trackLang(track);
+    if (lang !== 'lat') traits.push({ kind: 'lang', key: lang, label: lang });
+    const main = genreMain(track.genre);
+    if (main.key) traits.push({ kind: 'genre', key: main.key, label: main.label.toLowerCase() });
+    const uploader = nameKey(track.user?.username);
+    if (parsed.credits.some((credit) => credit.role === 'artist' && credit.key && credit.key !== uploader)) traits.push({ kind: 'foreign', key: 'foreign', label: '' });
+    return traits;
+}
+
+// Общий признак всей серии ранних пропусков: самый узкий из общих, пометка версии, потом язык, жанр, чужой канал.
+// skip: ключи «вид:ключ», которые уже прижаты или не различают эту волну (выбранный жанр)
+export function seriesTrait(tracks: WaveTrack[], skip: string[] = []): SeriesTrait | null {
+    if (tracks.length < 2) return null;
+    const all = tracks.map(trackTraits);
+    const order: Array<SeriesTrait['kind']> = ['marker', 'lang', 'genre', 'foreign'];
+    const common = all[0]
+        .filter((trait) => !skip.includes(trait.kind + ':' + trait.key) && all.every((list) => list.some((item) => item.kind === trait.kind && item.key === trait.key)))
+        .sort((a, b) => order.indexOf(a.kind) - order.indexOf(b.kind));
+    return common[0] ?? null;
 }
 
 // Поправка источников на один проход подбора (П9): выборка доли дослушанного из бета-распределения
