@@ -140,12 +140,14 @@
             sources: {
                 similar: 'Моя волна: похожее', fresh: 'Моя волна: новое', track: 'Волна по треку', artist: 'Волна по артисту', playlist: 'Волна по плейлисту', daily: 'Разведка',
                 forgotten: 'Давно не слушал', group: 'Твой вкус', tracks: 'Волна по набору', radar: 'Радар релизов', library: 'В «Моей музыке»',
+                artistAll: 'Все треки артиста', liked: 'Лайкнули твои артисты',
             },
             reasons: {
                 similar: 'Похоже на трек', fresh: 'Новое, похоже на трек', newArtist: 'Новый артист', genreFresh: 'Свежее в жанре', genrePopular: 'Популярное в жанре',
                 genreSimilar: 'Жанр и похожее', artistTrack: 'Треки артиста', mood: 'В духе трека', tasteArtist: 'Любимый артист', tasteTag: 'Любимый тег',
                 daily: 'Разведка', forgotten: 'Давно не звучал', group: 'Твой вкус', version: 'Другая версия', radar: 'Радар релизов', restored: 'Сохранённая очередь',
-                moodTag: 'Метка настроения',
+                moodTag: 'Метка настроения', seedTrack: 'Начало волны', relatedArtist: 'Похожий артист', scMix: 'Подборка SoundCloud',
+                neighbors: 'Слушатели с похожим вкусом', likedBy: 'Лайк артиста', library: 'Моя музыка', station: 'Станция трека',
                 '': 'Не записана',
             },
         },
@@ -279,13 +281,15 @@
             presets: { happy: 'Happy', sad: 'Sad', aggressive: 'Aggressive', calm: 'Calm', energetic: 'Energetic' },
             sources: {
                 similar: 'My Wave: Similar', fresh: 'My Wave: New', track: 'Wave from track', artist: 'Wave from artist', playlist: 'Wave from playlist', daily: 'Scout',
-                forgotten: 'Not played in a while', group: 'Your taste', tracks: 'Wave from picks', radar: 'Release Radar', library: 'Inside My music',
+                forgotten: 'Not played in a while', group: 'Your taste', tracks: 'Wave from picks', radar: 'Release Radar', library: 'In My music',
+                artistAll: 'All tracks by artist', liked: 'Liked by your artists',
             },
             reasons: {
                 similar: 'Similar to a track', fresh: 'New, similar to a track', newArtist: 'New artist', genreFresh: 'Fresh in genre', genrePopular: 'Popular in genre',
                 genreSimilar: 'Genre and similar', artistTrack: 'Artist’s tracks', mood: 'In the spirit of a track', tasteArtist: 'Favourite artist', tasteTag: 'Favourite tag',
                 daily: 'Scout', forgotten: 'Not played in a while', group: 'Your taste', version: 'Another version', radar: 'Release Radar', restored: 'Saved queue',
-                moodTag: 'Mood tag',
+                moodTag: 'Mood tag', seedTrack: 'Wave start', relatedArtist: 'Similar artist', scMix: 'SoundCloud mix',
+                neighbors: 'Listeners with your taste', likedBy: 'Liked by an artist', library: 'My music', station: 'Track station',
                 '': 'Not recorded',
             },
         },
