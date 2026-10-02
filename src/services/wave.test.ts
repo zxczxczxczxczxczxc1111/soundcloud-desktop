@@ -4,7 +4,7 @@ import {
     moodTags, normalizeTag, trackPath, parseGenres, pickSpaced, spacingKeys, spacingGap, freshEnough, reasonText, shapeSamples, topGenres, trackMatchesGenre,
     applyTasteReasons, tagKeys, tasteMaps, tasteOrder, tasteReason, tasteScore, type TasteMaps, type WaveCandidate, type WaveFilter, type WaveTrack,
     countText, forgottenPicks, localDay, pickFinds, tasteGroups, capPerArtist, artistNames, isNewArtist, spreadBy, genreCanon, genreParts, genreMain,
-    rememberRecent, retryDelay, genreEnglish, tagShares,
+    rememberRecent, retryDelay, genreEnglish, tagShares, performerNames, sharedPerformer,
 } from './wave';
 import { copyKeys, familyKey, versionKey } from './trackIdentity';
 
@@ -329,6 +329,19 @@ it('В2.6: одна песня исполнителя на разных кана
     expect(pickSpaced(pool, 5, []).map((item) => item.track.id)).toEqual([1, 4, 5, 2, 3]);
     expect(spacingGap(pool)).toBe(2);
     expect(spacingGap(Array.from({ length: 30 }, (_, i) => other(100 + i)))).toBe(5);
+});
+
+it('П1: общий исполнитель двух записей: загрузчик своего, участники из названия, без продюсеров и чужого канала', () => {
+    const by = (id: number, title: string, username: string): WaveTrack => track(id, { title, user_id: id, user: { id, username } });
+    const seed = by(1, 'реквием по мечте', 'mightymason');
+    expect(sharedPerformer(seed, by(2, 'кровью', 'mightymason'))).toBe('mightymason');
+    expect(sharedPerformer(seed, by(3, 'mightymason - реквием по мечте (slowed)', 'Fan Channel'))).toBe('mightymason');
+    // Канал выложил чужую песню без себя в титрах: это не его запись
+    expect(sharedPerformer(seed, by(4, 'Моцарт - Реквием По Мечте (Dub Step Remix)', 'mightymason'))).toBe('');
+    expect(sharedPerformer(seed, by(8, 'Моцарт - Реквием По Мечте (mightymason Remix)', 'Channel'))).toBe('mightymason');
+    expect(sharedPerformer(seed, by(5, 'Моцарт - Реквием По Мечте', 'Channel'))).toBe('');
+    expect(sharedPerformer(seed, by(6, 'Other - Beat (prod. mightymason)', 'Other'))).toBe('');
+    expect([...performerNames(by(7, 'Star - Song (feat. Guest)', 'Channel')).keys()].sort()).toEqual(['guest', 'star']);
 });
 
 it('В2.12: мягкий порог свежего в жанре, лайки трека и поправка сессии в порядке по вкусу', () => {

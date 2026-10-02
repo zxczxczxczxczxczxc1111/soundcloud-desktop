@@ -2493,9 +2493,52 @@ it('P3: текстовый поиск находит другие версии �
     for (const args of searches) expect(args[2]).toEqual({ q: expect.stringMatching(/^Seed \d$/), limit: 50 });
     const why = [...document.querySelectorAll('#sc-wave .scw-t3')].map((node) => node.textContent);
     expect(why.some((text) => /^Another version of Seed \d$/.test(text ?? ''))).toBe(true);
-    expect(why.some((text) => /^Similar to Seed \d$/.test(text ?? ''))).toBe(true);
+    // Чужое с тем же словом в названии не версия и не песня того же исполнителя: в подборку не идёт
+    expect(why.some((text) => /^Similar to Seed \d$/.test(text ?? ''))).toBe(false);
     const ids = [...document.querySelectorAll<HTMLElement>('#sc-wave .scw-tile[data-track]')].map((tile) => Number(tile.dataset.track));
-    expect(ids.every((id) => id >= 7000)).toBe(true);
+    expect(ids.length).toBeGreaterThan(0);
+    expect(ids.every((id) => id >= 7000 && id % 10 === 0)).toBe(true);
+});
+
+it('П1: волна от трека не уезжает по названию: из поиска только версии и песни того же исполнителя, одно произведение раз', async () => {
+    vi.spyOn(Math, 'random').mockReturnValue(0.5);
+    const user = (id: number, username: string) => ({ user_id: id, user: { id, username } });
+    const related = (seed: number): WaveTrack[] => (seed === 555 ? [
+        { id: 6001, kind: 'track', title: 'Near', duration: 200000, ...user(61, 'Near Art') },
+        { id: 6002, kind: 'track', title: 'Near Art - Near (Slowed)', duration: 230000, ...user(62, 'Fan') },
+        { id: 6003, kind: 'track', title: 'Near Art - Near (Sped Up)', duration: 170000, ...user(63, 'Fan Two') },
+        { id: 6004, kind: 'track', title: 'Calm', duration: 200000, ...user(64, 'Calm Art') },
+    ] : []);
+    const site = fakeSite(related, (name, path, query) => {
+        if (name === 'searchCategory' && typeof query.q === 'string') return { collection: [
+            { id: 7001, kind: 'track', title: 'Song (Slowed)', duration: 240000, ...user(900, 'Art') },
+            { id: 7002, kind: 'track', title: 'Mozart - Song (Dub Remix)', duration: 200000, ...user(701, 'Dub') },
+            { id: 7003, kind: 'track', title: 'Song of Ego (Interlude)', duration: 200000, ...user(702, 'Ego') },
+            { id: 7004, kind: 'track', title: 'Blood', duration: 200000, ...user(900, 'Art') },
+        ] };
+        return siteExtra(name, path, query);
+    });
+    fakeExclusions();
+    const row = listRow();
+    window.eval(waveScript());
+    await vi.advanceTimersByTimeAsync(100);
+    rightClick(row.querySelector('.soundTitle__title')!);
+    choose('wave-track');
+    await vi.advanceTimersByTimeAsync(500);
+    const queued = (site.player.replaceQueue.mock.calls[site.player.replaceQueue.mock.calls.length - 1][0] as FakeItem[]).map((item) => item.sound.id);
+    expect(queued[0]).toBe(555);
+    // Чужие «Song» из поиска не играют и зёрнами не становятся
+    expect(queued).not.toContain(7002);
+    expect(queued).not.toContain(7003);
+    const asked = site.api.callEndpoint.mock.calls.filter((args) => args[0] === 'relatedSounds').map((args) => (args[1] as { track_id: number }).track_id);
+    expect(asked).not.toContain(7002);
+    expect(asked).not.toContain(7003);
+    // Версия зерна и песня того же исполнителя остаются, каждая со своей причиной
+    expect(queued).toContain(7001);
+    expect(queued).toContain(7004);
+    // «Near» и две её переделки это одно произведение: в подборке одна из трёх
+    expect(queued.filter((id) => id >= 6001 && id <= 6003)).toHaveLength(1);
+    expect(queued).toContain(6004);
 });
 
 type RadarCollect = (budgetMs: number, staleBefore: number) => Promise<unknown>;

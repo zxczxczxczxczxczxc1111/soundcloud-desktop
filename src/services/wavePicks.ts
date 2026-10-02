@@ -137,6 +137,23 @@ export function artistNames(tracks: WaveTrack[]): Set<string> {
     return names;
 }
 
+// Исполнители записи по ключу имени с написанием: загрузчик, если выложил своё, и участники из названия и метаданных,
+// кроме авторов песни и продюсеров
+export function performerNames(track: WaveTrack): Map<string, string> {
+    const names = new Map<string, string>();
+    const credits = trackCredits(track).filter((credit) => credit.role !== 'writer' && credit.role !== 'producer');
+    const uploader = nameKey(track.user?.username);
+    if (uploader && !credits.some((credit) => credit.role === 'artist' && credit.key !== uploader)) names.set(uploader, (track.user?.username ?? '').trim());
+    for (const credit of credits) if (!names.has(credit.key)) names.set(credit.key, credit.name);
+    return names;
+}
+// Общий исполнитель двух записей по написанию в первой; пусто, если общего нет
+export function sharedPerformer(a: WaveTrack, b: WaveTrack): string {
+    const theirs = performerNames(b);
+    for (const [key, name] of performerNames(a)) if (theirs.has(key)) return name;
+    return '';
+}
+
 // Новый исполнитель: у чужой песни на канале решают участники из названия, у своей ещё и сам аккаунт
 export function isNewArtist(track: WaveTrack, knownIds: Set<number>, knownNames: Set<string>): boolean {
     const credits = trackCredits(track).filter((credit) => credit.role !== 'writer');
