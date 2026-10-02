@@ -5,13 +5,13 @@ import { trustLocalFile } from '../trustedViews';
 import type { LibraryService } from '../services/libraryService';
 import { trackPathOf } from '../services/waveSignals';
 import { withTimeout } from '../utils/withTimeout';
-import { medianPlays, receiptImage, receiptName } from './receipt';
+import { lastWeek, recapImage, recapName, recapPeople } from './recap';
 
 const HEADER = 32;
 const DAY = 86400000;
 const ARTIST_PATH = /^\/[a-z0-9_-]{1,100}$/;
-const INVOKE = ['history:init', 'history:overview', 'history:wave', 'history:day', 'history:search', 'history:play', 'history:taste', 'history:taste-remove', 'history:rarity', 'history:receipt-copy', 'history:receipt-save'] as const;
-const SEND = ['history:ready', 'history:close', 'history:artist'] as const;
+const INVOKE = ['history:init', 'history:overview', 'history:wave', 'history:day', 'history:search', 'history:play', 'history:taste', 'history:taste-remove', 'history:people', 'history:recap-copy', 'history:recap-save'] as const;
+const SEND = ['history:ready', 'history:close', 'history:artist', 'history:recap-seen'] as const;
 
 export interface HistoryHost {
     /** Страница сайта: через неё идут воспроизведение, переход и добор названий */
@@ -26,6 +26,11 @@ export interface HistoryHost {
     restoreFocus(): void;
     /** Горячие клавиши клиента внутри окна истории */
     attach(contents: WebContents): void;
+    /** Последняя просмотренная сводка недели: «пользователь:неделя» */
+    recapSeen(): string;
+    setRecapSeen(key: string): void;
+    /** Сводка прошлой недели ждёт просмотра: точка у кнопки истории */
+    onRecap(pending: boolean): void;
 }
 
 const isId = (value: unknown): value is number => typeof value === 'number' && Number.isSafeInteger(value) && value > 0;
@@ -43,6 +48,10 @@ export class HistoryManager {
     private disposed = false;
     // Трек в плеере сайта: страница истории отмечает его строку
     private nowPlaying = 0;
+    // Сводка прошлой недели, которую ещё не смотрели: ключ «пользователь:неделя»; пусто, когда показывать нечего
+    private recapPending = '';
+    private recapOnOpen = false;
+    private recapChecking = false;
     private resize = (): void => this.updateBounds();
     private ready = (event: IpcMainEvent): void => {
         if (!this.owns(event)) return;
@@ -62,6 +71,11 @@ export class HistoryManager {
             .then((done) => (done === true ? undefined : site.loadURL('https://soundcloud.com' + path)))
             .catch((error: unknown) => console.warn('История: страница артиста не открыта', error));
     };
+    // Страница показала сводку прошлой недели: точка гаснет
+    private recapShown = (event: IpcMainEvent, year: unknown, week: unknown): void => {
+        if (!this.owns(event) || !isId(year) || !isId(week)) return;
+        if (this.recapPending.endsWith(':' + year + '-' + String(week).padStart(2, '0'))) this.markRecapSeen();
+    };
 
     constructor(private parentWindow: BrowserWindow, private index: LibraryService, private host: HistoryHost) {
         this.parentWindow.on('resize', this.resize);
@@ -77,7 +91,9 @@ export class HistoryManager {
                 }
                 void this.fill(this.userId);
             }
-            return { language: this.host.language(), signedIn: this.userId > 0, reduceMotion: this.host.reduceMotion?.() === true, playing: this.nowPlaying };
+            const recap = this.recapOnOpen;
+            this.recapOnOpen = false;
+            return { language: this.host.language(), signedIn: this.userId > 0, reduceMotion: this.host.reduceMotion?.() === true, playing: this.nowPlaying, recap };
         });
         ipcMain.handle('history:overview', (event, from: unknown, to: unknown) => {
             this.guard(event);
@@ -118,38 +134,37 @@ export class HistoryManager {
             if (!await this.index.request('setRemoved', this.userId, kind, key, removed)) return null;
             return this.index.request('view', this.userId);
         });
-        // Чек недели: редкость вкуса это медиана прослушиваний треков недели на сайте
-        ipcMain.handle('history:rarity', async (event, ids: unknown) => {
+        // Сводка недели: ник, ссылка и аватарка человека, аватарки артистов недели по путям их страниц
+        ipcMain.handle('history:people', async (event, paths: unknown) => {
             this.guard(event);
             const site = this.site();
-            const wanted = Array.isArray(ids) ? ids.filter(isId).slice(0, 100) : [];
-            if (!site || !wanted.length) return null;
+            const asked = Array.isArray(paths) ? paths.filter((path): path is string => typeof path === 'string' && ARTIST_PATH.test(path)).slice(0, 10) : [];
+            if (!site) return null;
             try {
-                const script = 'window.__scResolveTracks ? window.__scResolveTracks(' + JSON.stringify(wanted) + ') : null';
-                const result = (await withTimeout(site.executeJavaScript(script) as Promise<unknown>, 20000, 'редкость вкуса')) as { tracks?: unknown } | null;
-                return medianPlays(result?.tracks);
+                const script = 'window.__scPeople ? window.__scPeople(' + JSON.stringify(asked) + ') : null';
+                return recapPeople(await withTimeout(site.executeJavaScript(script) as Promise<unknown>, 15000, 'люди сводки'), asked);
             } catch (error) {
-                console.warn('История: редкость вкуса не посчитана', error);
+                console.warn('История: ник и аватарки для сводки не получены', error);
                 return null;
             }
         });
-        ipcMain.handle('history:receipt-copy', (event, image: unknown) => {
+        ipcMain.handle('history:recap-copy', (event, image: unknown) => {
             this.guard(event);
-            const buffer = receiptImage(image);
+            const buffer = recapImage(image);
             if (!buffer) return false;
             const picture = nativeImage.createFromBuffer(buffer);
             if (picture.isEmpty()) return false;
             clipboard.writeImage(picture);
             return true;
         });
-        ipcMain.handle('history:receipt-save', async (event, image: unknown) => {
+        ipcMain.handle('history:recap-save', async (event, image: unknown, year: unknown, week: unknown) => {
             this.guard(event);
-            const buffer = receiptImage(image);
+            const buffer = recapImage(image);
             if (!buffer || this.parentWindow.isDestroyed()) return 'failed';
             const ru = this.host.language() === 'ru';
             const { canceled, filePath } = await dialog.showSaveDialog(this.parentWindow, {
-                title: ru ? 'Сохранить чек недели' : 'Save week receipt',
-                defaultPath: join(app.getPath('pictures'), receiptName(new Date())),
+                title: ru ? 'Сохранить сводку недели' : 'Save weekly recap',
+                defaultPath: join(app.getPath('pictures'), recapName(year, week, new Date())),
                 filters: [{ name: ru ? 'Картинка PNG' : 'PNG image', extensions: ['png'] }],
             });
             if (canceled || !filePath) return 'canceled';
@@ -159,6 +174,7 @@ export class HistoryManager {
         ipcMain.on('history:ready', this.ready);
         ipcMain.on('history:close', this.close);
         ipcMain.on('history:artist', this.artist);
+        ipcMain.on('history:recap-seen', this.recapShown);
     }
     private owns(event: Pick<IpcMainInvokeEvent, 'sender' | 'senderFrame'>): boolean {
         return this.view !== null && event.sender === this.view.webContents && event.senderFrame === event.sender.mainFrame;
@@ -232,6 +248,9 @@ export class HistoryManager {
     public show(): void {
         if (this.disposed || this.view) return;
         this.host.beforeOpen();
+        // Точка у кнопки горит: история открывается сразу на сводке прошлой недели, точка гаснет
+        this.recapOnOpen = this.recapPending !== '';
+        this.markRecapSeen();
         this.view = new WebContentsView({
             webPreferences: {
                 nodeIntegration: false,
@@ -283,6 +302,35 @@ export class HistoryManager {
         this.nowPlaying = id;
         if (this.view && !this.view.webContents.isDestroyed()) this.view.webContents.send('history:now', id);
     }
+    private markRecapSeen(): void {
+        if (!this.recapPending) return;
+        this.host.setRecapSeen(this.recapPending);
+        this.recapPending = '';
+        this.host.onRecap(false);
+    }
+    /** Есть ли у пользователя непросмотренная сводка прошлой недели, где была музыка */
+    public async checkRecap(): Promise<void> {
+        if (this.disposed || this.recapChecking) return;
+        this.recapChecking = true;
+        try {
+            const userId = await this.user();
+            const week = lastWeek(new Date());
+            const key = userId ? userId + ':' + week.id : '';
+            let pending = '';
+            if (key && this.host.recapSeen() !== key) {
+                await this.index.request('sync', userId);
+                const overview = await this.index.request('overview', userId, week.from, week.to);
+                if (overview && overview.heard > 0) pending = key;
+            }
+            if (this.disposed || pending === this.recapPending) return;
+            this.recapPending = pending;
+            this.host.onRecap(pending !== '');
+        } catch (error) {
+            console.warn('История: сводка недели не проверена', error);
+        } finally {
+            this.recapChecking = false;
+        }
+    }
     public setLanguage(language: 'ru' | 'en'): void {
         this.view?.webContents.send('history:language', language);
     }
@@ -295,6 +343,7 @@ export class HistoryManager {
         ipcMain.removeListener(SEND[0], this.ready);
         ipcMain.removeListener(SEND[1], this.close);
         ipcMain.removeListener(SEND[2], this.artist);
+        ipcMain.removeListener(SEND[3], this.recapShown);
         void this.index.close().catch((error: unknown) => console.warn('Библиотека не закрыта', error));
     }
 }

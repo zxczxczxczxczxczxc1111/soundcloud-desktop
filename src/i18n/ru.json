@@ -72,6 +72,7 @@
     "headerClose": "Закрыть",
     "headerQueue": "Очередь",
     "headerHistory": "История, Ctrl+H",
+    "headerHistoryRecap": "История, Ctrl+H. Сводка недели готова",
     "headerSettings": "Настройки, F1",
     "updateScreenTitle": "Обновление до версии {v}",
     "updateScreenDownloading": "Загружаю: {p}%",

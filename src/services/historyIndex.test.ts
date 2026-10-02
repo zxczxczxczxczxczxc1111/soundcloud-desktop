@@ -174,9 +174,6 @@ it('топ артистов по исполнителю, а не по сборн
     expect(view.fresh).toBe(2);
     // Night на канале и у самого Alpha: одна песня с тремя прослушиваниями
     expect(view.tracks.map((track) => [track.name, track.plays])).toEqual([['Alpha - Night', 3], ['Bravo - Day', 1]]);
-    // Для чека недели: каждая загрузка отдельно, самая слушаемая первой
-    expect(view.trackIds[0]).toBe(21);
-    expect([...view.trackIds].sort((a, b) => a - b)).toEqual([21, 22, 23]);
 });
 
 it('артисты идут по времени прослушивания, которое у них подписано', () => {

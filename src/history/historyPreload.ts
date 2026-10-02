@@ -1,7 +1,7 @@
 import { contextBridge, ipcRenderer, type IpcRendererEvent } from 'electron';
 
-const SEND_CHANNELS = new Set(['history:ready', 'history:close', 'history:artist']);
-const INVOKE_CHANNELS = new Set(['history:init', 'history:overview', 'history:wave', 'history:day', 'history:search', 'history:play', 'history:taste', 'history:taste-remove', 'history:rarity', 'history:receipt-copy', 'history:receipt-save']);
+const SEND_CHANNELS = new Set(['history:ready', 'history:close', 'history:artist', 'history:recap-seen']);
+const INVOKE_CHANNELS = new Set(['history:init', 'history:overview', 'history:wave', 'history:day', 'history:search', 'history:play', 'history:taste', 'history:taste-remove', 'history:people', 'history:recap-copy', 'history:recap-save']);
 const ON_CHANNELS = new Set(['history:changed', 'history:language', 'history:now']);
 
 contextBridge.exposeInMainWorld('historyAPI', {

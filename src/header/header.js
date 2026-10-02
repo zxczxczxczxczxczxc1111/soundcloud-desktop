@@ -10,6 +10,8 @@ let canGoBack = false;
 let canGoForward = false;
 // Открытая история закрывается кнопкой «Назад», даже если сайту назад некуда
 let historyOpen = false;
+// Сводка прошлой недели ждёт просмотра: у кнопки истории оранжевая точка
+let recapReady = false;
 let isRefreshing = false;
 let navButtons = null;
 let minimizeGlyphEl = null;
@@ -40,7 +42,7 @@ function applyTexts(next) {
     label('#forward-btn', texts.headerForward);
     label('#refresh-btn', isRefreshing ? texts.headerStop : texts.headerRefresh);
     label('.title-bar', texts.headerTitleBar);
-    label('#history-btn', texts.headerHistory, true);
+    label('#history-btn', recapReady && texts.headerHistoryRecap ? texts.headerHistoryRecap : texts.headerHistory, true);
     label('#queue-btn', texts.headerQueue, true);
     label('#settings-btn', texts.headerSettings, true);
     label('#minimize-btn', texts.headerMinimize, true);
@@ -161,6 +163,11 @@ document.getElementById('history-btn')?.addEventListener('click', () => {
 document.getElementById('queue-btn')?.addEventListener('click', () => ipcRenderer.send('toggle-queue'));
 // Настройки открываются и закрываются так же, как по F1
 document.getElementById('settings-btn')?.addEventListener('click', () => ipcRenderer.send('toggle-settings'));
+ipcRenderer.on('history-recap', (_, ready) => {
+    recapReady = ready === true;
+    document.getElementById('history-btn')?.classList.toggle('has-news', recapReady);
+    applyTexts({});
+});
 ipcRenderer.on('history-state', (_, open) => {
     document.getElementById('history-btn')?.setAttribute('aria-pressed', String(open === true));
     historyOpen = open === true;

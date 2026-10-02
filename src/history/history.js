@@ -74,34 +74,36 @@
             drop: 'Убрать из вкуса',
             removed: 'Убрано из вкуса:',
             restore: 'Вернуть во вкус волны',
-            receipt: 'Чек недели',
-            receiptTip: 'Последние 7 дней картинкой',
-            receiptNo: (n) => 'Чек № ' + n,
-            receiptTrack: 'Трек',
-            receiptPlays: 'раз',
-            receiptArtist: 'Артист',
-            receiptMinutes: 'мин',
-            receiptCounted: 'Прослушиваний',
-            receiptArtists: 'Артистов',
-            receiptFresh: 'Новых артистов',
-            receiptRarity: 'Редкость вкуса',
-            receiptRarityNote: 'медиана прослушиваний трека на SoundCloud',
-            rarity: ['Андеграунд', 'Ниша', 'На слуху', 'Мейнстрим'],
-            receiptHours: 'Музыка по часам недели',
-            receiptPeak: (day, hour, time) => 'Пик: ' + day + ', ' + hour + ', ' + time,
-            receiptTotal: 'Итого',
-            receiptThanks: 'Спасибо, что слушаешь',
-            receiptLoading: 'Собираю чек',
-            receiptEmpty: 'За 7 дней музыки не было',
-            receiptFailed: 'Чек не собрался',
-            receiptLabel: (minutes, plays) => 'Чек недели: ' + minutes + ' музыки, ' + plays,
+            recap: 'Сводка недели',
+            recapTip: 'Неделя музыки одной картинкой',
+            recapWeeks: { last: 'Прошлая неделя', this: 'Эта неделя' },
+            recapWeekGroup: 'Какая неделя',
+            recapWeek: (n, range) => 'Неделя ' + n + ', ' + range,
+            // 21-27 сентября 2026, 28 сентября - 4 октября 2026, 28 декабря 2026 - 3 января 2027
+            recapRange: (a, b) => {
+                const [x, y] = [new Date(a), new Date(b)];
+                if (x.getFullYear() !== y.getFullYear()) return fmtDayMonth.format(a) + ' ' + x.getFullYear() + ' - ' + fmtDayMonth.format(b) + ' ' + y.getFullYear();
+                return (x.getMonth() === y.getMonth() ? x.getDate() + '-' : fmtDayMonth.format(a) + ' - ') + fmtDayMonth.format(b) + ' ' + y.getFullYear();
+            },
+            recapMusic: 'музыки',
+            recapTracks: 'Треки недели',
+            recapArtists: 'Артисты недели',
+            recapGenres: 'Любимые жанры',
+            dayParts: ['Утро', 'День', 'Вечер', 'Ночь'],
+            recapPeak: (day, hour) => 'Пик: ' + day + ', ' + hour,
+            recapLoading: 'Собираю сводку',
+            recapEmpty: { last: 'На прошлой неделе музыки не было', this: 'На этой неделе музыки пока не было' },
+            recapFailed: 'Сводка не собралась',
+            recapColors: 'Цвет карточки',
+            recapPresets: ['Полночь', 'Фиолет', 'Бордо', 'Океан', 'Закат', 'Мята', 'Персик', 'Иней'],
+            recapLabel: (time, plays) => 'Сводка недели: ' + time + ' музыки, ' + plays,
             copy: 'Скопировать',
             copied: 'Скопировано',
             copyFailed: 'Не удалось скопировать',
             save: 'Сохранить',
             saved: 'Сохранено',
             saveFailed: 'Не удалось сохранить',
-            receiptClose: 'Закрыть',
+            recapClose: 'Закрыть',
             waveTitle: 'Как попадает волна',
             waveCount: (n, p) => n + ' ' + plural(n, ['трек', 'трека', 'треков']) + ' волны ' + TEXTS.ru.periodText(p),
             waveLoading: 'Считаю',
@@ -212,34 +214,36 @@
             drop: 'Remove from taste',
             removed: 'Removed from taste:',
             restore: 'Put back into the wave’s taste',
-            receipt: 'Week receipt',
-            receiptTip: 'Your last 7 days as an image',
-            receiptNo: (n) => 'Receipt no. ' + n,
-            receiptTrack: 'Track',
-            receiptPlays: 'plays',
-            receiptArtist: 'Artist',
-            receiptMinutes: 'min',
-            receiptCounted: 'Plays',
-            receiptArtists: 'Artists',
-            receiptFresh: 'New artists',
-            receiptRarity: 'Taste rarity',
-            receiptRarityNote: 'median plays per track on SoundCloud',
-            rarity: ['Underground', 'Niche', 'Well known', 'Mainstream'],
-            receiptHours: 'Music by the hour this week',
-            receiptPeak: (day, hour, time) => 'Peak: ' + day + ' ' + hour + ', ' + time,
-            receiptTotal: 'Total',
-            receiptThanks: 'Thanks for listening',
-            receiptLoading: 'Putting the receipt together',
-            receiptEmpty: 'No music in the last 7 days',
-            receiptFailed: 'Could not build the receipt',
-            receiptLabel: (minutes, plays) => 'Week receipt: ' + minutes + ' of music, ' + plays,
+            recap: 'Weekly recap',
+            recapTip: 'Your week in music as one image',
+            recapWeeks: { last: 'Last week', this: 'This week' },
+            recapWeekGroup: 'Which week',
+            recapWeek: (n, range) => 'Week ' + n + ', ' + range,
+            // September 21-27, 2026, September 28 - October 4, 2026, December 28, 2026 - January 3, 2027
+            recapRange: (a, b) => {
+                const [x, y] = [new Date(a), new Date(b)];
+                if (x.getFullYear() !== y.getFullYear()) return fmtDayMonth.format(a) + ', ' + x.getFullYear() + ' - ' + fmtDayMonth.format(b) + ', ' + y.getFullYear();
+                return fmtDayMonth.format(a) + (x.getMonth() === y.getMonth() ? '-' + y.getDate() : ' - ' + fmtDayMonth.format(b)) + ', ' + y.getFullYear();
+            },
+            recapMusic: 'of music',
+            recapTracks: 'Tracks of the week',
+            recapArtists: 'Artists of the week',
+            recapGenres: 'Favourite genres',
+            dayParts: ['Morning', 'Afternoon', 'Evening', 'Night'],
+            recapPeak: (day, hour) => 'Peak: ' + day + ', ' + hour,
+            recapLoading: 'Putting the recap together',
+            recapEmpty: { last: 'No music last week', this: 'No music this week yet' },
+            recapFailed: 'Could not build the recap',
+            recapColors: 'Card colour',
+            recapPresets: ['Midnight', 'Violet', 'Burgundy', 'Ocean', 'Sunset', 'Mint', 'Peach', 'Frost'],
+            recapLabel: (time, plays) => 'Weekly recap: ' + time + ' of music, ' + plays,
             copy: 'Copy',
             copied: 'Copied',
             copyFailed: 'Could not copy',
             save: 'Save',
             saved: 'Saved',
             saveFailed: 'Could not save',
-            receiptClose: 'Close',
+            recapClose: 'Close',
             waveTitle: 'How well the wave fits',
             waveCount: (n, p) => n + ' wave ' + plural(n, ['track', 'tracks']) + ' ' + TEXTS.en.periodText(p),
             waveLoading: 'Counting',
@@ -310,7 +314,7 @@
     };
     const WEEK = 7 * 86400000;
     let T = TEXTS.ru;
-    let fmtLong, fmtShort, fmtWd, fmtYear, fmtStamp, fmtCompact;
+    let fmtLong, fmtShort, fmtWd, fmtDayMonth, fmtWeekday;
 
     // Форматирование
     function plural(n, forms) {
@@ -358,9 +362,8 @@
         fmtLong = new Intl.DateTimeFormat(state.lang, { weekday: 'long', day: 'numeric', month: 'long' });
         fmtShort = new Intl.DateTimeFormat(state.lang, { day: 'numeric', month: 'short' });
         fmtWd = new Intl.DateTimeFormat(state.lang, { weekday: 'short', day: 'numeric', month: 'long' });
-        fmtYear = new Intl.DateTimeFormat(state.lang, { day: 'numeric', month: 'short', year: 'numeric' });
-        fmtStamp = new Intl.DateTimeFormat(state.lang, { dateStyle: 'short', timeStyle: 'short' });
-        fmtCompact = new Intl.NumberFormat(state.lang, { notation: 'compact', maximumFractionDigits: 1 });
+        fmtDayMonth = new Intl.DateTimeFormat(state.lang, { day: 'numeric', month: 'long' });
+        fmtWeekday = new Intl.DateTimeFormat(state.lang, { weekday: 'long' });
         document.title = T.title;
     }
     const ICON = {
@@ -372,7 +375,7 @@
         prev: '<svg width="14" height="14" viewBox="0 0 14 14" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M9 2.5 4.5 7 9 11.5"/></svg>',
         next: '<svg width="14" height="14" viewBox="0 0 14 14" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M5 2.5 9.5 7 5 11.5"/></svg>',
         undo: '<svg width="12" height="12" viewBox="0 0 12 12" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"><path d="M4 2 1.5 4.5 4 7"/><path d="M1.5 4.5H7a3.25 3.25 0 0 1 0 6.5H5"/></svg>',
-        receipt: '<svg width="14" height="14" viewBox="0 0 14 14" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linejoin="round"><path d="M3 1.5h8v11l-1.33-1-1.34 1-1.33-1-1.33 1-1.34-1L3 12.5z"/><path d="M5 4.5h4M5 7h4" stroke-linecap="round"/></svg>',
+        recap: '<svg width="14" height="14" viewBox="0 0 14 14" fill="none" stroke="currentColor" stroke-width="1.3"><rect x="1.5" y="2.5" width="11" height="9" rx="1.5"/><circle cx="5" cy="6.5" r="1.6"/><path d="M8 5.5h3M8 8h2.5" stroke-linecap="round"/></svg>',
         fold: '<svg width="14" height="14" viewBox="0 0 14 14" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M5 2.5 9.5 7 5 11.5"/></svg>',
     };
 
@@ -384,7 +387,7 @@
     const head = (extra) =>
         '<div class="ph"><button class="back" data-act="close" aria-label="' + esc(T.closeLabel) + '" data-tip="' + esc(T.close) + '">' + ICON.back + '</button><h1>' + esc(T.title) + '</h1>' + extra +
         '<label class="search"><input type="search" id="q" placeholder="' + esc(T.search) + '" value="' + esc(state.query) + '" aria-label="' + esc(T.searchLabel) + '" spellcheck="false" autocomplete="off">' + ICON.search + '</label></div>';
-    const receiptButton = () => '<button class="link rc-open" data-act="receipt" data-tip="' + esc(T.receiptTip) + '">' + ICON.receipt + esc(T.receipt) + '</button>';
+    const recapButton = () => '<button class="link rc-open" data-act="recap" data-tip="' + esc(T.recapTip) + '">' + ICON.recap + esc(T.recap) + '</button>';
     const art = (url, cls) => (url ? '<img class="' + cls + '" src="' + esc(url) + '" alt="" loading="lazy">' : '<span class="' + cls + '" aria-hidden="true"></span>');
     const keyOf = (r) => r.at + ':' + r.id;
     // Откуда играло: радар, «Моя музыка» и подборки называются своими именами, остальное волна
@@ -737,7 +740,7 @@
         else if (!state.loaded) body = '';
         else if (state.query) body = renderResults();
         else body = renderOverview();
-        const tools = state.signedIn && !state.query ? periodSeg() + (state.loaded && !state.failed ? receiptButton() : '') : '';
+        const tools = state.signedIn && !state.query ? periodSeg() + (state.loaded && !state.failed ? recapButton() : '') : '';
         view.innerHTML = '<div class="wrap">' + head(tools) + body + '</div>';
         if (keepScroll) view.scrollTop = scroll;
         if (focusSearch) {
@@ -838,23 +841,43 @@
         message.textContent = state.lang === 'en' ? 'Could not play this track. Check your connection and try again.' : 'Не удалось включить трек. Проверь соединение и попробуй ещё раз.';
     }
 
-    // Чек недели: последние 7 дней картинкой. Бумага термочека на фоне окна, рисуется на холсте и уходит в main как PNG.
-    // Обложек нет: чужие картинки испачкали бы холст, и PNG из него было бы не взять
-    const RC = {
-        ground: '#121212',
-        paper: '#eef0ec',
-        ink: '#23252a',
-        faded: '#6e7378',
-        stamp: '#4b43a6',
-        font: "Consolas, 'Cascadia Mono', 'Courier New', monospace",
-        // Внутренняя ширина: 168 часов недели по 2 точки
-        inner: 336,
-        pad: 20,
-        margin: 24,
-        tooth: 5,
-        scale: 2,
+    // Сводка недели: неделя музыки одной картинкой, как шапка профиля на SoundCloud. Рисуется на холсте и уходит в main как PNG.
+    // Обложки и аватарки sndcdn отдаёт с разрешением для чужих страниц, поэтому холст с ними остаётся выгружаемым
+    const RECAP = { width: 1200, height: 760, hero: 330, scale: 2, font: "Onest, 'Segoe UI', system-ui, sans-serif" };
+    const RECAP_PANELS = {
+        dark: { panel: '#121212', ink: '#ffffff', muted: '#9a9a9a', line: 'rgba(255, 255, 255, 0.08)', film: 'rgba(255, 255, 255, 0.09)', empty: '#2a2a2a' },
+        light: { panel: '#f5f5f3', ink: '#141414', muted: '#666666', line: 'rgba(0, 0, 0, 0.08)', film: 'rgba(0, 0, 0, 0.06)', empty: '#e2e2de' },
     };
-    const receipt = { open: false, data: null, rarity: undefined, failed: false, busy: false, canvas: null, request: 0, status: '', statusTimer: 0 };
+    // Восемь цветов от тёмных к светлым; у трёх светлых и нижняя часть светлая
+    const RECAP_PRESETS = [
+        { a: '#23253f', b: '#0c0c14', panel: 'dark' },
+        { a: '#4a2a96', b: '#140f2a', panel: 'dark' },
+        { a: '#7a1f35', b: '#1c0a10', panel: 'dark' },
+        { a: '#0f6170', b: '#0a1c26', panel: 'dark' },
+        { a: '#ff5500', b: '#8a1d52', panel: 'dark' },
+        { a: '#8fdcc3', b: '#2e8c86', panel: 'light' },
+        { a: '#ffd2b0', b: '#ff7d5c', panel: 'light' },
+        { a: '#f1f4f9', b: '#bccbe3', panel: 'light' },
+    ];
+    const DAY_PARTS = [[6, 12], [12, 18], [18, 24], [0, 6]];
+    const PRESET_KEY = 'scDesktopRecapPreset';
+    function readPreset() {
+        try {
+            const value = Number(window.localStorage.getItem(PRESET_KEY));
+            return window.localStorage.getItem(PRESET_KEY) !== null && Number.isInteger(value) && value >= 0 && value < RECAP_PRESETS.length ? value : 1;
+        } catch (error) {
+            console.warn('Сводка недели: цвет карточки не прочитан', error);
+            return 1;
+        }
+    }
+    function savePreset(value) {
+        try {
+            window.localStorage.setItem(PRESET_KEY, String(value));
+        } catch (error) {
+            console.warn('Сводка недели: цвет карточки не сохранён', error);
+        }
+    }
+    const recap = { open: false, week: 'last', data: null, people: undefined, failed: false, busy: false, canvas: null, model: null, request: 0, draw: 0, status: '', statusTimer: 0, preset: readPreset() };
     const modal = document.createElement('div');
     modal.className = 'rc';
     modal.hidden = true;
@@ -863,326 +886,437 @@
     modal.setAttribute('aria-labelledby', 'rc-title');
     document.body.append(modal);
 
-    // Номер недели по ISO: неделя с понедельника, первая та, где есть 4 января
-    function isoWeek(at) {
-        const d = new Date(at);
-        d.setHours(0, 0, 0, 0);
-        d.setDate(d.getDate() + 3 - ((d.getDay() + 6) % 7));
-        const first = new Date(d.getFullYear(), 0, 4);
-        return 1 + Math.round(((d - first) / 86400000 - 3 + ((first.getDay() + 6) % 7)) / 7);
+    // Неделя с понедельника: прошлая целиком или эта до сегодняшнего дня
+    const mondayOf = (at) => addDays(dayStart(at), -((new Date(at).getDay() + 6) % 7));
+    function recapRange(week) {
+        const monday = mondayOf(Date.now());
+        return week === 'this' ? { from: monday, to: addDays(today(), 1), last: today() } : { from: addDays(monday, -7), to: monday, last: addDays(monday, -1) };
     }
-    // Медиана прослушиваний трека на сайте: до 10 тысяч андеграунд, до 100 тысяч ниша, до миллиона на слуху
-    const rarityLevel = (median) => (median < 10000 ? 0 : median < 100000 ? 1 : median < 1000000 ? 2 : 3);
-
-    function paperPath(ctx, width, height) {
-        const x0 = RC.margin;
-        const x1 = width - RC.margin;
-        const top = RC.margin;
-        const bottom = height - RC.margin;
-        const step = 8;
-        ctx.beginPath();
-        ctx.moveTo(x0, top + RC.tooth);
-        for (let x = x0; x < x1; x += step) {
-            ctx.lineTo(x + step / 2, top);
-            ctx.lineTo(x + step, top + RC.tooth);
-        }
-        ctx.lineTo(x1, bottom - RC.tooth);
-        for (let x = x1; x > x0; x -= step) {
-            ctx.lineTo(x - step / 2, bottom);
-            ctx.lineTo(x - step, bottom - RC.tooth);
-        }
-        ctx.closePath();
+    // Номер недели по ISO: первая неделя та, где есть 4 января, год берётся по четвергу недели
+    function isoWeek(monday) {
+        const year = new Date(addDays(monday, 3)).getFullYear();
+        return { year, week: 1 + Math.round((monday - mondayOf(new Date(year, 0, 4).getTime())) / WEEK) };
     }
 
-    // Один проход раскладки: без draw только считает высоту, с draw рисует. Возвращает высоту картинки в точках
-    function paintReceipt(ctx, s, rarity, draw) {
-        const left = RC.margin + RC.pad;
-        const right = left + RC.inner;
-        const middle = (left + right) / 2;
-        let y = RC.margin + RC.tooth + 14;
-        let stampAt = 0;
-        const setFont = (size, bold) => (ctx.font = (bold ? '700 ' : '400 ') + size + 'px ' + RC.font);
+    const pictures = new Map();
+    function picture(url) {
+        if (!url) return Promise.resolve(null);
+        if (!pictures.has(url)) {
+            pictures.set(
+                url,
+                new Promise((resolve) => {
+                    const img = new window.Image();
+                    const timer = window.setTimeout(() => resolve(null), 10000);
+                    img.crossOrigin = 'anonymous';
+                    img.onload = () => {
+                        window.clearTimeout(timer);
+                        resolve(img);
+                    };
+                    img.onerror = () => {
+                        window.clearTimeout(timer);
+                        console.warn('Сводка недели: картинка не загрузилась', url);
+                        resolve(null);
+                    };
+                    img.src = url;
+                }),
+            );
+        }
+        return pictures.get(url);
+    }
+    // Картинки журнала маленькие (-large это 100 на 100): для карточки берётся крупный размер того же файла
+    const sized = (url, size) => (url ? url.replace(/-(large|t\d+x\d+)\.(jpg|png)$/, '-' + size + '.$2') : '');
+    let fontsReady = null;
+    const recapFonts = () =>
+        fontsReady ||
+        (fontsReady = Promise.all([400, 600, 700, 800].map((weight) => document.fonts.load(weight + ' 20px Onest', 'Аa'))).catch((error) =>
+            console.warn('Сводка недели: шрифт не загрузился, рисую системным', error),
+        ));
+
+    // Всё, что нарисовано, кроме цвета: смена цвета перерисовывает без новых запросов
+    async function recapModel(s, people, week) {
+        const { last } = recapRange(week);
+        const tracks = s.tracks.slice(0, 5);
+        const artists = s.artists.slice(0, 5);
+        const me = people && people.me;
+        const avatars = (people && people.avatars) || {};
+        const [avatar, covers, faces] = await Promise.all([
+            picture(me ? sized(me.avatar, 't500x500') : ''),
+            Promise.all(tracks.map((t) => picture(sized(t.artwork, 't300x300')))),
+            Promise.all(artists.map((a) => picture(sized(avatars[artistPath(a.path)] || a.artwork, 't300x300')))),
+        ]);
+        // Части суток по минутам звука; тепловая карта индекса идёт с понедельника, как и неделя сводки
+        const parts = DAY_PARTS.map(([from, to]) => {
+            let minutes = 0;
+            for (let day = 0; day < 7; day++) for (let hour = from; hour < to; hour++) minutes += s.heat[day * 24 + hour] || 0;
+            return minutes;
+        });
+        const total = parts.reduce((sum, minutes) => sum + minutes, 0);
+        const busiest = Math.max(...parts);
+        const top = Math.max(...s.heat);
+        const peakAt = top > 0 ? s.heat.indexOf(top) : -1;
+        const { year, week: number } = isoWeek(s.from);
+        return {
+            year,
+            number,
+            range: T.recapWeek(number, T.recapRange(s.from, last)),
+            name: me ? me.username : '',
+            link: me && me.permalink ? 'soundcloud.com/' + me.permalink : '',
+            avatar,
+            heard: s.heard,
+            stats: [
+                [s.counted, plural(s.counted, T.counted)],
+                [s.artistCount, plural(s.artistCount, T.artists)],
+                // История моложе недели: новые все, число ничего не говорит
+                ...(s.firstAt !== null && s.from > s.firstAt ? [[s.fresh, plural(s.fresh, T.fresh)]] : []),
+            ],
+            tracks: tracks.map((t, i) => ({ title: t.name || T.loading, artist: t.artistName, plays: t.plays, cover: covers[i] })),
+            artists: artists.map((a, i) => ({ name: a.name || T.loading, time: span(a.ms), face: faces[i] })),
+            genres: s.genres.slice(0, 4).map((g) => ({ name: cap(g.name), share: pct(g.plays, s.counted) + '%' })),
+            parts: parts.map((minutes, i) => ({
+                name: T.dayParts[i],
+                hours: DAY_PARTS[i][0] + '-' + DAY_PARTS[i][1],
+                share: pct(minutes, total) + '%',
+                top: minutes > 0 && minutes === busiest,
+            })),
+            peak: peakAt < 0 ? '' : T.recapPeak(fmtWeekday.format(addDays(s.from, Math.floor(peakAt / 24))), pad(peakAt % 24) + ':00'),
+        };
+    }
+
+    function paintRecap(ctx, m, preset) {
+        const W = RECAP.width;
+        const HERO = RECAP.hero;
+        const p = RECAP_PANELS[preset.panel];
+        const font = (size, weight) => (ctx.font = weight + ' ' + size + 'px ' + RECAP.font);
         const fit = (value, room) => {
             if (ctx.measureText(value).width <= room) return value;
             let cut = value;
             while (cut && ctx.measureText(cut + '…').width > room) cut = cut.slice(0, -1);
             return cut.trimEnd() + '…';
         };
-        const put = (value, x, align, color) => {
-            if (!draw) return;
-            ctx.textAlign = align;
+        const text = (value, x, y, color, align) => {
             ctx.fillStyle = color;
+            ctx.textAlign = align || 'left';
             ctx.fillText(value, x, y);
         };
-        // Строка чека: слева название, справа число. Режется название, число никогда
-        const pair = (name, value, step, color, indent) => {
-            y += step;
-            const shift = indent || 0;
-            const room = RC.inner - shift - (value ? ctx.measureText(value).width + 12 : 0);
-            put(fit(name, room), left + shift, 'left', color || RC.ink);
-            if (value) put(value, right, 'right', color || RC.ink);
+        // Квадрат из середины картинки без искажения
+        const cover = (img, x, y, size) => {
+            const side = Math.min(img.naturalWidth, img.naturalHeight);
+            ctx.drawImage(img, (img.naturalWidth - side) / 2, (img.naturalHeight - side) / 2, side, side, x, y, size, size);
         };
-        const center = (value, step, color) => {
-            y += step;
-            put(fit(value, RC.inner), middle, 'center', color || RC.ink);
-        };
-        const rule = (double) => {
-            y += 12;
-            if (draw) {
-                ctx.strokeStyle = RC.ink;
-                ctx.lineWidth = 1;
-                ctx.setLineDash(double ? [] : [3, 3]);
-                for (const dy of double ? [-2, 2] : [0]) {
-                    ctx.beginPath();
-                    ctx.moveTo(left, y + dy);
-                    ctx.lineTo(right, y + dy);
-                    ctx.stroke();
-                }
-                ctx.setLineDash([]);
-            }
-            y += double ? 6 : 4;
-        };
-
-        const last = dayStart(s.to - 1);
-        setFont(11, false);
-        center('SoundCloud', 14, RC.faded);
-        setFont(24, true);
-        center(T.receipt, 32);
-        setFont(12, false);
-        center(fmtShort.format(s.from) + ' - ' + fmtYear.format(last), 20);
-        setFont(11, false);
-        pair(T.receiptNo(isoWeek(last)), fmtStamp.format(Date.now()), 24, RC.faded);
-        rule(false);
-
-        if (s.tracks.length) {
-            setFont(11, false);
-            pair(T.receiptTrack, T.receiptPlays, 18, RC.faded);
-            setFont(12.5, false);
-            const indent = ctx.measureText('0  ').width;
-            s.tracks.slice(0, 5).forEach((t, i) => {
-                setFont(12.5, false);
-                pair(i + 1 + '  ' + (t.name || T.loading), String(t.plays), 20);
-                setFont(11, false);
-                pair(t.artistName, '', 15, RC.faded, indent);
-            });
-            rule(false);
-        }
-        if (s.artists.length) {
-            setFont(11, false);
-            pair(T.receiptArtist, T.receiptMinutes, 18, RC.faded);
-            setFont(12.5, false);
-            s.artists.slice(0, 5).forEach((a, i) => pair(i + 1 + '  ' + (a.name || T.loading), String(Math.round(a.ms / 60000)), 20));
-            rule(false);
-        }
-
-        setFont(12.5, false);
-        pair(T.receiptCounted, String(s.counted), 20);
-        pair(T.receiptArtists, String(s.artistCount), 20);
-        // «Новых» нет смысла показывать, когда история моложе недели: тогда новые все
-        if (s.firstAt !== null && s.from > s.firstAt) pair(T.receiptFresh, s.fresh + ' (' + pct(s.fresh, s.artistCount) + '%)', 20);
-        if (typeof rarity === 'number') {
-            pair(T.receiptRarity, fmtCompact.format(rarity), 20);
-            setFont(11, false);
-            pair(T.receiptRarityNote, '', 15, RC.faded);
-            // Место под штамп с вердиктом
-            stampAt = y + 36;
-            y += 62;
-        }
-        rule(false);
-
-        // Неделя по часам: столбец на каждый час, от первого дня недели к сегодняшнему, под осью отражение, как у волны периода
-        setFont(11, false);
-        pair(T.receiptHours, '', 18, RC.faded);
-        const firstDay = (new Date(s.from).getDay() + 6) % 7;
-        const order = Array.from({ length: 7 }, (_, i) => (firstDay + i) % 7);
-        const slots = order.flatMap((day) => s.heat.slice(day * 24, day * 24 + 24));
-        const top = Math.max(...slots);
-        const base = y + 12 + 44;
-        if (draw) {
-            ctx.fillStyle = RC.faded;
-            ctx.fillRect(left, base, RC.inner, 0.5);
-            slots.forEach((minutes, k) => {
-                if (!minutes) return;
-                const h = Math.max(2, Math.round((minutes / top) * 44));
-                ctx.globalAlpha = 1;
-                ctx.fillStyle = RC.ink;
-                ctx.fillRect(left + k * 2, base - h, 1, h);
-                ctx.globalAlpha = 0.45;
-                ctx.fillStyle = RC.faded;
-                ctx.fillRect(left + k * 2, base + 2, 1, Math.max(1, Math.round(h * 0.3)));
-            });
-            ctx.globalAlpha = 1;
-        }
-        y = base + 28;
-        setFont(10.5, false);
-        order.forEach((day, i) => put(T.week[day], left + i * 48 + 24, 'center', RC.faded));
-        if (top > 0) {
-            const k = slots.indexOf(top);
-            setFont(11, false);
-            pair(T.receiptPeak(T.week[order[Math.floor(k / 24)]], pad(k % 24) + ':00', minutesLabel(top)), '', 18);
-        }
-        rule(true);
-        setFont(17, true);
-        pair(T.receiptTotal, span(s.heard), 26);
-        rule(true);
-        setFont(11, false);
-        center(T.receiptThanks, 20, RC.faded);
-        y += 18;
-
-        if (draw && stampAt) {
-            const word = T.rarity[rarityLevel(rarity)].toLocaleUpperCase(state.lang);
+        const round = (img, cx, cy, r, fill) => {
             ctx.save();
-            setFont(20, true);
-            const w = ctx.measureText(word).width + 32;
-            ctx.translate(middle + 44, stampAt);
-            ctx.rotate(-0.14);
-            ctx.globalAlpha = 0.88;
-            ctx.strokeStyle = RC.stamp;
-            ctx.fillStyle = RC.stamp;
-            ctx.lineWidth = 2;
             ctx.beginPath();
-            ctx.roundRect(-w / 2, -21, w, 42, 6);
-            ctx.stroke();
-            ctx.lineWidth = 1;
-            ctx.beginPath();
-            ctx.roundRect(-w / 2 + 5, -16, w - 10, 32, 3);
-            ctx.stroke();
-            ctx.textAlign = 'center';
-            ctx.textBaseline = 'middle';
-            ctx.fillText(word, 0, 1);
+            ctx.arc(cx, cy, r, 0, Math.PI * 2);
+            ctx.clip();
+            if (img) cover(img, cx - r, cy - r, r * 2);
+            else {
+                ctx.fillStyle = fill;
+                ctx.fillRect(cx - r, cy - r, r * 2, r * 2);
+            }
             ctx.restore();
+        };
+        // Плашка как у названия трека на SoundCloud: чёрный фон по ширине текста, части на общей базовой линии
+        const plate = (x, y, h, padX, runs, align) => {
+            const widths = runs.map((run) => {
+                font(run.size, run.weight);
+                return ctx.measureText(run.text).width;
+            });
+            const width = padX * 2 + widths.reduce((sum, w, i) => sum + w + (i ? 8 : 0), 0);
+            const left = align === 'right' ? x - width : x;
+            ctx.fillStyle = '#000000';
+            ctx.fillRect(left, y, width, h);
+            const base = y + h / 2 + Math.max(...runs.map((run) => run.size)) * 0.36;
+            let cursor = left + padX;
+            ctx.textBaseline = 'alphabetic';
+            runs.forEach((run, i) => {
+                font(run.size, run.weight);
+                text(run.text, cursor, base, run.color);
+                cursor += widths[i] + 8;
+            });
+        };
+
+        ctx.fillStyle = p.panel;
+        ctx.fillRect(0, 0, W, RECAP.height);
+        // Шапка: градиент на 135 градусов, как linear-gradient(135deg) у макета
+        const shift = (W + HERO) / 4;
+        const gradient = ctx.createLinearGradient(W / 2 - shift, HERO / 2 - shift, W / 2 + shift, HERO / 2 + shift);
+        gradient.addColorStop(0, preset.a);
+        gradient.addColorStop(1, preset.b);
+        ctx.fillStyle = gradient;
+        ctx.fillRect(0, 0, W, HERO);
+
+        round(m.avatar, 155, 165, 115, '#c9b8ff');
+        if (!m.avatar) {
+            font(96, 700);
+            ctx.textBaseline = 'middle';
+            text((m.name || 'S').charAt(0).toUpperCase(), 155, 170, '#2a1b5c', 'center');
         }
-        return y + RC.tooth + RC.margin;
+        font(40, 700);
+        plate(300, 56, 48, 12, [{ text: fit(m.name || T.recap, 520), size: 40, weight: 700, color: '#ffffff' }]);
+        if (m.link) plate(300, 112, 24, 10, [{ text: m.link, size: 15, weight: 400, color: '#cccccc' }]);
+        plate(300, 166, 72, 14, [
+            { text: span(m.heard), size: 54, weight: 800, color: '#ffffff' },
+            { text: T.recapMusic, size: 17, weight: 400, color: '#cccccc' },
+        ]);
+        plate(300, 246, 24, 10, [{ text: m.range, size: 15, weight: 400, color: '#cccccc' }]);
+        m.stats.forEach(([value, label], i) =>
+            plate(1160, 56 + i * 46, 38, 12, [
+                { text: String(value), size: 24, weight: 700, color: '#ffffff' },
+                { text: label, size: 15, weight: 400, color: '#cccccc' },
+            ], 'right'),
+        );
+
+        // Низ: треки и артисты недели слева, жанры и время суток справа
+        ctx.textBaseline = 'middle';
+        font(13, 600);
+        text(T.recapTracks, 40, 365, p.muted);
+        m.tracks.forEach((t, i) => {
+            const x = 40 + i * 148;
+            if (t.cover) cover(t.cover, x, 384, 128);
+            else {
+                ctx.fillStyle = p.empty;
+                ctx.fillRect(x, 384, 128, 128);
+            }
+            font(15, 600);
+            text(fit(t.title, 128), x, 529, p.ink);
+            font(13, 400);
+            text(fit(t.artist, 128), x, 546.5, p.muted);
+            ctx.fillStyle = p.muted;
+            ctx.beginPath();
+            ctx.moveTo(x, 559);
+            ctx.lineTo(x + 8, 563.5);
+            ctx.lineTo(x, 568);
+            ctx.closePath();
+            ctx.fill();
+            font(12, 400);
+            text(String(t.plays), x + 13, 563.5, p.muted);
+        });
+        font(13, 600);
+        text(T.recapArtists, 40, 603, p.muted);
+        m.artists.forEach((a, i) => {
+            const x = 40 + i * 148;
+            round(a.face, x + 32, 654, 32, p.empty);
+            ctx.textBaseline = 'middle';
+            font(15, 600);
+            text(fit(a.name, 128), x, 703, p.ink);
+            font(13, 400);
+            text(a.time, x, 720.5, p.muted);
+        });
+
+        font(13, 600);
+        text(T.recapGenres, 820, 365, p.muted);
+        if (!m.genres.length) {
+            font(15, 400);
+            text(T.nothing, 820, 397, p.muted);
+        }
+        m.genres.forEach((g, i) => {
+            const cy = 397 + i * 30;
+            font(15, 400);
+            text(g.share, 1160, cy, p.muted, 'right');
+            font(15, 600);
+            text(fit(g.name, 280), 820, cy, p.ink);
+            ctx.fillStyle = p.line;
+            ctx.fillRect(820, 411 + i * 30, 340, 1);
+        });
+        font(13, 600);
+        text(T.when, 820, 533, p.muted);
+        m.parts.forEach((d, i) => {
+            const top = 550 + i * 32;
+            if (d.top) {
+                ctx.fillStyle = p.film;
+                ctx.beginPath();
+                ctx.roundRect(810, top, 360, 30, 4);
+                ctx.fill();
+            }
+            const weight = d.top ? 700 : 400;
+            font(15, weight);
+            text(d.name, 820, top + 15, p.ink);
+            text(d.share, 1160, top + 15, p.ink, 'right');
+            font(13, 400);
+            text(d.hours, 1048, top + 15, p.muted);
+        });
+        if (m.peak) {
+            font(13, 400);
+            text(m.peak, 820, 695, p.muted);
+        }
     }
 
-    function drawReceipt(s, rarity) {
+    function drawRecap(m, preset) {
         const canvas = document.createElement('canvas');
+        canvas.width = RECAP.width * RECAP.scale;
+        canvas.height = RECAP.height * RECAP.scale;
         const ctx = canvas.getContext('2d');
-        const height = Math.ceil(paintReceipt(ctx, s, rarity, false));
-        const width = RC.inner + 2 * (RC.pad + RC.margin);
-        // Смена размера сбрасывает состояние холста, масштаб ставится после
-        canvas.width = width * RC.scale;
-        canvas.height = height * RC.scale;
-        canvas.style.width = width + 'px';
-        ctx.scale(RC.scale, RC.scale);
-        ctx.fillStyle = RC.ground;
-        ctx.fillRect(0, 0, width, height);
-        paperPath(ctx, width, height);
-        ctx.fillStyle = RC.paper;
-        ctx.fill();
-        ctx.textBaseline = 'alphabetic';
-        paintReceipt(ctx, s, rarity, true);
+        ctx.scale(RECAP.scale, RECAP.scale);
+        paintRecap(ctx, m, preset);
+        canvas.setAttribute('role', 'img');
+        canvas.setAttribute('aria-label', T.recapLabel(span(m.heard), m.stats[0][0] + ' ' + m.stats[0][1]));
         return canvas;
     }
 
-    function renderReceipt() {
-        const s = receipt.data;
-        const ready = !receipt.failed && !!s && s.heard > 0;
-        // Чек только что собрался: фокус переходит на «Скопировать», дальше остаётся, где был
-        const focused = ready && !receipt.canvas ? 'copy' : modal.contains(document.activeElement) ? document.activeElement.dataset.rc : '';
-        let note = '';
-        if (receipt.failed) note = T.receiptFailed;
-        else if (!s) note = T.receiptLoading;
-        else if (!s.heard) note = T.receiptEmpty;
-        const button = (act, label, solid, enabled) =>
-            '<button class="rc-btn' + (solid ? ' solid' : '') + '" data-rc="' + act + '"' + (enabled ? '' : ' disabled') + '>' + esc(label) + '</button>';
+    // Окно сводки: шапка строится при открытии и смене языка, дальше меняются только отметки и картинка
+    function buildRecapModal() {
+        const button = (act, label, solid) => '<button class="rc-btn' + (solid ? ' solid' : '') + '" data-rc="' + act + '">' + esc(label) + '</button>';
         modal.innerHTML =
-            '<div class="rc-bar"><h2 id="rc-title">' + esc(T.receipt) + '</h2><span class="sub" id="rc-status" role="status">' + esc(receipt.status) + '</span>' +
-            button('copy', T.copy, true, ready && !receipt.busy) + button('save', T.save, false, ready && !receipt.busy) + button('close', T.receiptClose, false, true) + '</div>' +
-            '<div class="rc-body">' + (note ? '<p class="empty">' + esc(note) + '</p>' : '') + '</div>';
-        receipt.canvas = null;
-        if (ready) {
-            receipt.canvas = drawReceipt(s, receipt.rarity);
-            receipt.canvas.setAttribute('role', 'img');
-            receipt.canvas.setAttribute('aria-label', T.receiptLabel(span(s.heard), s.counted + ' ' + plural(s.counted, T.counted)));
-            modal.querySelector('.rc-body').append(receipt.canvas);
+            '<div class="rc-bar"><h2 id="rc-title">' + esc(T.recap) + '</h2>' +
+            '<div class="seg" role="group" aria-label="' + esc(T.recapWeekGroup) + '">' +
+            ['last', 'this'].map((week) => '<button data-rc="week" data-week="' + week + '">' + esc(T.recapWeeks[week]) + '</button>').join('') +
+            '</div><div class="rc-colors" role="group" aria-label="' + esc(T.recapColors) + '">' +
+            RECAP_PRESETS.map((preset, i) =>
+                '<button class="rc-swatch" data-rc="preset" data-index="' + i + '" aria-label="' + esc(T.recapPresets[i]) + '" data-tip="' + esc(T.recapPresets[i]) +
+                '" style="background:linear-gradient(135deg,' + preset.a + ',' + preset.b + ')"></button>',
+            ).join('') +
+            '</div><span class="sub" id="rc-status" role="status"></span>' +
+            button('copy', T.copy, true) + button('save', T.save, false) + button('close', T.recapClose, false) + '</div>' +
+            '<div class="rc-body"></div>';
+        updateRecapBar();
+    }
+    function updateRecapBar() {
+        modal.querySelectorAll('[data-rc="week"]').forEach((node) => node.setAttribute('aria-pressed', String(node.dataset.week === recap.week)));
+        modal.querySelectorAll('[data-rc="preset"]').forEach((node) => node.setAttribute('aria-pressed', String(Number(node.dataset.index) === recap.preset)));
+        modal.querySelectorAll('[data-rc="copy"], [data-rc="save"]').forEach((node) => (node.disabled = !recap.canvas || recap.busy));
+        const status = document.getElementById('rc-status');
+        if (status) status.textContent = recap.status;
+    }
+    async function refreshRecapBody() {
+        const body = modal.querySelector('.rc-body');
+        if (!body) return;
+        const s = recap.data;
+        const draw = ++recap.draw;
+        let note = '';
+        if (recap.failed) note = T.recapFailed;
+        else if (!s || (s.heard > 0 && recap.people === undefined)) note = T.recapLoading;
+        else if (!s.heard) note = T.recapEmpty[recap.week];
+        if (note) {
+            recap.canvas = null;
+            recap.model = null;
+            body.innerHTML = '<p class="empty">' + esc(note) + '</p>';
+            updateRecapBar();
+            return;
         }
-        const again = focused && modal.querySelector('[data-rc="' + focused + '"]:not([disabled])');
-        (again || modal.querySelector('[data-rc]:not([disabled])')).focus({ preventScroll: true });
+        try {
+            const [model] = await Promise.all([recapModel(s, recap.people, recap.week), recapFonts()]);
+            if (draw !== recap.draw || !recap.open) return;
+            const canvas = drawRecap(model, RECAP_PRESETS[recap.preset]);
+            const first = !recap.canvas;
+            recap.canvas = canvas;
+            recap.model = model;
+            body.replaceChildren(canvas);
+            updateRecapBar();
+            // Картинка появилась впервые: фокус с «Закрыть» переходит на главное действие
+            if (first && document.activeElement && document.activeElement.dataset.rc === 'close') modal.querySelector('[data-rc="copy"]').focus({ preventScroll: true });
+        } catch (error) {
+            console.error('Сводка недели не нарисована:', error);
+            if (draw !== recap.draw || !recap.open) return;
+            recap.canvas = null;
+            body.innerHTML = '<p class="empty">' + esc(T.recapFailed) + '</p>';
+        }
+        updateRecapBar();
     }
-    function setReceiptStatus(text) {
-        receipt.status = text;
-        const node = document.getElementById('rc-status');
-        if (node) node.textContent = text;
-        window.clearTimeout(receipt.statusTimer);
-        if (text) receipt.statusTimer = window.setTimeout(() => setReceiptStatus(''), 4000);
+    async function loadRecap() {
+        const request = ++recap.request;
+        const week = recap.week;
+        const current = () => request === recap.request && recap.open;
+        Object.assign(recap, { data: null, people: undefined, failed: false });
+        refreshRecapBody();
+        try {
+            const { from, to } = recapRange(week);
+            const data = await api.invoke('history:overview', from, to);
+            if (!data) throw new Error('Пустой ответ обзора недели');
+            if (!current()) return;
+            recap.data = data;
+            if (!data.heard) return refreshRecapBody();
+            refreshRecapBody();
+            let people = null;
+            try {
+                people = await api.invoke('history:people', [...new Set(data.artists.slice(0, 5).map((a) => artistPath(a.path)).filter(Boolean))]);
+            } catch (error) {
+                console.error('Ник и аватарки для сводки не получены:', error);
+            }
+            if (!current()) return;
+            recap.people = people;
+            await refreshRecapBody();
+            // Прошлая неделя показана: точка у кнопки истории гаснет
+            if (current() && week === 'last' && recap.model) api.send('history:recap-seen', recap.model.year, recap.model.number);
+        } catch (error) {
+            console.error('Сводка недели не собрана:', error);
+            if (!current()) return;
+            recap.failed = true;
+            refreshRecapBody();
+        }
     }
-    const pause = (ms) => new Promise((resolve) => window.setTimeout(resolve, ms));
-    async function openReceipt() {
-        const request = ++receipt.request;
-        Object.assign(receipt, { open: true, data: null, rarity: undefined, failed: false, busy: false, status: '' });
+    function setRecapStatus(text) {
+        recap.status = text;
+        updateRecapBar();
+        window.clearTimeout(recap.statusTimer);
+        if (text) recap.statusTimer = window.setTimeout(() => setRecapStatus(''), 4000);
+    }
+    function openRecap() {
+        Object.assign(recap, { open: true, week: 'last', canvas: null, model: null, busy: false, status: '' });
         modal.hidden = false;
         view.inert = true;
         tip.hidden = true;
-        renderReceipt();
-        const current = () => request === receipt.request && receipt.open;
-        try {
-            const data = await api.invoke('history:overview', addDays(today(), -6), addDays(today(), 1));
-            if (!data) throw new Error('Пустой ответ обзора недели');
-            if (!current()) return;
-            receipt.data = data;
-        } catch (error) {
-            console.error('Чек недели не собран:', error);
-            if (!current()) return;
-            receipt.failed = true;
-            return renderReceipt();
-        }
-        if (!receipt.data.heard || !receipt.data.trackIds.length) return renderReceipt();
-        // Редкость спрашивается у сайта: чек ждёт её недолго, опоздавшая дорисовывается штампом
-        const rarity = api.invoke('history:rarity', receipt.data.trackIds).then(
-            (value) => (typeof value === 'number' ? value : null),
-            (error) => {
-                console.error('Редкость вкуса не посчитана:', error);
-                return null;
-            },
-        );
-        const early = await Promise.race([rarity, pause(3000).then(() => undefined)]);
-        if (!current()) return;
-        receipt.rarity = early === undefined ? null : early;
-        renderReceipt();
-        if (early !== undefined) return;
-        const late = await rarity;
-        if (!current() || late === null) return;
-        receipt.rarity = late;
-        renderReceipt();
+        buildRecapModal();
+        modal.querySelector('[data-rc="close"]').focus({ preventScroll: true });
+        loadRecap();
     }
-    function closeReceipt() {
-        receipt.open = false;
-        receipt.request++;
-        window.clearTimeout(receipt.statusTimer);
+    function closeRecap() {
+        recap.open = false;
+        recap.request++;
+        recap.draw++;
+        window.clearTimeout(recap.statusTimer);
         modal.hidden = true;
         modal.innerHTML = '';
-        receipt.canvas = null;
+        recap.canvas = null;
         view.inert = false;
-        view.querySelector('[data-act="receipt"]')?.focus({ preventScroll: true });
+        view.querySelector('[data-act="recap"]')?.focus({ preventScroll: true });
     }
-    async function receiptAction(kind) {
-        if (!receipt.canvas || receipt.busy) return;
-        const image = receipt.canvas.toDataURL('image/png');
-        const request = receipt.request;
-        receipt.busy = true;
-        modal.querySelectorAll('[data-rc="copy"], [data-rc="save"]').forEach((node) => (node.disabled = true));
+    async function recapAction(kind) {
+        if (!recap.canvas || recap.busy) return;
+        let image;
+        try {
+            image = recap.canvas.toDataURL('image/png');
+        } catch (error) {
+            console.error('Сводка недели не выгрузилась из холста:', error);
+            return setRecapStatus(kind === 'copy' ? T.copyFailed : T.saveFailed);
+        }
+        const request = recap.request;
+        const model = recap.model;
+        recap.busy = true;
+        updateRecapBar();
         let status;
         try {
-            if (kind === 'copy') status = (await api.invoke('history:receipt-copy', image)) === true ? T.copied : T.copyFailed;
+            if (kind === 'copy') status = (await api.invoke('history:recap-copy', image)) === true ? T.copied : T.copyFailed;
             else {
-                const result = await api.invoke('history:receipt-save', image);
+                const result = await api.invoke('history:recap-save', image, model ? model.year : null, model ? model.number : null);
                 status = result === 'saved' ? T.saved : result === 'canceled' ? '' : T.saveFailed;
             }
         } catch (error) {
-            console.error('Чек недели не передан:', error);
+            console.error('Сводка недели не передана:', error);
             status = kind === 'copy' ? T.copyFailed : T.saveFailed;
         }
-        receipt.busy = false;
-        if (request !== receipt.request || !receipt.open) return;
-        modal.querySelectorAll('[data-rc="copy"], [data-rc="save"]').forEach((node) => (node.disabled = false));
-        setReceiptStatus(status);
+        recap.busy = false;
+        if (request !== recap.request || !recap.open) return;
+        setRecapStatus(status);
     }
     modal.addEventListener('click', (event) => {
         const target = event.target.closest('button[data-rc]');
         if (!target || target.disabled) return;
-        if (target.dataset.rc === 'close') closeReceipt();
-        else receiptAction(target.dataset.rc);
+        const act = target.dataset.rc;
+        if (act === 'close') return closeRecap();
+        if (act === 'week') {
+            if (target.dataset.week === recap.week) return;
+            recap.week = target.dataset.week === 'this' ? 'this' : 'last';
+            recap.canvas = null;
+            updateRecapBar();
+            return loadRecap();
+        }
+        if (act === 'preset') {
+            recap.preset = Number(target.dataset.index);
+            savePreset(recap.preset);
+            updateRecapBar();
+            return refreshRecapBody();
+        }
+        recapAction(act);
     });
 
     // События
@@ -1208,7 +1342,7 @@
         if (!target) return;
         const data = target.dataset;
         if (data.act === 'close') return api.send('history:close');
-        if (data.act === 'receipt') return openReceipt();
+        if (data.act === 'recap') return openRecap();
         if (data.act === 'retry') {
             await reload(true);
             return render(false);
@@ -1269,7 +1403,7 @@
     });
     document.addEventListener('keydown', (event) => {
         // Окно чека держит Tab у своих кнопок
-        if (receipt.open && event.key === 'Tab') {
+        if (recap.open && event.key === 'Tab') {
             const buttons = [...modal.querySelectorAll('button:not([disabled])')];
             const at = buttons.indexOf(document.activeElement);
             const next = event.shiftKey ? (at <= 0 ? buttons.length - 1 : at - 1) : (at + 1) % buttons.length;
@@ -1281,7 +1415,7 @@
         if (event.key === 'Escape') {
             event.preventDefault();
             // Esc сначала закрывает чек недели, история остаётся
-            if (receipt.open) return closeReceipt();
+            if (recap.open) return closeRecap();
             const q = document.getElementById('q');
             // Первый Esc в поиске очищает запрос, второй закрывает историю
             if (q && document.activeElement === q && q.value) {
@@ -1351,10 +1485,12 @@
     api.on('history:language', (lang) => {
         setLanguage(lang);
         render(true);
-        if (receipt.open) {
-            // Подпись о копировании была на прежнем языке
-            receipt.status = '';
-            renderReceipt();
+        if (recap.open) {
+            // Подпись о копировании была на прежнем языке, и в самой картинке все надписи
+            recap.status = '';
+            buildRecapModal();
+            refreshRecapBody();
+            modal.querySelector('[data-rc="close"]').focus({ preventScroll: true });
         }
     });
     // Плеер сайта сменил трек: отметка «играет» переезжает на него, пауза её не снимает
@@ -1366,6 +1502,7 @@
     });
 
     async function start() {
+        let initRecap = false;
         setLanguage(document.documentElement.lang);
         try {
             const init = await api.invoke('history:init');
@@ -1373,6 +1510,7 @@
             document.documentElement.classList.toggle('reduce-motion', init.reduceMotion === true);
             state.signedIn = init.signedIn === true;
             state.nowId = typeof init.playing === 'number' && init.playing > 0 ? init.playing : 0;
+            initRecap = init.recap === true;
             if (state.signedIn) await reload(true);
             else state.loaded = true;
         } catch (error) {
@@ -1382,6 +1520,8 @@
         }
         render(false);
         api.send('history:ready');
+        // История открыта нажатием на кнопку с точкой: сразу сводка прошлой недели
+        if (initRecap && state.signedIn && !state.failed) openRecap();
     }
     start();
 })();

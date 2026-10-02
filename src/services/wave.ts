@@ -124,6 +124,8 @@ export interface WaveWindow extends Window {
     __scNavigate?: (path: string) => boolean;
     __scResolveTracks?: (ids: unknown) => Promise<{ asked: number[]; tracks: object[] } | null>;
     __scWhoAmI?: () => Promise<number>;
+    /** Сводка недели в истории: ник, ссылка и аватарка человека, аватарки артистов по путям их страниц */
+    __scPeople?: (paths: unknown) => Promise<{ me: { username: string; permalink: string; avatar: string } | null; avatars: Record<string, string> } | null>;
     __scSaveSession?: () => Promise<void>;
     __scResume?: () => void;
     /** Настройки тихих краёв трека из F1 */
@@ -3123,8 +3125,6 @@ export function installWave(config: WaveConfig, createPlayback: typeof installPl
                         artwork: track.artwork_url || track.user?.avatar_url || '',
                         genre: track.genre ?? '',
                         dur: track.full_duration ?? track.duration ?? 0,
-                        // Сколько раз трек слушали на сайте: по медиане чек недели считает редкость вкуса
-                        plays: typeof track.playback_count === 'number' ? track.playback_count : null,
                     });
                 }
                 asked.push(...part);
@@ -3135,6 +3135,29 @@ export function installWave(config: WaveConfig, createPlayback: typeof installPl
         return { asked, tracks };
     };
     host.__scWhoAmI = async () => (api ? ensureUser() : 0);
+    host.__scPeople = async (paths: unknown) => {
+        if (!api) return null;
+        let me: { username: string; permalink: string; avatar: string } | null = null;
+        try {
+            const body = (await call('me', {}, {})) as { username?: unknown; permalink?: unknown; avatar_url?: unknown } | null;
+            if (body && typeof body.username === 'string') {
+                me = { username: body.username, permalink: typeof body.permalink === 'string' ? body.permalink : '', avatar: typeof body.avatar_url === 'string' ? body.avatar_url : '' };
+            }
+        } catch (error) {
+            console.warn('Сводка недели: профиль не получен', error);
+        }
+        const avatars: Record<string, string> = {};
+        const wanted = Array.isArray(paths) ? paths.filter((path): path is string => typeof path === 'string' && /^\/[a-z0-9_-]{1,100}$/.test(path)).slice(0, 10) : [];
+        await Promise.all(wanted.map(async (path) => {
+            try {
+                const user = (await call('resolve', {}, { url: 'https://soundcloud.com' + path })) as { kind?: unknown; avatar_url?: unknown } | null;
+                if (user?.kind === 'user' && typeof user.avatar_url === 'string') avatars[path] = user.avatar_url;
+            } catch (error) {
+                console.warn('Сводка недели: аватарка артиста не получена', error);
+            }
+        }));
+        return { me, avatars };
+    };
     function clearSeed(): void {
         seedRequest++;
         seed = null;
@@ -4792,6 +4815,7 @@ export function installWave(config: WaveConfig, createPlayback: typeof installPl
         delete host.__scNavigate;
         delete host.__scResolveTracks;
         delete host.__scWhoAmI;
+        delete host.__scPeople;
         delete host.__scQueue;
         delete host.__scWaveKey;
         delete host.__scSaveSession;

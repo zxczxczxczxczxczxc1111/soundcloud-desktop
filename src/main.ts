@@ -175,6 +175,9 @@ let waveJournal: WaveJournal | null = null;
 let waveExclusions: WaveExclusions | null = null;
 let waveSignals: WaveSignals | null = null;
 let historyManager: HistoryManager | null = null;
+// Сводка прошлой недели ждёт просмотра: точка у кнопки истории; проверка при загрузке сайта и раз в полчаса
+let recapPending = false;
+let recapTimer: ReturnType<typeof setInterval> | undefined;
 let listeningLibrary: LibraryService | null = null;
 let radarScheduler: RadarScheduler | null = null;
 let presenceService: PresenceService;
@@ -404,7 +407,7 @@ function setupTray() {
 }
 
 function headerTexts(): Record<string, string> {
-    const keys = ['headerBack', 'headerForward', 'headerRefresh', 'headerStop', 'headerTitleBar', 'headerMinimize', 'headerMaximize', 'headerRestore', 'headerClose', 'headerHistory', 'headerQueue', 'headerSettings'] as const;
+    const keys = ['headerBack', 'headerForward', 'headerRefresh', 'headerStop', 'headerTitleBar', 'headerMinimize', 'headerMaximize', 'headerRestore', 'headerClose', 'headerHistory', 'headerHistoryRecap', 'headerQueue', 'headerSettings'] as const;
     return Object.fromEntries(keys.map((key) => [key, translationService.translate(key)]));
 }
 
@@ -789,6 +792,9 @@ async function init() {
     headerView.setBounds({ x: 0, y: 0, width: mainWindow.getBounds().width, height: 32 });
     headerView.setAutoResize({ width: true, height: false });
     headerView.webContents.loadFile(path.join(__dirname, 'header', 'header.html'));
+    headerView.webContents.on('did-finish-load', () => {
+        if (recapPending) headerView?.webContents.send('history-recap', true);
+    });
 
     // get selected account and define partition
     const currentAccountId = store.get('currentAccountId', 'default');
@@ -1001,7 +1007,18 @@ async function init() {
             if (!contentView.webContents.isDestroyed()) contentView.webContents.focus();
         },
         attach: (contents) => shortcutService.attachToWebContents(contents),
+        recapSeen: () => {
+            const seen = store.get('recapSeen');
+            return typeof seen === 'string' ? seen : '';
+        },
+        setRecapSeen: (key) => store.set('recapSeen', key),
+        onRecap: (pending) => {
+            recapPending = pending;
+            if (headerView && !headerView.webContents.isDestroyed()) headerView.webContents.send('history-recap', pending);
+        },
     });
+    clearInterval(recapTimer);
+    recapTimer = setInterval(() => void historyManager?.checkRecap(), 30 * 60 * 1000);
     if (platform() === 'win32') {
         thumbarService = new ThumbarService(translationService, RESOURCES_PATH, playbackController);
         mainWindow.on('show', () => {
@@ -1142,6 +1159,8 @@ async function init() {
     contentView.webContents.on('did-finish-load', async () => {
 
         diagnostics.record('page.loaded');
+        // Сайт знает пользователя не сразу после загрузки: сводка недели проверяется чуть позже
+        setTimeout(() => void historyManager?.checkRecap(), 15000);
         // Новая страница проверит сайт заново через минуту: прежняя отметка в F1 могла устареть
         settingsManager?.setSiteState(null);
 
@@ -1406,6 +1425,7 @@ let waveSignalsTaken = false;
 let libraryStopped = false;
 app.on('before-quit', (event) => {
     radarScheduler?.stop();
+    clearInterval(recapTimer);
     clearTimeout(autoBackupTimer);
     // Последнее прослушивание страница отдаёт до закрытия окон: её pagehide приходит уже после записи журнала
     if (!waveSignalsTaken && waveSignals && contentView && !contentView.webContents.isDestroyed()) {

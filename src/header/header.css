@@ -145,6 +145,24 @@ button.nav-button {
     font: inherit;
     cursor: default;
 }
+/* Сводка прошлой недели ждёт просмотра: оранжевая точка у кнопки истории */
+#history-btn {
+    position: relative;
+}
+#history-btn.has-news {
+    opacity: 1;
+}
+#history-btn.has-news::after {
+    content: '';
+    position: absolute;
+    top: 2px;
+    right: 6px;
+    width: 7px;
+    height: 7px;
+    border-radius: 50%;
+    background: #ff5500;
+    box-shadow: 0 0 0 2px var(--header-bg);
+}
 .nav-button[aria-pressed='true'] {
     opacity: 1;
     background-color: var(--hover-bg);

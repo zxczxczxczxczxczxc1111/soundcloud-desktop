@@ -18,6 +18,7 @@ const INVOKE_CHANNELS = new Set(['get-header-texts', 'get-navigation-controls-en
 
 const ON_CHANNELS = new Set([
     'header-texts',
+    'history-recap',
     'history-state',
     'navigation-controls-toggle',
     'navigation-state-changed',

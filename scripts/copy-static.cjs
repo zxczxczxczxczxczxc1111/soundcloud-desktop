@@ -20,3 +20,5 @@ for (const folder of ['settings', 'history']) {
         if (/\.(html|css|js)$/.test(name)) fs.copyFileSync(path.join(source, name), path.join(target, name));
     }
 }
+// Шрифт сводки недели в истории: Onest под OFL, файлы рядом со страницей
+fs.cpSync(path.join(root, 'src', 'history', 'fonts'), path.join(root, 'tsc', 'history', 'fonts'), { recursive: true });
