@@ -72,6 +72,8 @@ export interface HistoryOverview {
     wave: { from: number; binHours: number; bins: number[] };
     /** Минуты звука по часам, 7 строк по 24 часа, неделя с понедельника */
     heat: number[];
+    /** Треки периода по числу прослушиваний, до 100: по ним чек недели спрашивает у сайта редкость вкуса */
+    trackIds: number[];
     total: number;
     firstAt: number | null;
 }
@@ -623,6 +625,7 @@ export class HistoryIndex {
                 genres,
                 wave: { from: start, binHours, bins: bins.map(minutes) },
                 heat: heat.map(minutes),
+                trackIds: [...inRange].sort((a, b) => num(b.plays) - num(a.plays) || num(b.ms) - num(a.ms)).slice(0, 100).map((row) => num(row.id)),
                 total: num(first.total),
                 firstAt,
             };

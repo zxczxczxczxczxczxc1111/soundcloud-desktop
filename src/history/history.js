@@ -74,6 +74,34 @@
             drop: 'Убрать из вкуса',
             removed: 'Убрано из вкуса:',
             restore: 'Вернуть во вкус волны',
+            receipt: 'Чек недели',
+            receiptTip: 'Последние 7 дней картинкой',
+            receiptNo: (n) => 'Чек № ' + n,
+            receiptTrack: 'Трек',
+            receiptPlays: 'раз',
+            receiptArtist: 'Артист',
+            receiptMinutes: 'мин',
+            receiptCounted: 'Прослушиваний',
+            receiptArtists: 'Артистов',
+            receiptFresh: 'Новых артистов',
+            receiptRarity: 'Редкость вкуса',
+            receiptRarityNote: 'медиана прослушиваний трека на SoundCloud',
+            rarity: ['Андеграунд', 'Ниша', 'На слуху', 'Мейнстрим'],
+            receiptHours: 'Музыка по часам недели',
+            receiptPeak: (day, hour, time) => 'Пик: ' + day + ', ' + hour + ', ' + time,
+            receiptTotal: 'Итого',
+            receiptThanks: 'Спасибо, что слушаешь',
+            receiptLoading: 'Собираю чек',
+            receiptEmpty: 'За 7 дней музыки не было',
+            receiptFailed: 'Чек не собрался',
+            receiptLabel: (minutes, plays) => 'Чек недели: ' + minutes + ' музыки, ' + plays,
+            copy: 'Скопировать',
+            copied: 'Скопировано',
+            copyFailed: 'Не удалось скопировать',
+            save: 'Сохранить',
+            saved: 'Сохранено',
+            saveFailed: 'Не удалось сохранить',
+            receiptClose: 'Закрыть',
             waveTitle: 'Как попадает волна',
             waveCount: (n, p) => n + ' ' + plural(n, ['трек', 'трека', 'треков']) + ' волны ' + TEXTS.ru.periodText(p),
             waveLoading: 'Считаю',
@@ -184,6 +212,34 @@
             drop: 'Remove from taste',
             removed: 'Removed from taste:',
             restore: 'Put back into the wave’s taste',
+            receipt: 'Week receipt',
+            receiptTip: 'Your last 7 days as an image',
+            receiptNo: (n) => 'Receipt no. ' + n,
+            receiptTrack: 'Track',
+            receiptPlays: 'plays',
+            receiptArtist: 'Artist',
+            receiptMinutes: 'min',
+            receiptCounted: 'Plays',
+            receiptArtists: 'Artists',
+            receiptFresh: 'New artists',
+            receiptRarity: 'Taste rarity',
+            receiptRarityNote: 'median plays per track on SoundCloud',
+            rarity: ['Underground', 'Niche', 'Well known', 'Mainstream'],
+            receiptHours: 'Music by the hour this week',
+            receiptPeak: (day, hour, time) => 'Peak: ' + day + ' ' + hour + ', ' + time,
+            receiptTotal: 'Total',
+            receiptThanks: 'Thanks for listening',
+            receiptLoading: 'Putting the receipt together',
+            receiptEmpty: 'No music in the last 7 days',
+            receiptFailed: 'Could not build the receipt',
+            receiptLabel: (minutes, plays) => 'Week receipt: ' + minutes + ' of music, ' + plays,
+            copy: 'Copy',
+            copied: 'Copied',
+            copyFailed: 'Could not copy',
+            save: 'Save',
+            saved: 'Saved',
+            saveFailed: 'Could not save',
+            receiptClose: 'Close',
             waveTitle: 'How well the wave fits',
             waveCount: (n, p) => n + ' wave ' + plural(n, ['track', 'tracks']) + ' ' + TEXTS.en.periodText(p),
             waveLoading: 'Counting',
@@ -254,7 +310,7 @@
     };
     const WEEK = 7 * 86400000;
     let T = TEXTS.ru;
-    let fmtLong, fmtShort, fmtWd;
+    let fmtLong, fmtShort, fmtWd, fmtYear, fmtStamp, fmtCompact;
 
     // Форматирование
     function plural(n, forms) {
@@ -302,6 +358,9 @@
         fmtLong = new Intl.DateTimeFormat(state.lang, { weekday: 'long', day: 'numeric', month: 'long' });
         fmtShort = new Intl.DateTimeFormat(state.lang, { day: 'numeric', month: 'short' });
         fmtWd = new Intl.DateTimeFormat(state.lang, { weekday: 'short', day: 'numeric', month: 'long' });
+        fmtYear = new Intl.DateTimeFormat(state.lang, { day: 'numeric', month: 'short', year: 'numeric' });
+        fmtStamp = new Intl.DateTimeFormat(state.lang, { dateStyle: 'short', timeStyle: 'short' });
+        fmtCompact = new Intl.NumberFormat(state.lang, { notation: 'compact', maximumFractionDigits: 1 });
         document.title = T.title;
     }
     const ICON = {
@@ -313,6 +372,7 @@
         prev: '<svg width="14" height="14" viewBox="0 0 14 14" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M9 2.5 4.5 7 9 11.5"/></svg>',
         next: '<svg width="14" height="14" viewBox="0 0 14 14" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M5 2.5 9.5 7 5 11.5"/></svg>',
         undo: '<svg width="12" height="12" viewBox="0 0 12 12" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"><path d="M4 2 1.5 4.5 4 7"/><path d="M1.5 4.5H7a3.25 3.25 0 0 1 0 6.5H5"/></svg>',
+        receipt: '<svg width="14" height="14" viewBox="0 0 14 14" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linejoin="round"><path d="M3 1.5h8v11l-1.33-1-1.34 1-1.33-1-1.33 1-1.34-1L3 12.5z"/><path d="M5 4.5h4M5 7h4" stroke-linecap="round"/></svg>',
         fold: '<svg width="14" height="14" viewBox="0 0 14 14" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M5 2.5 9.5 7 5 11.5"/></svg>',
     };
 
@@ -324,6 +384,7 @@
     const head = (extra) =>
         '<div class="ph"><button class="back" data-act="close" aria-label="' + esc(T.closeLabel) + '" data-tip="' + esc(T.close) + '">' + ICON.back + '</button><h1>' + esc(T.title) + '</h1>' + extra +
         '<label class="search"><input type="search" id="q" placeholder="' + esc(T.search) + '" value="' + esc(state.query) + '" aria-label="' + esc(T.searchLabel) + '" spellcheck="false" autocomplete="off">' + ICON.search + '</label></div>';
+    const receiptButton = () => '<button class="link rc-open" data-act="receipt" data-tip="' + esc(T.receiptTip) + '">' + ICON.receipt + esc(T.receipt) + '</button>';
     const art = (url, cls) => (url ? '<img class="' + cls + '" src="' + esc(url) + '" alt="" loading="lazy">' : '<span class="' + cls + '" aria-hidden="true"></span>');
     const keyOf = (r) => r.at + ':' + r.id;
     // Откуда играло: радар, «Моя музыка» и подборки называются своими именами, остальное волна
@@ -676,7 +737,8 @@
         else if (!state.loaded) body = '';
         else if (state.query) body = renderResults();
         else body = renderOverview();
-        view.innerHTML = '<div class="wrap">' + head(state.signedIn && !state.query ? periodSeg() : '') + body + '</div>';
+        const tools = state.signedIn && !state.query ? periodSeg() + (state.loaded && !state.failed ? receiptButton() : '') : '';
+        view.innerHTML = '<div class="wrap">' + head(tools) + body + '</div>';
         if (keepScroll) view.scrollTop = scroll;
         if (focusSearch) {
             const q = document.getElementById('q');
@@ -776,6 +838,353 @@
         message.textContent = state.lang === 'en' ? 'Could not play this track. Check your connection and try again.' : 'Не удалось включить трек. Проверь соединение и попробуй ещё раз.';
     }
 
+    // Чек недели: последние 7 дней картинкой. Бумага термочека на фоне окна, рисуется на холсте и уходит в main как PNG.
+    // Обложек нет: чужие картинки испачкали бы холст, и PNG из него было бы не взять
+    const RC = {
+        ground: '#121212',
+        paper: '#eef0ec',
+        ink: '#23252a',
+        faded: '#6e7378',
+        stamp: '#4b43a6',
+        font: "Consolas, 'Cascadia Mono', 'Courier New', monospace",
+        // Внутренняя ширина: 168 часов недели по 2 точки
+        inner: 336,
+        pad: 20,
+        margin: 24,
+        tooth: 5,
+        scale: 2,
+    };
+    const receipt = { open: false, data: null, rarity: undefined, failed: false, busy: false, canvas: null, request: 0, status: '', statusTimer: 0 };
+    const modal = document.createElement('div');
+    modal.className = 'rc';
+    modal.hidden = true;
+    modal.setAttribute('role', 'dialog');
+    modal.setAttribute('aria-modal', 'true');
+    modal.setAttribute('aria-labelledby', 'rc-title');
+    document.body.append(modal);
+
+    // Номер недели по ISO: неделя с понедельника, первая та, где есть 4 января
+    function isoWeek(at) {
+        const d = new Date(at);
+        d.setHours(0, 0, 0, 0);
+        d.setDate(d.getDate() + 3 - ((d.getDay() + 6) % 7));
+        const first = new Date(d.getFullYear(), 0, 4);
+        return 1 + Math.round(((d - first) / 86400000 - 3 + ((first.getDay() + 6) % 7)) / 7);
+    }
+    // Медиана прослушиваний трека на сайте: до 10 тысяч андеграунд, до 100 тысяч ниша, до миллиона на слуху
+    const rarityLevel = (median) => (median < 10000 ? 0 : median < 100000 ? 1 : median < 1000000 ? 2 : 3);
+
+    function paperPath(ctx, width, height) {
+        const x0 = RC.margin;
+        const x1 = width - RC.margin;
+        const top = RC.margin;
+        const bottom = height - RC.margin;
+        const step = 8;
+        ctx.beginPath();
+        ctx.moveTo(x0, top + RC.tooth);
+        for (let x = x0; x < x1; x += step) {
+            ctx.lineTo(x + step / 2, top);
+            ctx.lineTo(x + step, top + RC.tooth);
+        }
+        ctx.lineTo(x1, bottom - RC.tooth);
+        for (let x = x1; x > x0; x -= step) {
+            ctx.lineTo(x - step / 2, bottom);
+            ctx.lineTo(x - step, bottom - RC.tooth);
+        }
+        ctx.closePath();
+    }
+
+    // Один проход раскладки: без draw только считает высоту, с draw рисует. Возвращает высоту картинки в точках
+    function paintReceipt(ctx, s, rarity, draw) {
+        const left = RC.margin + RC.pad;
+        const right = left + RC.inner;
+        const middle = (left + right) / 2;
+        let y = RC.margin + RC.tooth + 14;
+        let stampAt = 0;
+        const setFont = (size, bold) => (ctx.font = (bold ? '700 ' : '400 ') + size + 'px ' + RC.font);
+        const fit = (value, room) => {
+            if (ctx.measureText(value).width <= room) return value;
+            let cut = value;
+            while (cut && ctx.measureText(cut + '…').width > room) cut = cut.slice(0, -1);
+            return cut.trimEnd() + '…';
+        };
+        const put = (value, x, align, color) => {
+            if (!draw) return;
+            ctx.textAlign = align;
+            ctx.fillStyle = color;
+            ctx.fillText(value, x, y);
+        };
+        // Строка чека: слева название, справа число. Режется название, число никогда
+        const pair = (name, value, step, color, indent) => {
+            y += step;
+            const shift = indent || 0;
+            const room = RC.inner - shift - (value ? ctx.measureText(value).width + 12 : 0);
+            put(fit(name, room), left + shift, 'left', color || RC.ink);
+            if (value) put(value, right, 'right', color || RC.ink);
+        };
+        const center = (value, step, color) => {
+            y += step;
+            put(fit(value, RC.inner), middle, 'center', color || RC.ink);
+        };
+        const rule = (double) => {
+            y += 12;
+            if (draw) {
+                ctx.strokeStyle = RC.ink;
+                ctx.lineWidth = 1;
+                ctx.setLineDash(double ? [] : [3, 3]);
+                for (const dy of double ? [-2, 2] : [0]) {
+                    ctx.beginPath();
+                    ctx.moveTo(left, y + dy);
+                    ctx.lineTo(right, y + dy);
+                    ctx.stroke();
+                }
+                ctx.setLineDash([]);
+            }
+            y += double ? 6 : 4;
+        };
+
+        const last = dayStart(s.to - 1);
+        setFont(11, false);
+        center('SoundCloud', 14, RC.faded);
+        setFont(24, true);
+        center(T.receipt, 32);
+        setFont(12, false);
+        center(fmtShort.format(s.from) + ' - ' + fmtYear.format(last), 20);
+        setFont(11, false);
+        pair(T.receiptNo(isoWeek(last)), fmtStamp.format(Date.now()), 24, RC.faded);
+        rule(false);
+
+        if (s.tracks.length) {
+            setFont(11, false);
+            pair(T.receiptTrack, T.receiptPlays, 18, RC.faded);
+            setFont(12.5, false);
+            const indent = ctx.measureText('0  ').width;
+            s.tracks.slice(0, 5).forEach((t, i) => {
+                setFont(12.5, false);
+                pair(i + 1 + '  ' + (t.name || T.loading), String(t.plays), 20);
+                setFont(11, false);
+                pair(t.artistName, '', 15, RC.faded, indent);
+            });
+            rule(false);
+        }
+        if (s.artists.length) {
+            setFont(11, false);
+            pair(T.receiptArtist, T.receiptMinutes, 18, RC.faded);
+            setFont(12.5, false);
+            s.artists.slice(0, 5).forEach((a, i) => pair(i + 1 + '  ' + (a.name || T.loading), String(Math.round(a.ms / 60000)), 20));
+            rule(false);
+        }
+
+        setFont(12.5, false);
+        pair(T.receiptCounted, String(s.counted), 20);
+        pair(T.receiptArtists, String(s.artistCount), 20);
+        // «Новых» нет смысла показывать, когда история моложе недели: тогда новые все
+        if (s.firstAt !== null && s.from > s.firstAt) pair(T.receiptFresh, s.fresh + ' (' + pct(s.fresh, s.artistCount) + '%)', 20);
+        if (typeof rarity === 'number') {
+            pair(T.receiptRarity, fmtCompact.format(rarity), 20);
+            setFont(11, false);
+            pair(T.receiptRarityNote, '', 15, RC.faded);
+            // Место под штамп с вердиктом
+            stampAt = y + 36;
+            y += 62;
+        }
+        rule(false);
+
+        // Неделя по часам: столбец на каждый час, от первого дня недели к сегодняшнему, под осью отражение, как у волны периода
+        setFont(11, false);
+        pair(T.receiptHours, '', 18, RC.faded);
+        const firstDay = (new Date(s.from).getDay() + 6) % 7;
+        const order = Array.from({ length: 7 }, (_, i) => (firstDay + i) % 7);
+        const slots = order.flatMap((day) => s.heat.slice(day * 24, day * 24 + 24));
+        const top = Math.max(...slots);
+        const base = y + 12 + 44;
+        if (draw) {
+            ctx.fillStyle = RC.faded;
+            ctx.fillRect(left, base, RC.inner, 0.5);
+            slots.forEach((minutes, k) => {
+                if (!minutes) return;
+                const h = Math.max(2, Math.round((minutes / top) * 44));
+                ctx.globalAlpha = 1;
+                ctx.fillStyle = RC.ink;
+                ctx.fillRect(left + k * 2, base - h, 1, h);
+                ctx.globalAlpha = 0.45;
+                ctx.fillStyle = RC.faded;
+                ctx.fillRect(left + k * 2, base + 2, 1, Math.max(1, Math.round(h * 0.3)));
+            });
+            ctx.globalAlpha = 1;
+        }
+        y = base + 28;
+        setFont(10.5, false);
+        order.forEach((day, i) => put(T.week[day], left + i * 48 + 24, 'center', RC.faded));
+        if (top > 0) {
+            const k = slots.indexOf(top);
+            setFont(11, false);
+            pair(T.receiptPeak(T.week[order[Math.floor(k / 24)]], pad(k % 24) + ':00', minutesLabel(top)), '', 18);
+        }
+        rule(true);
+        setFont(17, true);
+        pair(T.receiptTotal, span(s.heard), 26);
+        rule(true);
+        setFont(11, false);
+        center(T.receiptThanks, 20, RC.faded);
+        y += 18;
+
+        if (draw && stampAt) {
+            const word = T.rarity[rarityLevel(rarity)].toLocaleUpperCase(state.lang);
+            ctx.save();
+            setFont(20, true);
+            const w = ctx.measureText(word).width + 32;
+            ctx.translate(middle + 44, stampAt);
+            ctx.rotate(-0.14);
+            ctx.globalAlpha = 0.88;
+            ctx.strokeStyle = RC.stamp;
+            ctx.fillStyle = RC.stamp;
+            ctx.lineWidth = 2;
+            ctx.beginPath();
+            ctx.roundRect(-w / 2, -21, w, 42, 6);
+            ctx.stroke();
+            ctx.lineWidth = 1;
+            ctx.beginPath();
+            ctx.roundRect(-w / 2 + 5, -16, w - 10, 32, 3);
+            ctx.stroke();
+            ctx.textAlign = 'center';
+            ctx.textBaseline = 'middle';
+            ctx.fillText(word, 0, 1);
+            ctx.restore();
+        }
+        return y + RC.tooth + RC.margin;
+    }
+
+    function drawReceipt(s, rarity) {
+        const canvas = document.createElement('canvas');
+        const ctx = canvas.getContext('2d');
+        const height = Math.ceil(paintReceipt(ctx, s, rarity, false));
+        const width = RC.inner + 2 * (RC.pad + RC.margin);
+        // Смена размера сбрасывает состояние холста, масштаб ставится после
+        canvas.width = width * RC.scale;
+        canvas.height = height * RC.scale;
+        canvas.style.width = width + 'px';
+        ctx.scale(RC.scale, RC.scale);
+        ctx.fillStyle = RC.ground;
+        ctx.fillRect(0, 0, width, height);
+        paperPath(ctx, width, height);
+        ctx.fillStyle = RC.paper;
+        ctx.fill();
+        ctx.textBaseline = 'alphabetic';
+        paintReceipt(ctx, s, rarity, true);
+        return canvas;
+    }
+
+    function renderReceipt() {
+        const s = receipt.data;
+        const ready = !receipt.failed && !!s && s.heard > 0;
+        // Чек только что собрался: фокус переходит на «Скопировать», дальше остаётся, где был
+        const focused = ready && !receipt.canvas ? 'copy' : modal.contains(document.activeElement) ? document.activeElement.dataset.rc : '';
+        let note = '';
+        if (receipt.failed) note = T.receiptFailed;
+        else if (!s) note = T.receiptLoading;
+        else if (!s.heard) note = T.receiptEmpty;
+        const button = (act, label, solid, enabled) =>
+            '<button class="rc-btn' + (solid ? ' solid' : '') + '" data-rc="' + act + '"' + (enabled ? '' : ' disabled') + '>' + esc(label) + '</button>';
+        modal.innerHTML =
+            '<div class="rc-bar"><h2 id="rc-title">' + esc(T.receipt) + '</h2><span class="sub" id="rc-status" role="status">' + esc(receipt.status) + '</span>' +
+            button('copy', T.copy, true, ready && !receipt.busy) + button('save', T.save, false, ready && !receipt.busy) + button('close', T.receiptClose, false, true) + '</div>' +
+            '<div class="rc-body">' + (note ? '<p class="empty">' + esc(note) + '</p>' : '') + '</div>';
+        receipt.canvas = null;
+        if (ready) {
+            receipt.canvas = drawReceipt(s, receipt.rarity);
+            receipt.canvas.setAttribute('role', 'img');
+            receipt.canvas.setAttribute('aria-label', T.receiptLabel(span(s.heard), s.counted + ' ' + plural(s.counted, T.counted)));
+            modal.querySelector('.rc-body').append(receipt.canvas);
+        }
+        const again = focused && modal.querySelector('[data-rc="' + focused + '"]:not([disabled])');
+        (again || modal.querySelector('[data-rc]:not([disabled])')).focus({ preventScroll: true });
+    }
+    function setReceiptStatus(text) {
+        receipt.status = text;
+        const node = document.getElementById('rc-status');
+        if (node) node.textContent = text;
+        window.clearTimeout(receipt.statusTimer);
+        if (text) receipt.statusTimer = window.setTimeout(() => setReceiptStatus(''), 4000);
+    }
+    const pause = (ms) => new Promise((resolve) => window.setTimeout(resolve, ms));
+    async function openReceipt() {
+        const request = ++receipt.request;
+        Object.assign(receipt, { open: true, data: null, rarity: undefined, failed: false, busy: false, status: '' });
+        modal.hidden = false;
+        view.inert = true;
+        tip.hidden = true;
+        renderReceipt();
+        const current = () => request === receipt.request && receipt.open;
+        try {
+            const data = await api.invoke('history:overview', addDays(today(), -6), addDays(today(), 1));
+            if (!data) throw new Error('Пустой ответ обзора недели');
+            if (!current()) return;
+            receipt.data = data;
+        } catch (error) {
+            console.error('Чек недели не собран:', error);
+            if (!current()) return;
+            receipt.failed = true;
+            return renderReceipt();
+        }
+        if (!receipt.data.heard || !receipt.data.trackIds.length) return renderReceipt();
+        // Редкость спрашивается у сайта: чек ждёт её недолго, опоздавшая дорисовывается штампом
+        const rarity = api.invoke('history:rarity', receipt.data.trackIds).then(
+            (value) => (typeof value === 'number' ? value : null),
+            (error) => {
+                console.error('Редкость вкуса не посчитана:', error);
+                return null;
+            },
+        );
+        const early = await Promise.race([rarity, pause(3000).then(() => undefined)]);
+        if (!current()) return;
+        receipt.rarity = early === undefined ? null : early;
+        renderReceipt();
+        if (early !== undefined) return;
+        const late = await rarity;
+        if (!current() || late === null) return;
+        receipt.rarity = late;
+        renderReceipt();
+    }
+    function closeReceipt() {
+        receipt.open = false;
+        receipt.request++;
+        window.clearTimeout(receipt.statusTimer);
+        modal.hidden = true;
+        modal.innerHTML = '';
+        receipt.canvas = null;
+        view.inert = false;
+        view.querySelector('[data-act="receipt"]')?.focus({ preventScroll: true });
+    }
+    async function receiptAction(kind) {
+        if (!receipt.canvas || receipt.busy) return;
+        const image = receipt.canvas.toDataURL('image/png');
+        const request = receipt.request;
+        receipt.busy = true;
+        modal.querySelectorAll('[data-rc="copy"], [data-rc="save"]').forEach((node) => (node.disabled = true));
+        let status;
+        try {
+            if (kind === 'copy') status = (await api.invoke('history:receipt-copy', image)) === true ? T.copied : T.copyFailed;
+            else {
+                const result = await api.invoke('history:receipt-save', image);
+                status = result === 'saved' ? T.saved : result === 'canceled' ? '' : T.saveFailed;
+            }
+        } catch (error) {
+            console.error('Чек недели не передан:', error);
+            status = kind === 'copy' ? T.copyFailed : T.saveFailed;
+        }
+        receipt.busy = false;
+        if (request !== receipt.request || !receipt.open) return;
+        modal.querySelectorAll('[data-rc="copy"], [data-rc="save"]').forEach((node) => (node.disabled = false));
+        setReceiptStatus(status);
+    }
+    modal.addEventListener('click', (event) => {
+        const target = event.target.closest('button[data-rc]');
+        if (!target || target.disabled) return;
+        if (target.dataset.rc === 'close') closeReceipt();
+        else receiptAction(target.dataset.rc);
+    });
+
     // События
     let searchTimer;
     view.addEventListener('input', (event) => {
@@ -799,6 +1208,7 @@
         if (!target) return;
         const data = target.dataset;
         if (data.act === 'close') return api.send('history:close');
+        if (data.act === 'receipt') return openReceipt();
         if (data.act === 'retry') {
             await reload(true);
             return render(false);
@@ -858,9 +1268,20 @@
         }
     });
     document.addEventListener('keydown', (event) => {
+        // Окно чека держит Tab у своих кнопок
+        if (receipt.open && event.key === 'Tab') {
+            const buttons = [...modal.querySelectorAll('button:not([disabled])')];
+            const at = buttons.indexOf(document.activeElement);
+            const next = event.shiftKey ? (at <= 0 ? buttons.length - 1 : at - 1) : (at + 1) % buttons.length;
+            event.preventDefault();
+            buttons[next]?.focus();
+            return;
+        }
         if (event.repeat) return;
         if (event.key === 'Escape') {
             event.preventDefault();
+            // Esc сначала закрывает чек недели, история остаётся
+            if (receipt.open) return closeReceipt();
             const q = document.getElementById('q');
             // Первый Esc в поиске очищает запрос, второй закрывает историю
             if (q && document.activeElement === q && q.value) {
@@ -930,6 +1351,11 @@
     api.on('history:language', (lang) => {
         setLanguage(lang);
         render(true);
+        if (receipt.open) {
+            // Подпись о копировании была на прежнем языке
+            receipt.status = '';
+            renderReceipt();
+        }
     });
     // Плеер сайта сменил трек: отметка «играет» переезжает на него, пауза её не снимает
     api.on('history:now', (id) => {

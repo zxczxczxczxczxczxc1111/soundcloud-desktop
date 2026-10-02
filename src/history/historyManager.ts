@@ -1,14 +1,16 @@
-import { WebContentsView, BrowserWindow, ipcMain, type IpcMainEvent, type IpcMainInvokeEvent, type WebContents } from 'electron';
+import { WebContentsView, BrowserWindow, app, clipboard, dialog, ipcMain, nativeImage, type IpcMainEvent, type IpcMainInvokeEvent, type WebContents } from 'electron';
+import { writeFile } from 'fs/promises';
 import { join } from 'path';
 import { trustLocalFile } from '../trustedViews';
 import type { LibraryService } from '../services/libraryService';
 import { trackPathOf } from '../services/waveSignals';
 import { withTimeout } from '../utils/withTimeout';
+import { medianPlays, receiptImage, receiptName } from './receipt';
 
 const HEADER = 32;
 const DAY = 86400000;
 const ARTIST_PATH = /^\/[a-z0-9_-]{1,100}$/;
-const INVOKE = ['history:init', 'history:overview', 'history:wave', 'history:day', 'history:search', 'history:play', 'history:taste', 'history:taste-remove'] as const;
+const INVOKE = ['history:init', 'history:overview', 'history:wave', 'history:day', 'history:search', 'history:play', 'history:taste', 'history:taste-remove', 'history:rarity', 'history:receipt-copy', 'history:receipt-save'] as const;
 const SEND = ['history:ready', 'history:close', 'history:artist'] as const;
 
 export interface HistoryHost {
@@ -115,6 +117,44 @@ export class HistoryManager {
             this.guard(event);
             if (!await this.index.request('setRemoved', this.userId, kind, key, removed)) return null;
             return this.index.request('view', this.userId);
+        });
+        // Чек недели: редкость вкуса это медиана прослушиваний треков недели на сайте
+        ipcMain.handle('history:rarity', async (event, ids: unknown) => {
+            this.guard(event);
+            const site = this.site();
+            const wanted = Array.isArray(ids) ? ids.filter(isId).slice(0, 100) : [];
+            if (!site || !wanted.length) return null;
+            try {
+                const script = 'window.__scResolveTracks ? window.__scResolveTracks(' + JSON.stringify(wanted) + ') : null';
+                const result = (await withTimeout(site.executeJavaScript(script) as Promise<unknown>, 20000, 'редкость вкуса')) as { tracks?: unknown } | null;
+                return medianPlays(result?.tracks);
+            } catch (error) {
+                console.warn('История: редкость вкуса не посчитана', error);
+                return null;
+            }
+        });
+        ipcMain.handle('history:receipt-copy', (event, image: unknown) => {
+            this.guard(event);
+            const buffer = receiptImage(image);
+            if (!buffer) return false;
+            const picture = nativeImage.createFromBuffer(buffer);
+            if (picture.isEmpty()) return false;
+            clipboard.writeImage(picture);
+            return true;
+        });
+        ipcMain.handle('history:receipt-save', async (event, image: unknown) => {
+            this.guard(event);
+            const buffer = receiptImage(image);
+            if (!buffer || this.parentWindow.isDestroyed()) return 'failed';
+            const ru = this.host.language() === 'ru';
+            const { canceled, filePath } = await dialog.showSaveDialog(this.parentWindow, {
+                title: ru ? 'Сохранить чек недели' : 'Save week receipt',
+                defaultPath: join(app.getPath('pictures'), receiptName(new Date())),
+                filters: [{ name: ru ? 'Картинка PNG' : 'PNG image', extensions: ['png'] }],
+            });
+            if (canceled || !filePath) return 'canceled';
+            await writeFile(filePath, buffer);
+            return 'saved';
         });
         ipcMain.on('history:ready', this.ready);
         ipcMain.on('history:close', this.close);

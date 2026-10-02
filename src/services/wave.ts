@@ -3123,6 +3123,8 @@ export function installWave(config: WaveConfig, createPlayback: typeof installPl
                         artwork: track.artwork_url || track.user?.avatar_url || '',
                         genre: track.genre ?? '',
                         dur: track.full_duration ?? track.duration ?? 0,
+                        // Сколько раз трек слушали на сайте: по медиане чек недели считает редкость вкуса
+                        plays: typeof track.playback_count === 'number' ? track.playback_count : null,
                     });
                 }
                 asked.push(...part);
