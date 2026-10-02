@@ -1,9 +1,9 @@
 import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from 'fs';
 import { join } from 'path';
-import { COUNTED_MS, HEARD_MIN_MS, localDayStart, type HistoryIndex, type TastePlay } from './historyIndex';
+import { COUNTED_MS, HEARD_MIN_MS, localDayStart, type HistoryIndex, type TastePlay, type WaveSlice } from './historyIndex';
 import type { TasteLibrary, TasteUpload } from './recommendStore';
 import { copyKey, familyKey, nameKey, parseTrackTitle, trackCredits, type TrackCredit } from './trackIdentity';
-import { genreCanon, normalizeTag, tagShares, type WaveTrack } from './wave';
+import { genreCanon, normalizeTag, tagShares, trackLang, type WaveTrack } from './wave';
 import { TASTE_PARAMS, type Part } from './tasteParams';
 import type { TasteMark } from './waveExclusions';
 
@@ -14,10 +14,10 @@ import type { TasteMark } from './waveExclusions';
 const DAY = 86400000;
 const HORIZON_DAYS = 365;
 const CACHE_MS = 30 * 60000;
-const LIMITS = { artists: 1000, credits: 1000, families: 1000, tags: 300, markers: 50, tracks: 1000 };
+const LIMITS = { artists: 1000, credits: 1000, families: 1000, tags: 300, markers: 50, tracks: 1000, langs: 5, contextArtists: 100, contextTags: 60 };
 const VIEW_LIMIT = 25;
 
-const PARTS: Part[] = ['tracks', 'artists', 'credits', 'families', 'tags', 'markers'];
+const PARTS: Part[] = ['tracks', 'artists', 'credits', 'families', 'tags', 'markers', 'langs'];
 export { TASTE_PARAMS } from './tasteParams';
 
 type Weights = [track: number, artist: number, tag: number];
@@ -51,6 +51,12 @@ export interface TasteProfile {
     /** Пометки версии: slowed, reverb, remix, live */
     markers: Array<[string, number]>;
     tracks: Array<[number, number]>;
+    /** Язык трека: cyr, inst, lat */
+    langs: Array<[string, number]>;
+    /** Поправки к весам артистов и тегов по отрезку суток: slot × 2 + выходной (0-7), slot 0 ночь, 1 утро, 2 день, 3 вечер */
+    contexts: Array<{ key: number; artists: Array<[number, number]>; tags: Array<[string, number]> }>;
+    /** Треки волны за sourcesDays по исходной причине: [причина, дослушано, ранних пропусков] */
+    sources: Array<[string, number, number]>;
     counted: number;
 }
 export interface TasteView {
@@ -106,6 +112,8 @@ interface Directions {
     markers: string[];
     /** Ключ и доля: жанр 1, метки вместе 0.5 (tagShares) */
     tags: Array<[string, number]>;
+    /** Язык трека; пусто, если названия нет и судить не по чему */
+    lang: string;
     record: string;
 }
 interface Heard {
@@ -141,6 +149,7 @@ function directionsOf(item: Heard): Directions {
         family: item.title ? familyKey(track, parsed) : '',
         markers: [...new Set(parsed.version.map((entry) => entry.split(':')[0]))].filter(Boolean),
         tags: tagShares(item.genre, item.tags, [item.uploaderName, ...credits.map((credit) => credit?.name)]),
+        lang: item.title ? trackLang({ ...track, genre: item.genre, tag_list: item.tags }) : '',
         record: item.title ? copyKey(track) : 'sc:track:' + item.id,
     };
 }
@@ -175,9 +184,10 @@ type Layer = Record<Part, Map<string, Entry>>;
 
 export function buildTaste(
     plays: readonly TastePlay[], marks: readonly TasteMark[], overrides: TasteOverrides, now: number, library: TasteLibrary | null = null,
+    sources: readonly WaveSlice[] = [],
 ): { profile: TasteProfile; view: TasteView } {
     const P = TASTE_PARAMS;
-    const entries: Layer = { tracks: new Map(), artists: new Map(), credits: new Map(), families: new Map(), tags: new Map(), markers: new Map() };
+    const entries: Layer = { tracks: new Map(), artists: new Map(), credits: new Map(), families: new Map(), tags: new Map(), markers: new Map(), langs: new Map() };
     const entry = (part: Part, key: string): Entry => {
         let found = entries[part].get(key);
         if (!found) {
@@ -237,6 +247,31 @@ export function buildTaste(
         if (item.family && weights[0] > 0) push('families', item.family, scale(weights[0]) * P.familyShare, origin);
         for (const [key, share] of item.tags) push('tags', key, scale(weights[2]) * share, origin);
         for (const key of item.markers) push('markers', key, scale(weights[2]) * P.markerShare, origin);
+        if (item.lang) push('langs', item.lang, scale(weights[2]) * P.langShare, origin);
+    };
+    // П5: суммы артистов и тегов по отрезкам суток с затуханием устойчивой части. Суточного потолка тут нет:
+    // поправка относительная и ограничена потолком при сборке. 0-3 четыре отрезка, 4-11 отрезок с типом дня
+    type Sums = { plays: number; artists: Map<string, number>; tags: Map<string, number> };
+    const sums = (): Sums => ({ plays: 0, artists: new Map(), tags: new Map() });
+    const overall = sums();
+    const slices = Array.from({ length: 12 }, sums);
+    // Сколько прослушиваний у ключа вообще: от него ждётся число в отрезке
+    const keyPlays = { artists: new Map<string, number>(), tags: new Map<string, number>() };
+    const add = (map: Map<string, number>, key: string, value: number): void => {
+        if (value) map.set(key, (map.get(key) ?? 0) + value);
+    };
+    const noteContext = (weights: Weights, at: number, uploader: number, item: Directions, positive: number, decay: number): void => {
+        const date = new Date(at);
+        const slot = Math.floor(date.getHours() / 6);
+        const weekend = date.getDay() === 0 || date.getDay() === 6 ? 1 : 0;
+        const scale = (value: number): number => value * (value > 0 ? positive : 1) * decay;
+        for (const target of [overall, slices[slot], slices[4 + slot * 2 + weekend]]) {
+            target.plays += decay;
+            if (uploader > 0) add(target.artists, String(uploader), scale(weights[1]) * item.curator);
+            for (const [key, share] of item.tags) add(target.tags, key, scale(weights[2]) * share);
+        }
+        if (uploader > 0) add(keyPlays.artists, String(uploader), decay);
+        for (const [key] of item.tags) add(keyPlays.tags, key, decay);
     };
 
     const stored = new Map((library?.uploads ?? []).map((upload) => [upload.id, upload] as const));
@@ -262,7 +297,10 @@ export function buildTaste(
         // Само прослушивание насыщается по суткам, лайк во время него явное действие и идёт целиком.
         // Круг повтора не прослушивание заново: артист и теги за него ничего не получают
         const weights = play.looped ? null : playWeights({ heard: play.heard, dur: play.dur, end: play.end, likedNow: false, covered: play.covered, endedBy: play.endedBy });
-        if (weights && !(play.away && weights[0] > 0)) apply(weights, play.id, play.artist, item, positive, origin);
+        if (weights && !(play.away && weights[0] > 0)) {
+            apply(weights, play.id, play.artist, item, positive, origin);
+            noteContext(weights, play.at, play.artist, item, positive, origin.long);
+        }
         if (play.likedNow) apply(LIKE, play.id, play.artist, item, positive, { ...origin, daily: false });
         if (!play.looped) looping.delete(play.id);
         if (play.heard < COUNTED_MS || play.away) continue;
@@ -307,7 +345,7 @@ export function buildTaste(
     }
     for (const id of library?.follows ?? []) entry('artists', String(id)).long += P.follow;
 
-    const total: Record<Part, Map<string, number>> = { tracks: new Map(), artists: new Map(), credits: new Map(), families: new Map(), tags: new Map(), markers: new Map() };
+    const total: Record<Part, Map<string, number>> = { tracks: new Map(), artists: new Map(), credits: new Map(), families: new Map(), tags: new Map(), markers: new Map(), langs: new Map() };
     for (const part of PARTS) {
         for (const [key, item] of entries[part]) {
             // Новый интерес недели входит, только если подтверждён: две разные записи, два дня или ручное действие.
@@ -328,14 +366,56 @@ export function buildTaste(
         if (name) total.credits.delete(name);
     }
     for (const key of droppedTags) total.tags.delete(key);
+    const artists = top(total.artists, LIMITS.artists, 0.01);
+    const tags = top(total.tags, LIMITS.tags, 0.01);
+
+    // Поправка отрезка: насколько ключ чаще или реже в отрезке, чем в среднем, от -1 до 1. Сжимается к нулю по числу
+    // прослушиваний отрезка и по ожидаемому числу прослушиваний ключа в нём; отрезок с типом дня сжимается к отрезку
+    // без него. Итог умножается на потолок, не больше модуля общего веса: минус не переворачивает любимое в нелюбимое
+    const share = (part: 'artists' | 'tags', slice: Sums, key: string): { ratio: number; evidence: number } => {
+        const f = slice.plays / overall.plays;
+        const all = overall[part].get(key) ?? 0;
+        const here = (slice[part].get(key) ?? 0) / f;
+        const spread = Math.abs(here) + Math.abs(all);
+        const expected = (keyPlays[part].get(key) ?? 0) * f;
+        return { ratio: spread > 0 ? (here - all) / spread : 0, evidence: expected / (expected + P.contextKeyK) };
+    };
+    const correction = (part: 'artists' | 'tags', slot: number, weekend: number, key: string, weight: number): number => {
+        const wide = slices[slot];
+        const narrow = slices[4 + slot * 2 + weekend];
+        if (!wide.plays) return 0;
+        const a = share(part, wide, key);
+        const base = a.ratio * a.evidence * (wide.plays / (wide.plays + P.contextK));
+        let value = base;
+        if (narrow.plays) {
+            const b = share(part, narrow, key);
+            const trust = narrow.plays / (narrow.plays + P.contextK);
+            value = base + (b.ratio * b.evidence - base) * trust;
+        }
+        return value * Math.min(part === 'artists' ? P.contextArtistCap : P.contextTagCap, Math.abs(weight));
+    };
+    const contexts: TasteProfile['contexts'] = [];
+    if (overall.plays > 0)
+        for (let key = 0; key < 8; key++) {
+            const slot = Math.floor(key / 2);
+            const weekend = key % 2;
+            const shifted = (part: 'artists' | 'tags', list: Array<[string, number]>, limit: number): Array<[string, number]> =>
+                top(new Map(list.map(([id, weight]) => [id, correction(part, slot, weekend, id, weight)])), limit, 0.01);
+            const entry = { key, artists: numeric(shifted('artists', artists, LIMITS.contextArtists)), tags: shifted('tags', tags, LIMITS.contextTags) };
+            if (entry.artists.length || entry.tags.length) contexts.push(entry);
+        }
+
     const profile: TasteProfile = {
         version: P.version,
-        artists: numeric(top(total.artists, LIMITS.artists, 0.01)),
+        artists: numeric(artists),
         credits: top(total.credits, LIMITS.credits, 0.01),
         families: top(total.families, LIMITS.families, 0.01),
-        tags: top(total.tags, LIMITS.tags, 0.01),
+        tags,
         markers: top(total.markers, LIMITS.markers, 0.01),
         tracks: numeric(top(total.tracks, LIMITS.tracks, 0.1)),
+        langs: top(total.langs, LIMITS.langs, 0.01),
+        contexts,
+        sources: sources.filter((slice) => slice.key && slice.key.length <= 40 && slice.done + slice.early > 0).slice(0, 30).map((slice) => [slice.key, slice.done, slice.early]),
         counted,
     };
 
@@ -411,7 +491,14 @@ export class TasteService {
         } catch (error) {
             console.warn('Вкус волны: лайки и подписки не прочитаны, вкус только по истории', error);
         }
-        const result = buildTaste(plays, this.marks(userId), this.readOverrides(userId), now, library);
+        // Статистика источников не прочиталась: волна идёт без поправки источников, вкус от этого не страдает
+        let sources: WaveSlice[] = [];
+        try {
+            sources = this.index.waveOrigins(userId, now - TASTE_PARAMS.sourcesDays * DAY, now);
+        } catch (error) {
+            console.warn('Вкус волны: статистика источников не прочитана', error);
+        }
+        const result = buildTaste(plays, this.marks(userId), this.readOverrides(userId), now, library, sources);
         this.cache.set(userId, { at: now, profile: result.profile });
         return result;
     }

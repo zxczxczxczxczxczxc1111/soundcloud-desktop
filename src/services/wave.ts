@@ -39,10 +39,10 @@ const { classifyFailure, createDispatcher, createSearchCache, likeItems, entityI
 const { siteRequires } = siteModules;
 // Чистые функции волны разложены по файлам. Здесь они разбираются в константы по той же причине: installWave зовёт их по голому имени
 const { fillText, reasonText, localDay, countText, formatTime, shapeSamples } = waveTexts;
-const { normalizeTag, tagKeys, tagShares, genreKeys, genreEnglish, genreCanon, genrePhrases, genreParts, genreMain, parseGenres, formatGenres, genreKeysFor, trackMatchesGenre, topGenres } = waveGenres;
+const { normalizeTag, tagKeys, tagShares, trackLang, genreKeys, genreEnglish, genreCanon, genrePhrases, genreParts, genreMain, parseGenres, formatGenres, genreKeysFor, trackMatchesGenre, topGenres } = waveGenres;
 const { classifyLink, classifyTag, canonicalUrl, trackPath, artworkUrl, coversOf, playEnd, siteSource, retryDelay } = waveLinks;
 const { trackArtist, rememberRecent, isWaveEligible, freshEnough, acceptCandidate, pickSpaced, spacingKeys, spacingGap, shuffleInPlace, capPerArtist, forgottenPicks, daySample, artistNames, performerNames, sharedPerformer, isNewArtist, spreadBy } = wavePicks;
-const { tasteMaps, tasteScore, tasteOrder, tasteReason, applyTasteReasons, tasteGroups, moodTags, pickFinds } = waveTaste;
+const { tasteMaps, tasteSlot, tasteForTime, sourceBias, tasteScore, tasteOrder, tasteReason, applyTasteReasons, tasteGroups, moodTags, pickFinds } = waveTaste;
 const { moodList, moodDictionary, trackMood, artistMoods, neighborMood, moodScore } = waveMood;
 // Разделы страницы волны в wave/: объявления уходят на страницу рядом с installWave и зовутся по голому имени
 const { installVersions } = versionsSection;
@@ -54,10 +54,10 @@ const { installSources, relatedArtistsOf, scMixesOf, interleaveMixes } = waveSou
 // Прежние импорты из wave.ts остаются рабочими
 export type { WaveTrack, WaveMode, OpenTrackResult, WaveReason, WaveCandidate, WaveFilter, WaveLinkKind, WaveTexts, TasteMaps, TasteScore, TasteGroup } from './waveTypes';
 export { WAVE_TEXTS, fillText, reasonText, localDay, countText, formatTime, shapeSamples } from './waveTexts';
-export { normalizeTag, tagKeys, tagShares, genreKeys, genreEnglish, genreCanon, genrePhrases, genreParts, genreMain, parseGenres, formatGenres, genreKeysFor, trackMatchesGenre, topGenres } from './waveGenres';
+export { normalizeTag, tagKeys, tagShares, trackLang, genreKeys, genreEnglish, genreCanon, genrePhrases, genreParts, genreMain, parseGenres, formatGenres, genreKeysFor, trackMatchesGenre, topGenres } from './waveGenres';
 export { classifyLink, classifyTag, canonicalUrl, trackPath, artworkUrl, playEnd, siteSource, retryDelay } from './waveLinks';
 export { trackArtist, rememberRecent, isWaveEligible, freshEnough, acceptCandidate, pickSpaced, spacingKeys, spacingGap, shuffleInPlace, capPerArtist, forgottenPicks, daySample, artistNames, performerNames, sharedPerformer, isNewArtist, spreadBy } from './wavePicks';
-export { tasteMaps, tasteScore, tasteOrder, tasteReason, applyTasteReasons, tasteGroups, moodTags, pickFinds } from './waveTaste';
+export { tasteMaps, tasteSlot, tasteForTime, sourceBias, tasteScore, tasteOrder, tasteReason, applyTasteReasons, tasteGroups, moodTags, pickFinds } from './waveTaste';
 export { moodList, moodDictionary, trackMood, artistMoods, neighborMood, moodScore } from './waveMood';
 export type { WaveMood, MoodScores, ArtistMoods } from './waveMood';
 
@@ -312,6 +312,8 @@ export function installWave(config: WaveConfig, createPlayback: typeof installPl
     const sessionArtists = new Map<number, number>();
     const sessionTags = new Map<string, number>();
     const sessionSeeds = new Map<number, number>();
+    // Поправка источников (П9): выборка заново на каждый проход подбора, источник с лучшим исходом чаще впереди
+    let sourceShift = new Map<string, number>();
     // Ранние пропуски подряд: три пересобирают очередь впереди (В2.14)
     let skipRun = 0;
     // Взятое из найденного, а не из своей подборки: пересборка впереди возвращает в пул только его
@@ -353,8 +355,11 @@ export function installWave(config: WaveConfig, createPlayback: typeof installPl
     let recordingLinks: RecordingLink[] = [];
     let exclusionsRevision = 0;
     let exclusionsPromise: Promise<void> | null = null;
-    // Профиль вкуса из main: порядок подборки и причины, живёт 30 минут
+    // Профиль вкуса из main: порядок подборки и причины, живёт 30 минут. taste это профиль с поправками текущего
+    // отрезка суток (П5), tasteBase как пришёл: полка дня строится по нему
     let taste: TasteMaps | null = null;
+    let tasteBase: TasteMaps | null = null;
+    let tasteSlotNow = -1;
     let tasteAt = 0;
     let tastePromise: Promise<void> | null = null;
     let tasteFailed = false;
@@ -580,7 +585,7 @@ export function installWave(config: WaveConfig, createPlayback: typeof installPl
         openCard: () => openCard,
         showCard,
         copyGroups: () => copyGroups,
-        taste: () => taste,
+        taste: () => tasteBase,
         tasteFailed: () => tasteFailed,
         radarCards: radarSection.cards,
         radarMix: radarSection.renderMix,
@@ -1244,15 +1249,25 @@ export function installWave(config: WaveConfig, createPlayback: typeof installPl
         });
         return exclusionsPromise;
     }
+    function applyTasteTime(base: TasteMaps): void {
+        const now = Date.now();
+        tasteBase = base;
+        tasteSlotNow = tasteSlot(now);
+        taste = tasteForTime(base, now);
+    }
     // Не загрузился: подборка идёт перемешиванием, следующий подбор попробует снова
     function ensureTaste(): Promise<void> {
-        if (taste && Date.now() - tasteAt < 30 * 60000) return Promise.resolve();
+        if (tasteBase && Date.now() - tasteAt < 30 * 60000) {
+            // Сменился отрезок суток: вкус на сейчас пересчитывается без запроса в main
+            if (tasteSlot(Date.now()) !== tasteSlotNow) applyTasteTime(tasteBase);
+            return Promise.resolve();
+        }
         tastePromise ??= (async () => {
             const id = await ensureUser();
             const bridge = host.soundcloudAPI?.waveTaste;
             const maps = tasteMaps(id && bridge ? await bridge.load(id) : null);
             if (maps) {
-                taste = maps;
+                applyTasteTime(maps);
                 tasteAt = Date.now();
             }
             // Для известного пользователя main всегда отдаёт профиль, хотя бы пустой: null значит сбой модели
@@ -1375,8 +1390,15 @@ export function installWave(config: WaveConfig, createPlayback: typeof installPl
         return list;
     }
     // seedId: зерно, от которого найден кандидат, для журнала
+    // П6: в обычной волне кириллица от артиста, которого вкус не знает (ни аккаунт, ни участники), проходит только
+    // от похожих артистов, из подборок SoundCloud и от соседей по вкусу. Волны от трека, артиста и подборок не трогаются
+    function strangerCyrillic(candidate: WaveCandidate): boolean {
+        if (seed || !taste || ['relatedArtist', 'scMix', 'neighbors'].includes(candidate.reason.kind)) return false;
+        return trackLang(candidate.track) === 'cyr' && !tasteScore(candidate.track, taste).known;
+    }
     function accept(list: WaveCandidate[], candidate: WaveCandidate, filter: WaveFilter, seedId = 0): boolean {
         if (!acceptCandidate(candidate.track, filter) || signatures.has(copyKey(candidate.track))) return false;
+        if (list !== ownQueue && strangerCyrillic(candidate)) return false;
         // Одно произведение на поколение: оригинал, slowed и ремикс одной песни в найденном не встают вместе.
         // Версии зерна идут своей причиной, свои подборки (радар, «Давно не слушал») правило не трогает
         const family = list === ownQueue ? '' : familyKey(candidate.track);
@@ -1398,11 +1420,12 @@ export function installWave(config: WaveConfig, createPlayback: typeof installPl
             if (current.version) candidate.trace.tv = current.version;
         }
     }
-    // Поправка сессии к оценке вкуса: аккаунт, теги долями, как во вкусе, и зерно, от которого найден трек
+    // Поправка сессии к оценке вкуса: аккаунт, теги долями, как во вкусе, зерно, от которого найден трек, и источник
     function sessionScore(candidate: WaveCandidate): number {
         const track = candidate.track;
         let delta = sessionArtists.get(trackArtist(track)) ?? 0;
         for (const [key, share] of tagShares(track.genre, track.tag_list, [track.user?.username])) delta += share * (sessionTags.get(key) ?? 0);
+        delta += sourceShift.get(candidate.trace?.origin ?? candidate.reason.kind) ?? 0;
         const from = candidate.trace?.seed ?? 0;
         return (from ? delta + (sessionSeeds.get(from) ?? 0) : delta) - presetPenalty(track);
     }
@@ -1513,7 +1536,7 @@ export function installWave(config: WaveConfig, createPlayback: typeof installPl
         const from = candidate.trace?.seed ?? 0;
         if (from) add(sessionSeeds, from, 0.5);
     }
-    const EMPTY_TASTE: TasteMaps = { version: 0, artists: new Map(), credits: new Map(), families: new Map(), tags: new Map(), markers: new Map(), tracks: new Map() };
+    const EMPTY_TASTE: TasteMaps = { version: 0, artists: new Map(), credits: new Map(), families: new Map(), tags: new Map(), markers: new Map(), tracks: new Map(), langs: new Map(), contexts: new Map(), sources: new Map() };
     // Пул заново по вкусу с поправками сессии: при каждой догрузке и после пропусков (В2.1, В2.2)
     function rerankPool(): void {
         if (pool.length > 1) pool = tasteOrder(pool, taste ?? EMPTY_TASTE, Math.random, sessionScore);
@@ -1657,6 +1680,7 @@ export function installWave(config: WaveConfig, createPlayback: typeof installPl
         const p = await ensureProfile();
         await Promise.all([ensureExclusions(), ensureTaste()]);
         if (own !== generation) return 0;
+        sourceShift = sourceBias(taste?.sources ?? new Map<string, { done: number; early: number }>());
         // «Моя музыка» из сессии: пул собирается заново, иначе своё не встанет в очередь
         if (seed?.kind === 'library' && seed.library?.left) {
             await librarySection.resume(seed);
@@ -4417,8 +4441,8 @@ export function installWave(config: WaveConfig, createPlayback: typeof installPl
 
 // Помощники идут на страницу объявлениями рядом со скриптом: так они видны installWave и друг другу
 const pageHelpers = [
-    normalizeTag, tagKeys, tagShares, genreKeys, genreEnglish, genreCanon, genrePhrases, genreParts, genreMain, parseGenres, formatGenres, genreKeysFor, classifyLink, classifyTag, canonicalUrl, trackMatchesGenre, trackArtist, rememberRecent, retryDelay,
-    isWaveEligible, freshEnough, acceptCandidate, pickSpaced, spacingKeys, spacingGap, tasteMaps, tasteScore, tasteOrder, tasteReason, applyTasteReasons, shuffleInPlace, topGenres, fillText, reasonText, shapeSamples,
+    normalizeTag, tagKeys, tagShares, trackLang, genreKeys, genreEnglish, genreCanon, genrePhrases, genreParts, genreMain, parseGenres, formatGenres, genreKeysFor, classifyLink, classifyTag, canonicalUrl, trackMatchesGenre, trackArtist, rememberRecent, retryDelay,
+    isWaveEligible, freshEnough, acceptCandidate, pickSpaced, spacingKeys, spacingGap, tasteMaps, tasteSlot, tasteForTime, sourceBias, tasteScore, tasteOrder, tasteReason, applyTasteReasons, shuffleInPlace, topGenres, fillText, reasonText, shapeSamples,
     artworkUrl, coversOf, formatTime, playEnd, siteSource, moodTags, trackPath, localDay, countText, tasteGroups, capPerArtist, forgottenPicks, daySample, artistNames, performerNames, sharedPerformer, isNewArtist, spreadBy, pickFinds,
     moodList, moodDictionary, trackMood, artistMoods, neighborMood, moodScore,
     ...identity.identityHelpers, ...sources.sourceHelpers, ...libraryMix.libraryHelpers, siteRequires, installPlaybackPage, installPlaybackRecovery,

@@ -5,12 +5,13 @@ import {
     applyTasteReasons, tagKeys, tasteMaps, tasteOrder, tasteReason, tasteScore, type TasteMaps, type WaveCandidate, type WaveFilter, type WaveTrack,
     countText, forgottenPicks, localDay, pickFinds, tasteGroups, capPerArtist, artistNames, isNewArtist, spreadBy, genreCanon, genreParts, genreMain,
     rememberRecent, retryDelay, genreEnglish, tagShares, performerNames, sharedPerformer,
+    trackLang, tasteSlot, tasteForTime, sourceBias,
 } from './wave';
 import { copyKeys, familyKey, versionKey } from './trackIdentity';
 
 describe('вкус волны', () => {
     const taste = (artists: Array<[number, number]>, tags: Array<[string, number]> = [], tracks: Array<[number, number]> = [], extra: object = {}): TasteMaps =>
-        tasteMaps({ artists, tags, tracks, ...extra }) ?? { version: 0, artists: new Map(), credits: new Map(), families: new Map(), tags: new Map(), markers: new Map(), tracks: new Map() };
+        tasteMaps({ artists, tags, tracks, ...extra }) ?? { version: 0, artists: new Map(), credits: new Map(), families: new Map(), tags: new Map(), markers: new Map(), tracks: new Map(), langs: new Map(), contexts: new Map(), sources: new Map() };
     const item = (id: number, artist: number, extra: Partial<WaveTrack> = {}): WaveCandidate => ({
         track: { id, kind: 'track', user_id: artist, duration: 180000, title: 'T' + id, ...extra },
         reason: { kind: 'similar', seed: 'Seed' },
@@ -342,6 +343,68 @@ it('П1: общий исполнитель двух записей: загруз
     expect(sharedPerformer(seed, by(5, 'Моцарт - Реквием По Мечте', 'Channel'))).toBe('');
     expect(sharedPerformer(seed, by(6, 'Other - Beat (prod. mightymason)', 'Other'))).toBe('');
     expect([...performerNames(by(7, 'Star - Song (feat. Guest)', 'Channel')).keys()].sort()).toEqual(['guest', 'star']);
+});
+
+it('П6: язык трека по названию, имени, жанру и меткам; оценка сравнивает с любимым языком', () => {
+    const by = (title: string, username = 'Someone', extra: Partial<WaveTrack> = {}): WaveTrack => track(1, { title, user: { id: 1, username }, ...extra });
+    expect(trackLang(by('Кровью'))).toBe('cyr');
+    expect(trackLang(by('Untitled', 'Тёмный'))).toBe('cyr');
+    expect(trackLang(by('Night Drive'))).toBe('lat');
+    expect(trackLang(by('Night Drive (Instrumental)'))).toBe('inst');
+    expect(trackLang(by('Drake Type Beat - Lonely'))).toBe('inst');
+    expect(trackLang(by('Кровью (инструментал)'))).toBe('inst');
+    expect(trackLang(by('Lonely', 'Producer', { genre: 'Beats' }))).toBe('inst');
+    // Метку beat ставит и русский рэп: кириллица в названии важнее метки
+    expect(trackLang(by('Кровью', 'Артист', { tag_list: 'beat rap' }))).toBe('cyr');
+    expect(trackLang(by('Beat It'))).toBe('lat');
+    const taste = tasteMaps({ langs: [['lat', 30], ['cyr', -3]] }) as TasteMaps;
+    expect(tasteScore(by('Night Drive'), taste).lang).toBe(0);
+    const cyr = tasteScore(by('Кровью'), taste);
+    expect(cyr.lang).toBeCloseTo(0.5 * (-3 / 4 - 30 / 31), 6);
+    expect(cyr.score).toBeCloseTo(cyr.lang, 6);
+    // Языка нет во вкусе: как вес ноль против любимого
+    expect(tasteScore(by('Lonely (Instrumental)'), taste).lang).toBeCloseTo(-0.5 * 30 / 31, 6);
+    expect(tasteScore(by('Кровью'), tasteMaps({}) as TasteMaps).lang).toBe(0);
+});
+
+it('П5: вкус на сейчас прибавляет поправки текущего отрезка суток только к известным ключам', () => {
+    const night = new Date(2026, 8, 23, 2, 30).getTime();
+    const weekendDay = new Date(2026, 8, 26, 14, 0).getTime();
+    expect(tasteSlot(night)).toBe(0);
+    expect(tasteSlot(weekendDay)).toBe(5);
+    const base = tasteMaps({
+        artists: [[1, 2], [2, 1]], tags: [['ambient', 1]],
+        contexts: [{ key: 0, artists: [[1, 0.5], [2, -0.4], [9, 3]], tags: [['ambient', 0.2], ['new', 1]] }, { key: 99, artists: [[1, 5]] }, 'мусор'],
+    }) as TasteMaps;
+    expect([...base.contexts.keys()]).toEqual([0]);
+    const now = tasteForTime(base, night);
+    expect(now.artists.get(1)).toBeCloseTo(2.5, 6);
+    expect(now.artists.get(2)).toBeCloseTo(0.6, 6);
+    expect(now.artists.has(9)).toBe(false);
+    expect(now.tags.get('ambient')).toBeCloseTo(1.2, 6);
+    expect(now.tags.has('new')).toBe(false);
+    // Базовый вкус не тронут, в отрезке без поправок он и есть вкус на сейчас
+    expect(base.artists.get(1)).toBe(2);
+    expect(tasteForTime(base, weekendDay)).toBe(base);
+});
+
+it('П9: поправка источников по выборке из бета-распределения, с потолком, без данных источника нет', () => {
+    const sources = tasteMaps({ sources: [['relatedArtist', 300, 20], ['similar', 40, 300], ['bad', -1, 2], ['scMix', 0, 0]] })?.sources ?? new Map();
+    expect([...sources.keys()]).toEqual(['relatedArtist', 'similar', 'scMix']);
+    let seed = 7;
+    const random = (): number => {
+        seed = (seed * 16807) % 2147483647;
+        return seed / 2147483647;
+    };
+    const bias = sourceBias(sources, random);
+    expect(bias.get('relatedArtist') ?? 0).toBeGreaterThan(0.3);
+    expect(bias.get('similar')).toBe(-1);
+    expect(bias.has('bad')).toBe(false);
+    for (const value of bias.values()) expect(Math.abs(value)).toBeLessThanOrEqual(1);
+    expect(sourceBias(new Map(), random).size).toBe(0);
+    // Много данных: выборка близка к доле дослушанного
+    const draws = Array.from({ length: 200 }, () => sourceBias(new Map([['a', { done: 900, early: 100 }], ['b', { done: 100, early: 900 }]]), random).get('a') ?? 0);
+    expect(Math.min(...draws)).toBeGreaterThan(0.3);
 });
 
 it('В2.12: мягкий порог свежего в жанре, лайки трека и поправка сессии в порядке по вкусу', () => {

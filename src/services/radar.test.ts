@@ -269,7 +269,7 @@ it('«слышано»: 70% уникального покрытия, у коро
 });
 
 it('план обхода: подписки и сильные кураторы без скрытых, поиск только по участникам с известным именем; покрытие по свежим проверкам', () => {
-    const profile = { version: 2, artists: [[5, 1.5], [6, 0.1], [9, 2]] as Array<[number, number]>, credits: [['artistname', 1], ['unknown', 3], ['weak', 0.2]] as Array<[string, number]>, families: [], tags: [], markers: [], tracks: [], counted: 10 };
+    const profile = { version: 2, artists: [[5, 1.5], [6, 0.1], [9, 2]] as Array<[number, number]>, credits: [['artistname', 1], ['unknown', 3], ['weak', 0.2]] as Array<[string, number]>, families: [], tags: [], markers: [], tracks: [], langs: [], contexts: [], sources: [], counted: 10 };
     const names = new Map([['artistname', 'Artist Name'], ['weak', 'Weak']]);
     const since = CUTOFF - DAY;
     const sources = radarSources([4, 5], profile, names, [
@@ -291,7 +291,7 @@ it('подписок больше предела: скрытые место не
     const follows = Array.from({ length: RADAR_PARAMS.follows + 2 }, (_, i) => i + 1);
     const last = follows[follows.length - 1];
     // Вес ниже порога кураторов: в обход аккаунт попадает только как подписка
-    const profile = { version: 2, artists: [[last, 0.2]] as Array<[number, number]>, credits: [], families: [], tags: [], markers: [], tracks: [], counted: 10 };
+    const profile = { version: 2, artists: [[last, 0.2]] as Array<[number, number]>, credits: [], families: [], tags: [], markers: [], tracks: [], langs: [], contexts: [], sources: [], counted: 10 };
     const ids = radarSources(follows, profile, new Map(), [], new Set([1])).map((source) => source.id);
     expect(ids).toHaveLength(RADAR_PARAMS.follows);
     expect(ids).not.toContain(1);

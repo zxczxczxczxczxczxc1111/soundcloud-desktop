@@ -7,15 +7,16 @@ import * as wavePicks from './wavePicks';
 import type { TasteGroup, TasteMaps, TasteScore, WaveCandidate, WaveReason, WaveTrack } from './waveTypes';
 
 const { copyKey, copyKeys, familyKey, nameKey, parseTrackTitle, trackCredits } = identity;
-const { genreCanon, genreParts, normalizeTag, tagKeys, tagShares } = waveGenres;
+const { genreCanon, genreParts, normalizeTag, tagKeys, tagShares, trackLang } = waveGenres;
 const { capPerArtist, isWaveEligible, shuffleInPlace, spreadBy, trackArtist } = wavePicks;
 
 // Ответ main недоверенный: берутся только пары [id или ключ, конечное число]. Старый профиль без новых частей даёт пустые
 export function tasteMaps(input: unknown): TasteMaps | null {
     if (!input || typeof input !== 'object') return null;
-    const source = input as Record<'version' | 'artists' | 'credits' | 'families' | 'tags' | 'markers' | 'tracks', unknown>;
+    const source = input as Record<'version' | 'artists' | 'credits' | 'families' | 'tags' | 'markers' | 'tracks' | 'langs' | 'contexts' | 'sources', unknown>;
     const isId = (value: unknown): value is number => typeof value === 'number' && Number.isSafeInteger(value) && value > 0;
     const isKey = (value: unknown): value is string => typeof value === 'string' && value.length > 0 && value.length <= 200;
+    const isCount = (value: unknown): value is number => typeof value === 'number' && Number.isSafeInteger(value) && value >= 0;
     const pairs = <K>(list: unknown, valid: (value: unknown) => value is K, limit: number): Map<K, number> => {
         const map = new Map<K, number>();
         if (!Array.isArray(list)) return map;
@@ -23,6 +24,15 @@ export function tasteMaps(input: unknown): TasteMaps | null {
             if (Array.isArray(item) && valid(item[0]) && typeof item[1] === 'number' && Number.isFinite(item[1])) map.set(item[0], item[1]);
         return map;
     };
+    const contexts: TasteMaps['contexts'] = new Map();
+    for (const item of Array.isArray(source.contexts) ? source.contexts.slice(0, 8) : []) {
+        const entry = item && typeof item === 'object' ? (item as { key?: unknown; artists?: unknown; tags?: unknown }) : null;
+        const key = entry?.key;
+        if (typeof key === 'number' && Number.isInteger(key) && key >= 0 && key < 8) contexts.set(key, { artists: pairs(entry?.artists, isId, 100), tags: pairs(entry?.tags, isKey, 60) });
+    }
+    const sources: TasteMaps['sources'] = new Map();
+    for (const item of Array.isArray(source.sources) ? source.sources.slice(0, 30) : [])
+        if (Array.isArray(item) && isKey(item[0]) && isCount(item[1]) && isCount(item[2])) sources.set(item[0], { done: item[1], early: item[2] });
     return {
         version: typeof source.version === 'number' && Number.isInteger(source.version) && source.version > 0 && source.version <= 1000 ? source.version : 0,
         artists: pairs(source.artists, isId, 1000),
@@ -31,7 +41,59 @@ export function tasteMaps(input: unknown): TasteMaps | null {
         tags: pairs(source.tags, isKey, 300),
         markers: pairs(source.markers, isKey, 50),
         tracks: pairs(source.tracks, isId, 1000),
+        langs: pairs(source.langs, isKey, 5),
+        contexts,
+        sources,
     };
+}
+
+// Отрезок суток для поправок вкуса (П5): slot × 2 + выходной, slot 0 ночь (0-6), 1 утро, 2 день, 3 вечер; время местное
+export function tasteSlot(now: number): number {
+    const date = new Date(now);
+    return Math.floor(date.getHours() / 6) * 2 + (date.getDay() === 0 || date.getDay() === 6 ? 1 : 0);
+}
+
+// Вкус на сейчас: к весам артистов и тегов прибавлены поправки текущего отрезка суток. Новых ключей поправка не
+// заводит, main шлёт её только для ключей профиля. Остальные части общие с базовым вкусом
+export function tasteForTime(base: TasteMaps, now: number): TasteMaps {
+    const shift = base.contexts.get(tasteSlot(now));
+    if (!shift) return base;
+    const artists = new Map(base.artists);
+    for (const [id, delta] of shift.artists) if (artists.has(id)) artists.set(id, (artists.get(id) ?? 0) + delta);
+    const tags = new Map(base.tags);
+    for (const [key, delta] of shift.tags) if (tags.has(key)) tags.set(key, (tags.get(key) ?? 0) + delta);
+    return { ...base, artists, tags };
+}
+
+// Поправка источников на один проход подбора (П9): выборка доли дослушанного из бета-распределения
+// (1 + дослушано, 1 + ранних пропусков) у каждого источника, поправка log(доля / средняя доля) с потолком ±1.
+// Источник без данных в карту не попадает и идёт без поправки
+export function sourceBias(sources: TasteMaps['sources'], random: () => number = Math.random): Map<string, number> {
+    // Гамма-распределение методом Марсальи-Цанга, нормальное по Боксу-Мюллеру
+    const normal = (): number => Math.sqrt(-2 * Math.log(Math.max(random(), 1e-12))) * Math.cos(2 * Math.PI * random());
+    const gamma = (shape: number): number => {
+        const d = shape - 1 / 3;
+        const c = 1 / Math.sqrt(9 * d);
+        for (let attempt = 0; attempt < 100; attempt++) {
+            const x = normal();
+            const v = Math.pow(1 + c * x, 3);
+            if (v <= 0) continue;
+            const u = Math.max(random(), 1e-12);
+            if (Math.log(u) < 0.5 * x * x + d - d * v + d * Math.log(v)) return d * v;
+        }
+        return shape;
+    };
+    const draws = new Map<string, number>();
+    for (const [key, { done, early }] of sources) {
+        const a = gamma(1 + done);
+        const b = gamma(1 + early);
+        draws.set(key, a + b > 0 ? a / (a + b) : 0.5);
+    }
+    const bias = new Map<string, number>();
+    if (!draws.size) return bias;
+    const mean = [...draws.values()].reduce((sum, value) => sum + value, 0) / draws.size;
+    for (const [key, theta] of draws) bias.set(key, mean <= 0 ? 0 : theta > 0 ? Math.max(-1, Math.min(1, Math.log(theta / mean))) : -1);
+    return bias;
 }
 
 export function tasteScore(track: WaveTrack, taste: TasteMaps): TasteScore {
@@ -92,8 +154,16 @@ export function tasteScore(track: WaveTrack, taste: TasteMaps): TasteScore {
     // Плюс тегов насыщается до единицы: любимый жанр копит во вкусе десятки, и без насыщения он ставил больше половины
     // выдачи на потолок оценки, где порядок уже случаен. Минус нелюбимого жанра действует полностью (В2.8)
     const tag = tags.value > 0 ? tags.value / (1 + tags.value) : tags.value;
+    // Язык против самого любимого языка, насыщенно и половинной долей (П6): любимый даёт 0, нелюбимый до -1.
+    // Сравнение, а не сам вес: за год оба привычных языка копят десятки, и разницу даёт только соотношение
+    let lang = 0;
+    if (taste.langs.size) {
+        const saturate = (value: number): number => value / (1 + Math.abs(value));
+        const best = Math.max(0, ...taste.langs.values());
+        lang = 0.5 * (saturate(taste.langs.get(trackLang(track)) ?? 0) - saturate(best));
+    }
     return {
-        score: own + artist + credit + family + marker + tag,
+        score: own + artist + credit + family + marker + tag + lang,
         track: own,
         artist,
         credit,
@@ -102,6 +172,7 @@ export function tasteScore(track: WaveTrack, taste: TasteMaps): TasteScore {
         family,
         marker,
         tag,
+        lang,
         tagKey: tags.key,
         tagBest: tags.best,
         known: taste.artists.has(artistId) || creditKnown,

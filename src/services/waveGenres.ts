@@ -37,6 +37,19 @@ export function tagShares(genre: string | null | undefined, tagList: string | nu
     return [...genres.map((key): [string, number] => [key, 1 / genres.length]), ...tags.map((key): [string, number] => [key, tagTotal / tags.length])];
 }
 
+// Язык трека для вкуса (П6): инструментал по пометке в названии, кириллица в названии или имени, иначе латиница.
+// Жанр и метки «beat», «instrumental» делают трек инструменталом, только если в названии и имени нет кириллицы:
+// метку beat русский рэп ставит часто, а пометку в названии нет
+export function trackLang(track: WaveTrack): 'cyr' | 'inst' | 'lat' {
+    const title = track.title ?? '';
+    if (/\b(?:type\s*beat|instrumental|instr\.?)\b|инструментал|минусовка|[([]\s*(?:beat|минус)\s*[)\]]/iu.test(title)) return 'inst';
+    if (/\p{Script=Cyrillic}/u.test(title + ' ' + (track.user?.username ?? ''))) return 'cyr';
+    const marked = ['instrumental', 'instrumentals', 'beat', 'beats', 'typebeat', 'инструментал', 'минусовка'];
+    const genre = normalizeTag(track.genre ?? '');
+    if (marked.includes(genre) || Array.from((track.tag_list ?? '').matchAll(/"([^"]+)"|(\S+)/g), (match) => normalizeTag(match[1] ?? match[2] ?? '')).some((key) => marked.includes(key))) return 'inst';
+    return 'lat';
+}
+
 // Ключ жанра из ввода в том же написании, что у склейки: «hip hop», «rap» и «рэп» это hiphop
 export function genreKeys(genre: string): string[] {
     const key = genreCanon(normalizeTag(genre));

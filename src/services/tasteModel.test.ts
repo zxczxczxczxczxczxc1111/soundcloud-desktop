@@ -1,5 +1,5 @@
 import { expect, it } from 'vitest';
-import type { TastePlay } from './historyIndex';
+import type { TastePlay, WaveSlice } from './historyIndex';
 import type { TasteLibrary } from './recommendStore';
 import { buildTaste, playWeights, TASTE_PARAMS, type TasteMark } from './tasteModel';
 
@@ -291,4 +291,60 @@ it('лайки сайта и подписки: дата лайка вместо 
     }).profile;
     expect(weightOf(withMeta.credits, 'realartist')).toBeCloseTo(blended(0.4, HOUR_AGE, false), 2);
     expect(weightOf(withMeta.artists, 90)).toBeCloseTo(blended(0.4 * TASTE_PARAMS.curatorShare, HOUR_AGE, false), 2);
+});
+
+it('П5: ночной артист выше ночью и ниже днём, поправка не больше потолка и модуля общего веса', () => {
+    // Местное время: понедельник-среда перед NOW, ночь 2:00, утро 8:00, день 14:00, вечер 20:00
+    const at = (day: number, hour: number, i: number): number => new Date(2026, 8, 21 + day, hour, i).getTime();
+    const plays: TastePlay[] = [];
+    for (let i = 0; i < 20; i++) {
+        plays.push(play({ at: at(i % 3, 2, i), id: 100 + i, artist: 1, artistName: 'Night', genre: 'ambient', tags: '' }));
+        plays.push(play({ at: at(i % 3, 14, i), id: 200 + i, artist: 2, artistName: 'Day', genre: 'techno', tags: '' }));
+    }
+    for (let i = 0; i < 10; i++) {
+        plays.push(play({ at: at(i % 3, 8, i), id: 300 + i, artist: 3, artistName: 'Filler', genre: 'house', tags: '' }));
+        plays.push(play({ at: at(i % 3, 20, i), id: 400 + i, artist: 3, artistName: 'Filler', genre: 'house', tags: '' }));
+    }
+    plays.sort((a, b) => a.at - b.at);
+    const { profile } = buildTaste([...confident, ...plays], [], empty, NOW);
+    const context = (key: number) => profile.contexts.find((entry) => entry.key === key);
+    // Будний день: ночь это ключ 0, день ключ 4
+    const night = context(0);
+    const day = context(4);
+    expect(weightOf(night?.artists ?? [], 1)).toBeGreaterThan(0);
+    expect(weightOf(night?.artists ?? [], 2)).toBeLessThan(0);
+    expect(weightOf(day?.artists ?? [], 2)).toBeGreaterThan(0);
+    expect(weightOf(day?.artists ?? [], 1)).toBeLessThan(0);
+    expect(weightOf(night?.tags ?? [], 'ambient')).toBeGreaterThan(0);
+    expect(weightOf(night?.tags ?? [], 'techno')).toBeLessThan(0);
+    for (const entry of profile.contexts) {
+        for (const [id, delta] of entry.artists) expect(Math.abs(delta)).toBeLessThanOrEqual(Math.min(TASTE_PARAMS.contextArtistCap, Math.abs(weightOf(profile.artists, id) ?? 0)) + 0.001);
+        for (const [key, delta] of entry.tags) expect(Math.abs(delta)).toBeLessThanOrEqual(Math.min(TASTE_PARAMS.contextTagCap, Math.abs(weightOf(profile.tags, key) ?? 0)) + 0.001);
+    }
+    // Выходных в журнале нет: их поправка идёт от отрезка без типа дня, сжатая сильнее
+    const weekendNight = weightOf(context(1)?.artists ?? [], 1) ?? 0;
+    expect(weekendNight).toBeGreaterThan(0);
+    expect(weekendNight).toBeLessThan(weightOf(night?.artists ?? [], 1) ?? 0);
+});
+
+it('П6, П9: язык трека копится частью вкуса, статистика источников волны уходит в профиль', () => {
+    const plays: TastePlay[] = [];
+    for (let i = 0; i < 10; i++) {
+        plays.push(play({ id: 500 + i, artist: 50 + i, title: 'Песня ' + i, artistName: 'Артист ' + i, end: 'skip', endedBy: 'user', heard: 10000 }));
+        plays.push(play({ id: 600 + i, artist: 60 + i, title: 'Song ' + i, artistName: 'Artist ' + i }));
+        plays.push(play({ id: 700 + i, artist: 70 + i, title: 'Night Drive (Instrumental)', artistName: 'Beats' }));
+    }
+    const sources: WaveSlice[] = [
+        { key: 'relatedArtist', plays: 10, early: 2, done: 7, likes: 0, more: 0, against: 0 },
+        { key: '', plays: 5, early: 1, done: 1, likes: 0, more: 0, against: 0 },
+        { key: 'scMix', plays: 0, early: 0, done: 0, likes: 0, more: 0, against: 0 },
+    ];
+    const { profile } = buildTaste([...confident, ...plays], [], empty, NOW, null, sources);
+    expect(weightOf(profile.langs, 'cyr')).toBeLessThan(0);
+    expect(weightOf(profile.langs, 'lat')).toBeGreaterThan(0);
+    expect(weightOf(profile.langs, 'inst')).toBeGreaterThan(0);
+    // У трека без названия язык не считается: двести прослушиваний трека 999 латиницу не раздули
+    expect(profile.langs).toHaveLength(3);
+    expect(weightOf(profile.langs, 'lat')).toBeLessThan(1);
+    expect(profile.sources).toEqual([['relatedArtist', 7, 2]]);
 });

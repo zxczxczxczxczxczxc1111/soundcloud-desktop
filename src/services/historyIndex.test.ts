@@ -454,6 +454,10 @@ it('круги повтора в замер не идут, смена с пор�
     expect(q?.wave).toMatchObject({ plays: 4, early: 1, done: 3 });
     expect(q?.reasons.map((slice) => [slice.key, slice.plays])).toEqual([['genreFresh', 1], ['similar', 1], ['tasteArtist', 1], ['tasteTag', 1]]);
     expect(q?.origins.map((slice) => [slice.key, slice.plays])).toEqual([['similar', 2], ['', 1], ['genreFresh', 1]]);
+    // П9: тот же разрез отдельным лёгким запросом для вкуса
+    expect(index.waveOrigins(USER, T0, T0 + DAY).map((slice) => [slice.key, slice.plays, slice.done, slice.early])).toEqual([['similar', 2, 2, 0], ['', 1, 1, 0], ['genreFresh', 1, 0, 1]]);
+    expect(index.waveOrigins(USER, T0 + DAY, T0 + 2 * DAY)).toEqual([]);
+    expect(index.waveOrigins('x', T0, T0 + DAY)).toEqual([]);
     expect(q?.presets).toEqual([]);
     expect(index.day(USER, T0, T0 + DAY).map((row) => row.id)).toEqual([24, 23, 21, 21, 21]);
     expect(index.search(USER, 'порог')).toEqual([]);

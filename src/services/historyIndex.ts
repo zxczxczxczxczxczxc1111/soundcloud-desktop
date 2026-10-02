@@ -669,6 +669,17 @@ export class HistoryIndex {
         });
     }
 
+    /** Исход треков волны за [from, to) по исходной причине (П9). Без остального отчёта waveQuality: зовётся при каждом пересчёте вкуса */
+    public waveOrigins(userId: unknown, from: number, to: number): WaveSlice[] {
+        if (!isId(userId)) return [];
+        return this.guarded(userId, ({ db }) =>
+            (db.prepare(
+                "select case when p.origin is not null then p.origin when p.why in ('tasteArtist', 'tasteTag') then '' else coalesce(p.why, '') end as key, " +
+                    MEASURE + ' from plays p where ' + JUDGED + ' and ' + WAVE + " and p.source not in ('wave:library', 'wave:forgotten', 'wave:radar') and p.at >= ? and p.at < ? group by key order by plays desc, key",
+            ).all(from, to) as Values[]).map((row) => ({ key: str(row.key), ...toMeasure(row) })),
+        );
+    }
+
     /** Прослушивания с момента since для модели вкуса, старые сверху. Закрытие клиента (stop) тоже здесь: слышанное до него не пропадает */
     public tastePlays(userId: unknown, since: number): TastePlay[] {
         if (!isId(userId)) return [];

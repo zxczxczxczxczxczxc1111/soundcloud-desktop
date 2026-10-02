@@ -1056,6 +1056,20 @@ it('профиль вкуса из main доходит до подборки: т
     expect(ids.some((id) => id % 1000 === 1)).toBe(false);
 });
 
+it('П6: обычная волна не берёт кириллицу от артиста, которого вкус не знает; знакомого берёт', async () => {
+    // У каждого зерна первые три похожих с русским названием; аккаунт 10 (похожий на первое зерно) вкусу знаком
+    const site = fakeSite((seed) => relatedTracks(seed).map((track, i) => (i < 3 ? { ...track, title: 'Песня ' + track.id } : track)));
+    const load = vi.fn(async () => ({ artists: [[10, 2]], tags: [], tracks: [] }));
+    Object.assign(window, { soundcloudAPI: { waveTaste: { load } } });
+    window.eval(waveScript());
+    await vi.advanceTimersByTimeAsync(100);
+    document.querySelector<HTMLButtonElement>('#sc-wave .scw-play')!.click();
+    await vi.advanceTimersByTimeAsync(100);
+    const ids = site.player.getQueue().slice().map((item) => item.sound.id);
+    expect(ids.length).toBeGreaterThan(3);
+    expect(ids.filter((id) => id % 1000 < 3)).toEqual(ids.includes(1000) ? [1000] : []);
+});
+
 it('«Не сейчас» у играющего трека ставит следующий, «Больше такого» уходит в main с артистом и метками', async () => {
     const site = fakeSite((seed) => relatedTracks(seed).map((track) => ({ ...track, genre: 'Techno', tag_list: 'berlin' })));
     const bridge = fakeExclusions();
@@ -2316,6 +2330,8 @@ it('зёрна обычной волны от разных артистов: л�
 });
 
 it('П2: обычная волна начинает с дослушанного за час и похожего артиста его автора, первым ставит уверенное', async () => {
+    // Пять плиток идут по вкусу со случайностью: при равной оценке порядок как нашлось
+    vi.spyOn(Math, 'random').mockReturnValue(0.5);
     const now = Date.now();
     const recent = vi.fn(async () => [{ id: 4242, at: now - 60000, artist: 4200, title: 'Fresh', artistName: 'Fresh Art', genre: '', tags: '', path: '/fresh-art/fresh', dur: 200000 }]);
     const site = fakeSite(relatedTracks, (name, path) => {

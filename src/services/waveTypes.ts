@@ -144,6 +144,12 @@ export interface TasteMaps {
     tags: Map<string, number>;
     markers: Map<string, number>;
     tracks: Map<number, number>;
+    /** Язык трека (trackLang): cyr, inst, lat */
+    langs: Map<string, number>;
+    /** Поправки артистов и тегов по отрезку суток: ключ slot × 2 + выходной, slot это ночь, утро, день, вечер (П5) */
+    contexts: Map<number, { artists: Map<number, number>; tags: Map<string, number> }>;
+    /** Источники волны за 14 дней: дослушано и ранних пропусков по исходной причине (П9) */
+    sources: Map<string, { done: number; early: number }>;
 }
 
 export interface TasteScore {
@@ -162,6 +168,8 @@ export interface TasteScore {
     marker: number;
     /** Вклад тегов: сумма весов долями (жанр 1, метки вместе 0.5), плюс насыщен до 1 */
     tag: number;
+    /** Язык трека против самого любимого языка: от -1 до 0 */
+    lang: number;
     /** Самый любимый из тегов трека и его вклад без насыщения */
     tagKey: string;
     tagBest: number;
