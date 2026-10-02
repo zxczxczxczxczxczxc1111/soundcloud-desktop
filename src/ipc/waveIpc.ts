@@ -49,7 +49,7 @@ export function registerWaveIpc(ipc: IpcRegistry, deps: WaveIpcDeps): void {
         diagnostics.record('wave.empty', { waveSeen: count(value.seen), waveArtistTracks: count(value.artistTracks), waveMoodTags: count(value.moodTags) });
     });
     // Отметки волны («Не нравится», скрытые артисты, «Не сейчас», «Больше такого»): ставит страница, снимает и F1
-    for (const channel of ['soundcloud:wave-exclusions:load', 'soundcloud:wave-exclusions:set', 'get-wave-exclusions', 'remove-wave-exclusion', 'soundcloud:wave-taste', 'soundcloud:wave-shelf:load', 'soundcloud:wave-shelf:save', 'soundcloud:wave-library:load', 'soundcloud:wave-library:save', 'soundcloud:wave-library:heard']) ipc.removeHandler(channel);
+    for (const channel of ['soundcloud:wave-exclusions:load', 'soundcloud:wave-exclusions:set', 'get-wave-exclusions', 'remove-wave-exclusion', 'soundcloud:wave-taste', 'soundcloud:wave-shelf:load', 'soundcloud:wave-shelf:save', 'soundcloud:wave-library:load', 'soundcloud:wave-library:save', 'soundcloud:wave-library:heard', 'soundcloud:wave-library:recent']) ipc.removeHandler(channel);
     ipc.handle('soundcloud:wave-exclusions:load', (event, userId: unknown) =>
         isTrustedSoundCloudSender(event) ? exclusions.load(userId) : null,
     );
@@ -152,6 +152,21 @@ export function registerWaveIpc(ipc: IpcRegistry, deps: WaveIpcDeps): void {
         if (!validateSettingChange(change)) return false;
         deps.applySettingChange(change);
         return true;
+    });
+    // Дослушанное за последний час (от 80% длины или до конца): с него начинается обычная волна (П2).
+    // Простой системы не в счёт: музыка играла сама
+    ipc.handle('soundcloud:wave-library:recent', async (event, userId: unknown) => {
+        if (!isTrustedSoundCloudSender(event) || typeof userId !== 'number' || !Number.isSafeInteger(userId) || userId <= 0) return [];
+        try {
+            const plays = await library.request('tastePlays', userId, Date.now() - 3600000);
+            return plays
+                .filter((play) => !play.away && !play.looped && (play.end === 'done' || (play.dur > 0 && Math.min(play.heard, play.covered ?? play.heard) >= play.dur * 0.8)))
+                .slice(-50)
+                .map((play) => ({ id: play.id, at: play.at, artist: play.artist, title: play.title, artistName: play.artistName, genre: play.genre, tags: play.tags, path: play.path, dur: play.dur }));
+        } catch (error) {
+            console.warn('Дослушанное за час не прочитано:', error);
+            return [];
+        }
     });
     // Слышанное в клиенте за 3 дня от 30 секунд: в перемешивании «Моей музыки» оно не играет
     ipc.handle('soundcloud:wave-library:heard', async (event, userId: unknown) => {

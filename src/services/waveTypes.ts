@@ -53,7 +53,13 @@ export type WaveReason =
     /** Позиция радара: why это готовая короткая причина из выпуска */
     | { kind: 'radar'; why: string }
     /** Трек «Моей музыки»: name это плейлист, из которого он пришёл, пусто у лайков */
-    | { kind: 'library'; name: string };
+    | { kind: 'library'; name: string }
+    /** Трек похожего артиста (relatedartists): artist это тот, на кого он похож */
+    | { kind: 'relatedArtist'; artist: string }
+    /** Из персональной подборки SoundCloud: name это её название (Your Mix 1, Weekly Wave) */
+    | { kind: 'scMix'; name: string }
+    /** Свежий лайк слушателей, которые лайкают то же нишевое, что и ты */
+    | { kind: 'neighbors' };
 
 /** Для журнала: откуда кандидат на самом деле и как его оценил вкус; причина в reason может смениться причиной по вкусу */
 export interface WaveTrace {
@@ -123,6 +129,7 @@ export type WaveTexts = Record<
     | 'libraryModes' | 'librarySources' | 'libraryPlaying' | 'libraryPaused' | 'libraryPlaylists' | 'libraryHere' | 'libraryUnavailable' | 'libraryUnavailableTip' | 'whyLibrary' | 'whyLibraryLikes' | 'seedLibrary'
     | 'presets' | 'presetAll' | 'moodHappy' | 'moodSad' | 'moodAggressive' | 'moodCalm' | 'moodEnergetic' | 'hintPreset' | 'presetShort' | 'whyMoodTag'
     | 'undo' | 'toastLiked' | 'toastUnliked' | 'seedCollecting' | 'seedCollectingAny'
+    | 'whyRelatedArtist' | 'whyScMix' | 'whyNeighbors'
     | 'pinned' | 'menuPin' | 'menuUnpin' | 'menuWaveGenre' | 'toastPinned' | 'toastUnpinned' | 'toastPinFull' | 'pinPlay' | 'pinRemove',
     string
 >;
@@ -206,6 +213,8 @@ export interface Seed {
     card?: number;
     /** «Моя музыка»: выбранные источники и режим; left это номера оставшихся треков из сессии, пока пул не собран заново */
     library?: { pick: string[]; mode: LibraryMode; left?: number[] };
+    /** Волна от артиста: его аккаунт, по нему берутся похожие артисты */
+    artist?: number;
 }
 /** Вид отметки из меню и блока: «Не нравится», скрытый артист, «Не сейчас» у трека и артиста, «Больше такого» */
 export type MarkKind = 'track' | 'artist' | 'later-track' | 'later-artist' | 'more';

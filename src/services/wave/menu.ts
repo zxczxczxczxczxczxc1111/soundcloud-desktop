@@ -106,11 +106,13 @@ export function installMenu(core: MenuCore): MenuSection {
             const track = await trackOf(target);
             return track ? { seed: { kind, title: (track.title ?? '').trim() || '…', tracks: [track], own: [] }, first: track } : null;
         }
+        // Артист: его лучшее и неслышанное впереди, три своих на один найденный, найденное это похожие артисты и похожее
+        // на его треки (П3)
         if (kind === 'artist') {
             const artist = await artistOf(target);
             if (!artist) return null;
             const own = await artistOwnTracks(artist.id);
-            return { seed: { kind, title: artist.username || '…', tracks: shuffleInPlace(own.slice()), own }, first: null };
+            return { seed: { kind, title: artist.username || '…', tracks: shuffleInPlace(own.slice()), own, order: 'smart', artist: artist.id }, first: null };
         }
         const body = (await resolveUrl(target.url)) as { title?: unknown } | null;
         const tracks = await playlistTracks(body);

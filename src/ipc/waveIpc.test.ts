@@ -127,6 +127,26 @@ describe('обработчики волны', () => {
         expect(result.fresh).toEqual([8]);
         expect(shelf.load).toHaveBeenCalledWith(11);
     });
+    it('П2: дослушанное за час для старта волны: до конца или от 80% покрытия, без простоя и кругов повтора', async () => {
+        vi.useFakeTimers();
+        vi.setSystemTime(NOW);
+        const play = (id: number, extra: object) => ({ id, at: NOW - 60000, heard: 0, dur: 200000, end: 'skip', away: false, looped: false, covered: null, artist: 1, title: 't', artistName: 'a', genre: 'g', tags: '', path: '/a/t', artwork: '' , ...extra });
+        const { ipc, site, request } = setup({
+            tastePlays: [
+                play(1, { end: 'done', heard: 200000 }),
+                play(2, { heard: 170000, covered: 165000 }),
+                play(3, { heard: 170000, covered: 60000 }),
+                play(4, { end: 'done', heard: 200000, away: true }),
+                play(5, { end: 'done', heard: 200000, looped: true }),
+                play(6, { heard: 20000 }),
+            ],
+        });
+        const result = (await ipc.invoke('soundcloud:wave-library:recent', site, 11)) as Array<{ id: number; at: number; path: string }>;
+        expect(result.map((item) => item.id)).toEqual([1, 2]);
+        expect(result[0]).toMatchObject({ at: NOW - 60000, path: '/a/t' });
+        expect(request).toHaveBeenCalledWith('tastePlays', 11, NOW - 3600000);
+        await expect(ipc.invoke('soundcloud:wave-library:recent', fakeEvent(), 11)).resolves.toEqual([]);
+    });
     it('сбой хранилища не валит подборки, неверный пользователь не идёт в хранилище', async () => {
         const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
         const failing = setup({ tastePlays: new Error('нет'), playlistTracks: new Error('нет'), libraryMembers: new Error('нет') });

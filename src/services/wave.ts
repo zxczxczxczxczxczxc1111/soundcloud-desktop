@@ -28,6 +28,8 @@ import * as librarySectionModule from './wave/library';
 import * as radarSectionModule from './wave/radar';
 import * as shelfSectionModule from './wave/shelf';
 import * as menuSectionModule from './wave/menu';
+import * as waveSourcesModule from './wave/sources';
+import type { ScMix } from './wave/sources';
 
 // Разбор версий, сеть подбора и пул «Моей музыки» живут в своих модулях. Функции страницы зовут их по голому имени: в Node имя
 // берётся отсюда, на странице из объявлений identityHelpers и sourceHelpers в той же обёртке.
@@ -48,6 +50,7 @@ const { installLibrary } = librarySectionModule;
 const { installRadar } = radarSectionModule;
 const { installShelf } = shelfSectionModule;
 const { installMenu } = menuSectionModule;
+const { installSources, relatedArtistsOf, scMixesOf, interleaveMixes } = waveSourcesModule;
 // Прежние импорты из wave.ts остаются рабочими
 export type { WaveTrack, WaveMode, OpenTrackResult, WaveReason, WaveCandidate, WaveFilter, WaveLinkKind, WaveTexts, TasteMaps, TasteScore, TasteGroup } from './waveTypes';
 export { WAVE_TEXTS, fillText, reasonText, localDay, countText, formatTime, shapeSamples } from './waveTexts';
@@ -141,8 +144,8 @@ export interface WaveWindow extends Window {
         waveTaste?: { load(userId: number): Promise<unknown> };
         waveSignals?: { add(userId: number, signals: PlaySignal[]): void };
         waveShelf?: { load(userId: number): Promise<unknown>; save(userId: number, snapshot: object): Promise<unknown> };
-        // «Моя музыка»: выбор и режим в настройках, слышанное в клиенте за 3 дня
-        waveLibrary?: { load(): Promise<unknown>; save(value: object): Promise<unknown>; heard(userId: number): Promise<unknown> };
+        // «Моя музыка»: выбор и режим в настройках, слышанное в клиенте за 3 дня; дослушанное за час для старта волны
+        waveLibrary?: { load(): Promise<unknown>; save(value: object): Promise<unknown>; heard(userId: number): Promise<unknown>; recent?(userId: number): Promise<unknown> };
         // Хранилище рекомендаций в worker: обход библиотеки и загрузки с разбором версий
         recommend?: SyncBridge & {
             syncState(user: number): Promise<unknown>;
@@ -400,6 +403,19 @@ export function installWave(config: WaveConfig, createPlayback: typeof installPl
     const staleSeeds = new Set<number>();
     // Очередь текстового поиска: зерно и цель запроса чередуются от прохода к проходу
     let searchTurn = 0;
+    // Дослушанное за последний час (П2): из сигналов этой страницы, новые первыми; main добавляет своё раз в 2 минуты
+    let doneRecently: Array<{ track: WaveTrack; at: number }> = [];
+    let doneLoadedAt = 0;
+    // Первый проход поколения обычной волны начинается с дослушанного и похожего артиста его автора (П2)
+    let contextPending = true;
+    // Сколько взято из найденного в поколении: места 1-3 только уверенные (П2)
+    let pickedInGeneration = 0;
+    // Любимые артисты по кругу и уже взятые в поколении похожие на них (П3)
+    let favoriteTurn = 0;
+    const usedNeighbors = new Set<number>();
+    let artistNeighborsDone = false;
+    // Номера подборок SoundCloud вперемешку, ещё не взятые в этом поколении (П4)
+    let scQueue: Array<{ id: number; mix: ScMix }> | null = null;
 
     // Раскрытая под полкой карточка: подборка или радар
     let openCard: number | null = null;
@@ -441,6 +457,8 @@ export function installWave(config: WaveConfig, createPlayback: typeof installPl
         open?.closest('.scw-card')?.scrollIntoView({ block: 'nearest' });
     }
     // Разделы из wave/: сборка с ядром. Стоит до кода, который их зовёт; константы ядра ниже по тексту идут обёртками
+    // Похожие артисты, лучшие треки артиста и подборки SoundCloud: раздел в wave/sources.ts
+    const waveSources = installSources({ call, ensureUser, tracksOf: (body) => tracksOf(body) });
     // «Версии этого трека»: раздел в wave/versions.ts
     const versions = installVersions({
         texts: T,
@@ -1526,6 +1544,112 @@ export function installWave(config: WaveConfig, createPlayback: typeof installPl
     async function stationTracks(from: WaveTrack): Promise<WaveTrack[]> {
         return playlistTracks(await resolveUrl('https://soundcloud.com/discover/sets/track-stations:' + from.id));
     }
+    // Дослушанное за час (П2). Сигнал страницы знает трек полнее, чем main: в начало списка без повторов
+    const HOUR = 3600000;
+    function noteDone(signal: PlaySignal): void {
+        const track: WaveTrack = {
+            id: signal.id, kind: 'track', title: signal.title ?? '', duration: signal.dur, genre: signal.genre, tag_list: signal.tags,
+            user_id: signal.artist || undefined, user: { id: signal.artist || undefined, username: signal.artistName ?? '' },
+            permalink_url: signal.path ? 'https://soundcloud.com' + signal.path : '',
+        };
+        doneRecently = [{ track, at: signal.at }, ...doneRecently.filter((entry) => entry.track.id !== signal.id && Date.now() - entry.at < HOUR)].slice(0, 50);
+    }
+    async function recentDone(): Promise<WaveTrack[]> {
+        const bridge = host.soundcloudAPI?.waveLibrary;
+        if (bridge?.recent && Date.now() - doneLoadedAt > 2 * 60000) {
+            doneLoadedAt = Date.now();
+            try {
+                const id = await ensureUser();
+                const loaded = id ? await Promise.race([bridge.recent(id), wait(5000).then(() => [])]) : [];
+                const text = (value: unknown): string => (typeof value === 'string' ? value : '');
+                for (const value of Array.isArray(loaded) ? loaded : []) {
+                    const item = value && typeof value === 'object' ? (value as Record<string, unknown>) : null;
+                    if (!item || !isId(item.id) || typeof item.at !== 'number' || doneRecently.some((entry) => entry.track.id === item.id)) continue;
+                    const artist = isId(item.artist) ? item.artist : undefined;
+                    doneRecently.push({
+                        at: item.at,
+                        track: {
+                            id: item.id, kind: 'track', title: text(item.title), duration: typeof item.dur === 'number' ? item.dur : 0, genre: text(item.genre), tag_list: text(item.tags),
+                            user_id: artist, user: { id: artist, username: text(item.artistName) }, permalink_url: text(item.path) ? 'https://soundcloud.com' + text(item.path) : '',
+                        },
+                    });
+                }
+                doneRecently.sort((a, b) => b.at - a.at);
+            } catch (error) {
+                console.warn('Волна: дослушанное за час не загружено', error);
+            }
+        }
+        return doneRecently.filter((entry) => Date.now() - entry.at < HOUR).map((entry) => entry.track);
+    }
+    // Имя аккаунта по истории и лайкам: вкус хранит только номера
+    function accountName(id: number, p: Profile): string {
+        const track = p.history.find((item) => trackArtist(item) === id) ?? p.likedTracks.find((item) => trackArtist(item) === id);
+        return (track?.user?.username ?? '').trim();
+    }
+    // Лучший трек похожего артиста (П2, П3): похожие на from по порядку SoundCloud, ещё не взятые в поколении, не скрытые;
+    // у похожего первый неслышанный из топа, иначе первый из топа. null, если ничего не нашлось
+    async function neighborTrack(from: number, p: Profile): Promise<WaveTrack | null> {
+        const neighbors = (await waveSources.relatedArtists(from)).filter((artist) => !usedNeighbors.has(artist.id) && !excludedArtists.has(artist.id) && !marked(laterArtists, artist.id));
+        for (const neighbor of neighbors.slice(0, 3)) {
+            usedNeighbors.add(neighbor.id);
+            const tops = (await waveSources.topTracks(neighbor.id)).filter((track) => !isExcluded(track) && !taken.has(track.id) && !usedSeeds.has(track.id) && !staleSeeds.has(track.id));
+            const track = tops.find((item) => !p.heard.has(item.id)) ?? tops[0];
+            if (track) return track;
+        }
+        return null;
+    }
+    // Начало обычной волны (П2): последнее дослушанное и лучший трек похожего артиста его автора. Пусто, если за час
+    // ничего не дослушано
+    async function contextSeeds(p: Profile): Promise<{ seeds: WaveTrack[]; neighbor: { track: WaveTrack; artist: string } | null }> {
+        const done = await recentDone();
+        const first = done.find((track) => !isExcluded(track) && !skipped.has(copyKey(track)) && !staleSeeds.has(track.id) && !usedSeeds.has(track.id));
+        if (!first) return { seeds: [], neighbor: null };
+        let neighbor: { track: WaveTrack; artist: string } | null = null;
+        const author = trackArtist(first);
+        if (author)
+            try {
+                const track = await neighborTrack(author, p);
+                if (track) neighbor = { track, artist: artistName(first) || accountName(author, p) };
+            } catch (error) {
+                console.warn('Волна: похожие артисты для начала не загружены', error);
+            }
+        return { seeds: neighbor ? [first, neighbor.track] : [first], neighbor };
+    }
+    // Зерно за проход из похожего артиста любимого (П3): любимые по весу во вкусе по кругу, по три попытки
+    async function favoriteNeighbor(p: Profile): Promise<{ track: WaveTrack; artist: string } | null> {
+        const current = taste;
+        if (!current) return null;
+        const favorites = [...current.artists].filter(([id, weight]) => weight >= 1 && !excludedArtists.has(id) && !marked(laterArtists, id)).sort((a, b) => b[1] - a[1]).slice(0, 20);
+        for (let attempt = 0; attempt < Math.min(3, favorites.length); attempt++) {
+            const [id] = favorites[favoriteTurn++ % favorites.length];
+            const name = accountName(id, p);
+            if (!name) continue;
+            const track = await neighborTrack(id, p);
+            if (track) return { track, artist: name };
+        }
+        return null;
+    }
+    // Следующие треки подборок SoundCloud (П4): по 10 за проход вперемешку из всех подборок, треки добирает trackBatch
+    async function scMixCandidates(): Promise<Array<{ track: WaveTrack; mix: ScMix }>> {
+        if (!scQueue) scQueue = interleaveMixes(await waveSources.scMixes(), ['mix', 'daily', 'weekly', 'liked']);
+        const next: Array<{ id: number; mix: ScMix }> = [];
+        while (scQueue.length && next.length < 10) {
+            const entry = scQueue.shift();
+            if (entry && !taken.has(entry.id)) next.push(entry);
+        }
+        if (!next.length) return [];
+        const byId = new Map((await waveSources.tracksByIds(next.map((entry) => entry.id))).map((track) => [track.id, track]));
+        return next.flatMap((entry) => {
+            const track = byId.get(entry.id);
+            return track ? [{ track, mix: entry.mix }] : [];
+        });
+    }
+    // Уверенный кандидат для мест 1-3 поколения (П2): похожий артист любимого или оценка вкуса с поправкой сессии от 1,5
+    function confident(candidate: WaveCandidate): boolean {
+        if ((candidate.trace?.origin ?? candidate.reason.kind) === 'relatedArtist') return true;
+        const current = taste;
+        return !!current && tasteScore(candidate.track, current).score + sessionScore(candidate) >= 1.5;
+    }
     // Один проход по источникам: похожие на три зерна и, если выбраны жанры, свежее и популярное в каждом.
     // У волны от трека, артиста или плейлиста зёрна идут по порядку и жанр не действует
     async function gatherRound(): Promise<number> {
@@ -1556,10 +1680,12 @@ export function installWave(config: WaveConfig, createPlayback: typeof installPl
                 }
                 if (current.order === 'fixed' && ownQueue.length >= BATCH) return ownQueue.length;
             } else if (current.order) {
-                const reason: WaveReason = current.kind === 'daily' ? { kind: 'daily' } : current.kind === 'forgotten' ? { kind: 'forgotten' } : { kind: 'group', name: current.title };
+                const reason: WaveReason = current.kind === 'daily' ? { kind: 'daily' } : current.kind === 'forgotten' ? { kind: 'forgotten' }
+                    : current.kind === 'artist' ? { kind: 'artistTrack', artist: current.title } : { kind: 'group', name: current.title };
                 // Радар играет выпуск целиком: «Уже слышал» и недавно игравшее в нём остаются, запреты проверены при запуске.
+                // Волна от артиста так же: его лучшее звучит, даже если недавно играло (П3).
                 // Свой список отсекает только отданное сайту в этой подборке, а не всё, что волна отдавала раньше
-                const ownFilter: WaveFilter = { ...filter, taken: new Set(seedGiven), ...(current.kind === 'radar' ? { recent: new Set<number>() } : {}) };
+                const ownFilter: WaveFilter = { ...filter, taken: new Set(seedGiven), ...(current.kind === 'radar' || current.kind === 'artist' ? { recent: new Set<number>() } : {}) };
                 for (const track of current.own)
                     accept(ownQueue, { track, reason: current.kind === 'radar' ? { kind: 'radar', why: radarSection.reason(track.id) } : reason }, ownFilter);
                 // Подборка целиком впереди: похожие понадобятся, когда она кончится
@@ -1577,10 +1703,17 @@ export function installWave(config: WaveConfig, createPlayback: typeof installPl
         const listed = seedsFor(keys);
         const seeds = mood ? [...listed.filter((track) => presetScore(track, null) >= 0.5), ...listed.filter((track) => presetScore(track, null) < 0.5)] : listed;
         let picked: WaveTrack[];
+        // Трек похожего артиста, который сам идёт кандидатом: у начала с контекста и у зерна от любимого (П2, П3)
+        const neighbors: Array<{ track: WaveTrack; artist: string }> = [];
         // Набор из меню: похожие на каждый трек набора с первого же раза
         if (seed) picked = seeds.slice(0, seed.kind === 'tracks' ? 5 : 3);
         else {
-            picked = likedSeeds.filter((track) => seeds.includes(track)).slice(0, 1);
+            // Обычная волна без жанра и пресета в первом проходе поколения начинает с того, что ты только что дослушал
+            const context = contextPending && !keys.length && !mood ? await contextSeeds(p) : { seeds: [], neighbor: null };
+            contextPending = false;
+            if (own !== generation) return 0;
+            if (context.neighbor) neighbors.push(context.neighbor);
+            picked = [...context.seeds, ...likedSeeds.filter((track) => seeds.includes(track) && !context.seeds.includes(track)).slice(0, 1)].slice(0, 3);
             const rest = seeds.filter((track) => !picked.includes(track));
             const near = shuffleInPlace(rest.slice(0, 12));
             // Одно зерно на артиста за проход: любимый артист в истории иначе часто даёт два-три зерна из трёх,
@@ -1616,7 +1749,7 @@ export function installWave(config: WaveConfig, createPlayback: typeof installPl
             if (accept(found, { track, reason }, filter, from.id) && seed && derivedSeeds.length < 100) derivedSeeds.push(track);
         };
         let failures = 0;
-        const tasks: Promise<void>[] = picked.map((from) =>
+        const similarTo = (from: WaveTrack): Promise<void> =>
             call('relatedSounds', { track_id: from.id }, { limit: 50 }).then((body) => {
                 if (disposed || own !== generation) return;
                 for (const value of collection(body)) {
@@ -1629,8 +1762,49 @@ export function installWave(config: WaveConfig, createPlayback: typeof installPl
                 // Зерно без ответа можно взять в следующий раз
                 usedSeeds.delete(from.id);
                 console.warn('Волна: похожие не загружены', error);
-            }),
-        );
+            });
+        // Трек похожего артиста сам кандидат: «Похож на ...»
+        const neighborCandidate = (entry: { track: WaveTrack; artist: string }): void => {
+            if (trackMatchesGenre(entry.track, keys)) accept(found, { track: entry.track, reason: { kind: 'relatedArtist', artist: entry.artist } }, filter);
+        };
+        for (const entry of neighbors) neighborCandidate(entry);
+        const tasks: Promise<void>[] = picked.map(similarTo);
+        // Обычная волна без жанра: за проход ещё одно зерно, лучший трек похожего артиста любимого (П3)
+        if (!seed && !keys.length)
+            tasks.push(favoriteNeighbor(p).then((entry) => {
+                if (!entry || disposed || own !== generation) return;
+                usedSeeds.add(entry.track.id);
+                neighborCandidate(entry);
+                return similarTo(entry.track);
+            }).catch((error: unknown) => console.warn('Волна: похожий артист любимого не загружен', error)));
+        // Волна от артиста: лучшее восьми его похожих артистов, по три трека, один раз за поколение (П3)
+        const artistSeed = seed?.kind === 'artist' ? seed : null;
+        if (artistSeed?.artist && !artistNeighborsDone) {
+            artistNeighborsDone = true;
+            const from = artistSeed.artist;
+            tasks.push((async () => {
+                const list = (await waveSources.relatedArtists(from)).filter((artist) => !excludedArtists.has(artist.id) && !marked(laterArtists, artist.id)).slice(0, 8);
+                const tops = await Promise.all(list.map((artist) => waveSources.topTracks(artist.id).catch((error: unknown) => {
+                    console.warn('Волна: треки похожего артиста не загружены', error);
+                    return [];
+                })));
+                if (disposed || own !== generation) return;
+                for (const top of tops) for (const track of top.slice(0, 3)) neighborCandidate({ track, artist: artistSeed.title });
+            })().catch((error: unknown) => {
+                if (own === generation) artistNeighborsDone = false;
+                failures++;
+                console.warn('Волна: похожие артисты не загружены', error);
+            }));
+        }
+        // Обычная волна: до 10 треков подборок SoundCloud за проход, дальше их ставит вкус (П4)
+        if (!seed)
+            tasks.push(scMixCandidates().then((list) => {
+                if (disposed || own !== generation) return;
+                for (const { track, mix } of list) if (trackMatchesGenre(track, keys)) accept(found, { track, reason: { kind: 'scMix', name: mix.title } }, filter);
+            }).catch((error: unknown) => {
+                failures++;
+                console.warn('Волна: треки подборок SoundCloud не загружены', error);
+            }));
         for (const tag of tags)
             for (const source of ['recent', 'search'] as const)
                 tasks.push(genrePage(source, tag).then((tracks) => {
@@ -1729,7 +1903,7 @@ export function installWave(config: WaveConfig, createPlayback: typeof installPl
         } else pool.push(...shuffleInPlace(matched));
         const pagesLeft = (list: string[]): boolean => list.some((tag) => (['recent', 'search'] as const).some((source) => !cursors.get(source + ':' + genreEnglish(tag))?.done));
         const moodLeft = moodSearch.some((tag, index) => (index === 0 ? ['recent', 'search'] : ['search']).some((source) => !cursors.get(source + ':' + genreEnglish(tag))?.done));
-        const sourcesLeft = seedsFor(keys).length > 0 || stationRoots().length > 0 || pagesLeft(tags) || pagesLeft(fallbackMood ?? []) || moodLeft;
+        const sourcesLeft = seedsFor(keys).length > 0 || stationRoots().length > 0 || pagesLeft(tags) || pagesLeft(fallbackMood ?? []) || moodLeft || (!seed && (scQueue === null || scQueue.length > 0));
         if (mood) moodRounds++;
         if (!found.length && !sourcesLeft) exhausted = true;
         return found.length;
@@ -1766,11 +1940,14 @@ export function installWave(config: WaveConfig, createPlayback: typeof installPl
         while (picked.length < count && (ownQueue.length || pool.length)) {
             const fromOwn = ownQueue.length > 0 && (smart ? !pool.length || ownRun < 3 : !blend || !pool.length || picked.length % 2 === 0);
             if (smart) ownRun = fromOwn ? ownRun + 1 : 0;
-            const item = fromOwn ? ownQueue.shift() : pickSpaced(pool, 1, recentKeys, gap)[0];
+            // Места 1-3 поколения из найденного только уверенные (П2): первые треки после запуска пропускались втрое чаще
+            const sure = !fromOwn && pickedInGeneration < 3 ? pool.filter(confident) : [];
+            const item = fromOwn ? ownQueue.shift() : pickSpaced(sure.length ? sure : pool, 1, recentKeys, gap)[0];
             if (!item) break;
             if (!fromOwn) {
                 pool = pool.filter((entry) => entry !== item);
                 pooled.add(item);
+                pickedInGeneration++;
             }
             picked.push(item);
             recentKeys.push(spacingKeys(item.track));
@@ -1806,6 +1983,11 @@ export function installWave(config: WaveConfig, createPlayback: typeof installPl
         moodShort = false;
         seenCount = 0;
         artistCount = 0;
+        contextPending = true;
+        pickedInGeneration = 0;
+        usedNeighbors.clear();
+        artistNeighborsDone = false;
+        scQueue = null;
         usedSeeds.clear();
         usedStations.clear();
         cursors.clear();
@@ -2279,6 +2461,8 @@ export function installWave(config: WaveConfig, createPlayback: typeof installPl
         signal.likedNow = signal.liked && !current.likedAtStart;
         signal.spans = mergeSpans(current.spans).map(([from, to]) => [Math.round(from), Math.round(to)]);
         if (signal.end !== 'stop') signal.endedBy = byUser ? 'user' : 'auto';
+        const covered = signal.spans.reduce((sum, [from, to]) => sum + to - from, 0);
+        if (!signal.looped && (signal.end === 'done' || (signal.dur > 0 && covered >= signal.dur * 0.8))) noteDone(signal);
         pendingSignals.push(signal);
         if (pendingSignals.length > 1000) pendingSignals.splice(0, pendingSignals.length - 1000);
         if (signalsTimer === undefined) signalsTimer = setTimeout(flushSignals, 5000);
@@ -2465,11 +2649,25 @@ export function installWave(config: WaveConfig, createPlayback: typeof installPl
         for (let i = 0; i < stubs.length; i += 50) full.push(...tracksOf(await call('trackBatch', {}, { ids: stubs.slice(i, i + 50).join(',') })));
         return uniqueTracks(full).filter(isWaveEligible);
     }
-    // Топ артиста, у кого топ короче пяти треков, ещё и последние загрузки
+    // Лучшее артиста вперемешку с неслышанным из последних загрузок (П3): два из топа, одно новое, до 15.
+    // Последние загрузки не ответили: только топ
     async function artistOwnTracks(id: number): Promise<WaveTrack[]> {
-        let list = tracksOf(await call('userToptracks', { id }, { limit: 20 }));
-        if (list.length < 5) list = list.concat(tracksOf(await call('userTracks', { id }, { limit: 30 })));
-        return uniqueTracks(list).filter(isWaveEligible);
+        const [top, latest] = await Promise.all([
+            call('userToptracks', { id }, { limit: 20 }).then(tracksOf),
+            call('userTracks', { id }, { limit: 30 }).then(tracksOf).catch((error: unknown) => {
+                console.warn('Волна: последние загрузки артиста не загружены', error);
+                return [];
+            }),
+        ]);
+        const heard = profile?.heard ?? new Set<number>();
+        const best = uniqueTracks(top).filter(isWaveEligible);
+        const fresh = uniqueTracks(latest).filter((track) => isWaveEligible(track) && !heard.has(track.id) && !best.some((item) => item.id === track.id));
+        const list: WaveTrack[] = [];
+        while ((best.length || fresh.length) && list.length < 15) {
+            const next = (list.length % 3 === 2 && fresh.length > 0) || !best.length ? fresh.shift() : best.shift();
+            if (next) list.push(next);
+        }
+        return list;
     }
     // Новая волна от зёрен: прошлая подборка сбрасывается, волна сразу играет. Не вышло: тост и обычная волна
     async function beginSeed(request: number, loaded: { seed: Seed; first: WaveTrack | null }): Promise<void> {
@@ -4224,7 +4422,7 @@ const pageHelpers = [
     artworkUrl, coversOf, formatTime, playEnd, siteSource, moodTags, trackPath, localDay, countText, tasteGroups, capPerArtist, forgottenPicks, daySample, artistNames, performerNames, sharedPerformer, isNewArtist, spreadBy, pickFinds,
     moodList, moodDictionary, trackMood, artistMoods, neighborMood, moodScore,
     ...identity.identityHelpers, ...sources.sourceHelpers, ...libraryMix.libraryHelpers, siteRequires, installPlaybackPage, installPlaybackRecovery,
-    installVersions, installLibrary, installRadar, installShelf, installMenu,
+    installVersions, installLibrary, installRadar, installShelf, installMenu, installSources, relatedArtistsOf, scMixesOf, interleaveMixes,
 ];
 
 export function waveScript(resume = false): string {

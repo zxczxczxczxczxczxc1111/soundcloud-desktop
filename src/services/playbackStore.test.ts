@@ -41,6 +41,19 @@ it('волна от радара переживает перезапуск: ис
     expect(loaded?.items[0].reason).toEqual({ kind: 'radar', why: 'New from Alpha' });
     expect(loaded?.seed).toMatchObject({ kind: 'radar', title: 'Release Radar, 25 September', order: 'fixed', own: [{ id: 42 }, { id: 43 }] });
 });
+it('П3, П4: волна от артиста помнит его аккаунт, новые причины переживают перезапуск', () => {
+    const saved = snapshot();
+    saved.items = [
+        { ...saved.items[0], reason: { kind: 'relatedArtist', artist: 'mightymason' } },
+        { track: { id: 44, title: 'B', duration: 200000 }, explicit: false, wave: true, reason: { kind: 'scMix', name: 'Your Mix 1' } },
+        { track: { id: 45, title: 'C', duration: 200000 }, explicit: false, wave: true, reason: { kind: 'neighbors' } },
+    ];
+    saved.seed = { kind: 'artist', title: 'mightymason', tracks: [{ id: 42 }], own: [{ id: 42 }], order: 'smart', mode: 'similar', artist: 1076674012 };
+    const loaded = cleanPlaybackSnapshot(saved);
+    expect(loaded?.items.map((item) => item.reason)).toEqual([{ kind: 'relatedArtist', artist: 'mightymason' }, { kind: 'scMix', name: 'Your Mix 1' }, { kind: 'neighbors' }]);
+    expect(loaded?.seed).toMatchObject({ kind: 'artist', order: 'smart', artist: 1076674012 });
+    expect(cleanPlaybackSnapshot({ ...saved, seed: { ...saved.seed, artist: -5 } })?.seed).not.toHaveProperty('artist');
+});
 it('Э7: «Моя музыка» переживает перезапуск выбором, режимом и номерами оставшихся треков, без самих треков', () => {
     const store = open(); const saved = snapshot();
     saved.items[0].reason = { kind: 'library', name: 'Mine' };

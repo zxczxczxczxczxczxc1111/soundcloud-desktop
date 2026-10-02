@@ -338,5 +338,6 @@ contextBridge.exposeInMainWorld('soundcloudAPI', {
         load: (): Promise<unknown> => ipcRenderer.invoke('soundcloud:wave-library:load'),
         save: (value: object): Promise<unknown> => ipcRenderer.invoke('soundcloud:wave-library:save', value),
         heard: (userId: number): Promise<unknown> => ipcRenderer.invoke('soundcloud:wave-library:heard', userId),
+        recent: (userId: number): Promise<unknown> => ipcRenderer.invoke('soundcloud:wave-library:recent', userId),
     },
 });

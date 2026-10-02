@@ -76,6 +76,7 @@ export const WAVE_TEXTS: Record<'ru' | 'en', WaveTexts> = {
         whyMoodTag: 'Автор отметил: {tag}',
         undo: 'Отменить', toastLiked: 'Лайк: {title}', toastUnliked: 'Лайк снят: {title}',
         seedCollecting: 'Собираю волну от {title}', seedCollectingAny: 'Собираю волну…',
+        whyRelatedArtist: 'Похож на {artist}', whyScMix: 'Из подборки SoundCloud: {name}', whyNeighbors: 'Лайкают слушатели с похожим вкусом',
         pinned: 'Закреплённое', menuPin: 'Закрепить на главной', menuUnpin: 'Открепить с главной', menuWaveGenre: 'Волна по жанру',
         toastPinned: 'Закреплено на главной: {title}', toastUnpinned: 'Откреплено: {title}', toastPinFull: 'На главной уже {count}, открепи что-нибудь',
         pinPlay: 'Волна: {title}', pinRemove: 'Открепить: {title}',
@@ -153,6 +154,7 @@ export const WAVE_TEXTS: Record<'ru' | 'en', WaveTexts> = {
         whyMoodTag: 'Tagged {tag} by the author',
         undo: 'Undo', toastLiked: 'Liked: {title}', toastUnliked: 'Unliked: {title}',
         seedCollecting: 'Building a wave from {title}', seedCollectingAny: 'Building a wave…',
+        whyRelatedArtist: 'Sounds like {artist}', whyScMix: 'From SoundCloud’s {name}', whyNeighbors: 'Liked by listeners with your taste',
         pinned: 'Pinned', menuPin: 'Pin to home', menuUnpin: 'Unpin from home', menuWaveGenre: 'Wave from genre',
         toastPinned: 'Pinned to home: {title}', toastUnpinned: 'Unpinned: {title}', toastPinFull: 'Home already has {count}, unpin something first',
         pinPlay: 'Wave: {title}', pinRemove: 'Unpin: {title}',
@@ -184,6 +186,9 @@ export function reasonText(reason: WaveReason, texts: WaveTexts): string {
         case 'moodTag': return fillText(texts.whyMoodTag, { tag: reason.tag });
         case 'radar': return reason.why || texts.whyRadar;
         case 'library': return reason.name ? fillText(texts.whyLibrary, { name: reason.name }) : texts.whyLibraryLikes;
+        case 'relatedArtist': return fillText(texts.whyRelatedArtist, { artist: reason.artist });
+        case 'scMix': return fillText(texts.whyScMix, { name: reason.name });
+        case 'neighbors': return texts.whyNeighbors;
     }
 }
 

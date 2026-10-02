@@ -11,6 +11,8 @@ export interface SavedLibrary { pick: string[]; mode: LibraryMode; left?: number
 export interface SavedSeed {
     kind: 'track' | 'artist' | 'playlist' | 'daily' | 'forgotten' | 'group' | 'tracks' | 'radar' | 'library'; title: string; tracks: WaveTrack[]; own: WaveTrack[];
     order?: 'fixed' | 'blend' | 'smart'; mode?: 'similar' | 'fresh'; library?: SavedLibrary;
+    /** Волна от артиста: его аккаунт для похожих артистов */
+    artist?: number;
 }
 export interface PlaybackSnapshot {
     version: 1; at: number; items: SavedQueueItem[]; index: number; position: number; paused: boolean;
@@ -59,11 +61,11 @@ function cleanReason(input: unknown): WaveReason | undefined {
         case 'similar': case 'fresh': case 'version': return { kind: value.kind, seed };
         case 'genreFresh': case 'genrePopular': case 'tasteTag': return { kind: value.kind, genre };
         case 'genreSimilar': case 'mood': return { kind: value.kind, seed, genre };
-        case 'artistTrack': case 'tasteArtist': return { kind: value.kind, artist };
-        case 'group': return { kind: value.kind, name: text(value.name, 200) };
+        case 'artistTrack': case 'tasteArtist': case 'relatedArtist': return { kind: value.kind, artist };
+        case 'group': case 'scMix': return { kind: value.kind, name: text(value.name, 200) };
         case 'radar': return { kind: value.kind, why: text(value.why, 300) };
         case 'library': return { kind: value.kind, name: text(value.name, 200) };
-        case 'newArtist': case 'seedTrack': case 'restored': case 'daily': case 'forgotten': return { kind: value.kind };
+        case 'newArtist': case 'seedTrack': case 'restored': case 'daily': case 'forgotten': case 'neighbors': return { kind: value.kind };
         default: return undefined;
     }
 }
@@ -97,6 +99,7 @@ export function cleanPlaybackSnapshot(input: unknown): PlaybackSnapshot | null {
         order: rawSeed.order === 'fixed' || rawSeed.order === 'blend' || rawSeed.order === 'smart' ? rawSeed.order : undefined,
         mode: rawSeed.mode === 'fresh' ? 'fresh' : 'similar',
         ...(kind === 'library' && library ? { library } : {}),
+        ...(kind === 'artist' && isId(rawSeed.artist) ? { artist: rawSeed.artist } : {}),
     } : null;
     return { version: 1, at: Date.now(), items, index, position: typeof value.position === 'number' && Number.isFinite(value.position) ? Math.max(0, Math.min(value.position, 86400000)) : 0,
         paused: value.paused, active: value.active === true, mode: value.mode === 'fresh' ? 'fresh' : 'similar', genre: text(value.genre, 300) || null, seed, fallback: value.fallback === true };

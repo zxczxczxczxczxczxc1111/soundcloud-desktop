@@ -2315,6 +2315,86 @@ it('зёрна обычной волны от разных артистов: л�
     expect(new Set(artists).size).toBe(3);
 });
 
+it('П2: обычная волна начинает с дослушанного за час и похожего артиста его автора, первым ставит уверенное', async () => {
+    const now = Date.now();
+    const recent = vi.fn(async () => [{ id: 4242, at: now - 60000, artist: 4200, title: 'Fresh', artistName: 'Fresh Art', genre: '', tags: '', path: '/fresh-art/fresh', dur: 200000 }]);
+    const site = fakeSite(relatedTracks, (name, path) => {
+        if (name === 'userRelatedArtists' && path.id === 4200) return { collection: [{ id: 4300, username: 'Neighbor', track_count: 5 }, { id: 4400, username: 'Empty', track_count: 0 }] };
+        if (name === 'userToptracks' && path.id === 4300) return { collection: [{ id: 4301, kind: 'track', title: 'Top', duration: 200000, user_id: 4300, user: { id: 4300, username: 'Neighbor' } }] };
+        return undefined;
+    });
+    Object.assign(window, { soundcloudAPI: { waveLibrary: { ...libraryBridge(), recent } } });
+    window.eval(waveScript());
+    await vi.advanceTimersByTimeAsync(2000);
+    expect(recent).toHaveBeenCalledWith(77);
+    const seeds = site.api.callEndpoint.mock.calls.filter(([name]) => name === 'relatedSounds').map(([, path]) => (path as { track_id: number }).track_id);
+    expect(seeds.slice(0, 2)).toEqual([4242, 4301]);
+    // Сам дослушанный трек не повторяется, первым идёт трек похожего артиста с причиной
+    const tiles = [...document.querySelectorAll<HTMLElement>('#sc-wave .scw-tile[data-track]')].map((tile) => Number(tile.dataset.track));
+    expect(tiles).not.toContain(4242);
+    expect(tiles[0]).toBe(4301);
+    expect(document.querySelector('#sc-wave .scw-tile[data-track="4301"] .scw-t3')?.textContent).toBe('Sounds like Fresh Art');
+    expect(tiles.some((id) => Math.floor(id / 1000) === 4242)).toBe(true);
+});
+
+it('П3: волна от артиста: его лучшее и неслышанное впереди, три к одному, потом похожие артисты', async () => {
+    vi.spyOn(Math, 'random').mockReturnValue(0.5);
+    const site = fakeSite(relatedTracks, (name, path, query) => {
+        if (name === 'userTracks' && path.id === 900) return { collection: [{ id: 9101, kind: 'track', title: 'Brand New', duration: 200000, user_id: 900 }, artistTracks[0]] };
+        if (name === 'userRelatedArtists' && path.id === 900) return { collection: [{ id: 950, username: 'Kin', track_count: 3 }] };
+        if (name === 'userToptracks' && path.id === 950) return { collection: [1, 2, 3, 4].map((i) => ({ id: 9500 + i, kind: 'track', title: 'Kin ' + i, duration: 200000, user_id: 950, user: { id: 950, username: 'Kin' } })) };
+        return siteExtra(name, path, query);
+    });
+    fakeExclusions();
+    const row = listRow();
+    window.eval(waveScript());
+    await vi.advanceTimersByTimeAsync(100);
+    rightClick(row.querySelector('.soundTitle__username')!);
+    choose('wave-artist');
+    await vi.advanceTimersByTimeAsync(500);
+    expect(site.api.callEndpoint).toHaveBeenCalledWith('userRelatedArtists', { id: 900 }, { limit: 20 });
+    const queued = (site.player.replaceQueue.mock.calls[site.player.replaceQueue.mock.calls.length - 1][0] as FakeItem[]).map((item) => item.sound.id);
+    const own = (id: number): boolean => (id > 9000 && id < 9010) || id === 9101;
+    expect(queued.slice(0, 3).every(own)).toBe(true);
+    expect(own(queued[3])).toBe(false);
+    // Неслышанная свежая загрузка встаёт третьей: два из топа, одно новое
+    expect(queued[2]).toBe(9101);
+    // У похожего артиста берутся три лучших, с причиной «похож на»
+    const all = site.player.getQueue().slice().map((item) => item.sound.id);
+    expect(all.some((id) => id > 9500 && id < 9504)).toBe(true);
+    expect(all).not.toContain(9504);
+});
+
+it('П4: подборки SoundCloud раз в сутки идут в найденное со своей причиной, повторный запуск берёт их из памяти', async () => {
+    const mixTrack = (id: number): WaveTrack => ({ id, kind: 'track', title: 'Mix ' + id, duration: 200000, user_id: id, user: { id, username: 'U' + id } });
+    const extra: Extra = (name, _path, query) => {
+        if (name === 'mixedSelections') return { collection: [
+            { urn: 'soundcloud:selections:your-moods', items: { collection: [{ kind: 'system-playlist', urn: 'soundcloud:system-playlists:your-moods:77:1', title: 'Your Mix 1', tracks: [{ id: 8801, kind: 'track' }, { id: 8802, kind: 'track' }] }] } },
+            { urn: 'soundcloud:selections:liked-by-77', items: { collection: [{ kind: 'system-playlist', urn: 'soundcloud:system-playlists:liked-by:525', title: "kat's Picks", tracks: [{ id: 8803, kind: 'track' }] }] } },
+            { urn: 'soundcloud:selections:trending', items: { collection: [{ kind: 'system-playlist', urn: 'soundcloud:system-playlists:trending-by-genre:hip-hop', title: 'Hip Hop', tracks: [{ id: 8899, kind: 'track' }] }] } },
+        ] };
+        if (name === 'trackBatch' && typeof query.ids === 'string') return { collection: query.ids.split(',').map(Number).filter((id) => id >= 8800).map(mixTrack) };
+        return undefined;
+    };
+    let site = fakeSite(() => [], extra);
+    window.eval(waveScript());
+    await vi.advanceTimersByTimeAsync(2000);
+    const why = (id: number): string | null | undefined => document.querySelector('#sc-wave .scw-tile[data-track="' + id + '"] .scw-t3')?.textContent;
+    expect(why(8801)).toBe('From SoundCloud’s Your Mix 1');
+    expect(why(8803)).toBe("From SoundCloud’s kat's Picks");
+    // Тренды по жанру не персональная подборка
+    expect(document.querySelector('#sc-wave .scw-tile[data-track="8899"]')).toBeNull();
+    expect(site.api.callEndpoint.mock.calls.filter(([name]) => name === 'mixedSelections')).toHaveLength(1);
+    expect(JSON.parse(localStorage.getItem('scDesktopWaveScMixes') ?? '{}')).toMatchObject({ user: 77, list: [{ kind: 'mix', ids: [8801, 8802] }, { kind: 'liked', owner: 525, ids: [8803] }] });
+
+    window.dispatchEvent(new Event('pagehide'));
+    site = fakeSite(() => [], extra);
+    window.eval(waveScript());
+    await vi.advanceTimersByTimeAsync(2000);
+    expect(site.api.callEndpoint.mock.calls.filter(([name]) => name === 'mixedSelections')).toHaveLength(0);
+    expect(why(8802)).toBe('From SoundCloud’s Your Mix 1');
+});
+
 it('обновление профиля раз в 30 минут не откатывает лайки к первой странице, снятый лайк уходит в конце листания', async () => {
     const likes = Array.from({ length: 250 }, (_, i) => ({ id: 20000 + i, title: 'Like ' + i, user_id: 30000 + i, duration: 200000 }));
     let unliked = false;
