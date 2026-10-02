@@ -2130,6 +2130,55 @@ it('П11: «Давно не слушал» по счётчикам из main: п
     expect(forgotten).toHaveLength(30);
 });
 
+it('П13: «Лайкнули твои артисты» из подборок «<артист>\'s Picks»: по кругу без своего, подпись по артистам, играет по порядку', async () => {
+    const liked = Array.from({ length: 30 }, (_, i): WaveTrack => ({
+        id: 2001 + i, kind: 'track', duration: 200000, title: 'Like ' + i, user_id: 500 + (i % 10), user: { id: 500 + (i % 10), username: 'Tech' + (i % 10) }, genre: 'Techno', tag_list: '',
+    }));
+    const picks = [...Array.from({ length: 10 }, (_, i) => 8801 + i), ...Array.from({ length: 6 }, (_, i) => 8821 + i)].map((id): WaveTrack => ({
+        id, kind: 'track', title: 'Pick ' + id, duration: 200000, user_id: id, user: { id, username: 'U' + id },
+    }));
+    const mix = (owner: number, title: string, ids: number[]) => ({
+        urn: 'soundcloud:selections:liked-by-' + owner,
+        items: { collection: [{ kind: 'system-playlist', urn: 'soundcloud:system-playlists:liked-by:' + owner, title, tracks: ids.map((id) => ({ id, kind: 'track' })) }] },
+    });
+    const site = fakeSite(relatedTracks, (name, _path, query) => {
+        if (name === 'soundLikesIds') return { collection: liked.map((track) => track.id) };
+        if (name === 'mixedSelections') return { collection: [
+            // Свой лайк 2001 в подборке не повторяется
+            mix(525, "Liked By kat's Picks", [2001, ...picks.slice(0, 10).map((track) => track.id)]),
+            mix(526, "hardx's Picks", picks.slice(10).map((track) => track.id)),
+        ] };
+        if (name === 'trackBatch') return batchOf([...liked, ...picks])(query);
+        return undefined;
+    });
+    const shelf = { load: vi.fn(async () => ({ snapshot: null, recent: [] })), save: vi.fn(async () => true) };
+    Object.assign(window, { soundcloudAPI: { waveShelf: shelf } });
+    window.eval(waveScript());
+    await vi.advanceTimersByTimeAsync(100);
+    const [, saved] = shelf.save.mock.calls[0] as unknown as [number, { cards: Array<{ kind: string; sub: string; ids: number[]; by: string[] }> }];
+    expect(saved.cards.map((card) => card.kind).slice(0, 3)).toEqual(['daily', 'liked', 'forgotten']);
+    const card = saved.cards[1];
+    // По кругу: трек от одного артиста, трек от другого
+    expect(card.ids.slice(0, 4)).toEqual([8821, 8801, 8822, 8802]);
+    expect(card.ids).toHaveLength(16);
+    expect(card.ids).not.toContain(2001);
+    expect(card.by.slice(0, 2)).toEqual(['hardx', 'kat']);
+    expect(card.sub).toBe('kat, hardx');
+    const section = document.getElementById('sc-wave')!;
+    const node = section.querySelector('.scw-card[data-card="1"]')!;
+    expect(node.querySelector('.scw-t1')?.textContent).toBe('Liked by your artists');
+    expect(node.querySelector('.scw-t2')?.textContent).toBe('kat, hardx');
+    expect(node.querySelector('.scw-art')?.classList.contains('scw-tone-personal')).toBe(true);
+
+    section.querySelector<HTMLButtonElement>('[data-act="shelf-play"][data-card="1"]')!.click();
+    await vi.advanceTimersByTimeAsync(100);
+    const queued = site.player.replaceQueue.mock.calls[site.player.replaceQueue.mock.calls.length - 1][0] as FakeItem[];
+    expect(queued.map((item) => item.sound.id)).toEqual(card.ids.slice(0, 10));
+    expect(section.querySelector('.scw-hint')?.textContent).toBe('What the artists you listen to like');
+    expect(section.querySelector('.scw-why')?.textContent).toBe('Liked by hardx');
+    expect(section.querySelector('.scw-tile[data-track="8801"] .scw-t3')?.textContent).toBe('Liked by kat');
+});
+
 it('полка без модели вкуса (main не ответил) не хранится до полуночи и через 10 минут собирается заново', async () => {
     const liked = Array.from({ length: 30 }, (_, i): WaveTrack => ({
         id: 2001 + i, kind: 'track', duration: 200000, title: 'Like ' + i, user_id: 500 + (i % 5), user: { id: 500 + (i % 5), username: 'Tech' + (i % 5) }, genre: 'Techno', tag_list: 'industrial',

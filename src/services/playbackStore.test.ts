@@ -47,10 +47,12 @@ it('П3, П4: волна от артиста помнит его аккаунт,
         { ...saved.items[0], reason: { kind: 'relatedArtist', artist: 'mightymason' } },
         { track: { id: 44, title: 'B', duration: 200000 }, explicit: false, wave: true, reason: { kind: 'scMix', name: 'Your Mix 1' } },
         { track: { id: 45, title: 'C', duration: 200000 }, explicit: false, wave: true, reason: { kind: 'neighbors' } },
+        { track: { id: 46, title: 'D', duration: 200000 }, explicit: false, wave: true, reason: { kind: 'likedBy', artist: 'kat' } },
     ];
     saved.seed = { kind: 'artist', title: 'mightymason', tracks: [{ id: 42 }], own: [{ id: 42 }], order: 'smart', mode: 'similar', artist: 1076674012 };
     const loaded = cleanPlaybackSnapshot(saved);
-    expect(loaded?.items.map((item) => item.reason)).toEqual([{ kind: 'relatedArtist', artist: 'mightymason' }, { kind: 'scMix', name: 'Your Mix 1' }, { kind: 'neighbors' }]);
+    expect(loaded?.items.map((item) => item.reason)).toEqual([{ kind: 'relatedArtist', artist: 'mightymason' }, { kind: 'scMix', name: 'Your Mix 1' }, { kind: 'neighbors' }, { kind: 'likedBy', artist: 'kat' }]);
+    expect(cleanPlaybackSnapshot({ ...saved, seed: { kind: 'liked', title: 'Liked by your artists', tracks: [], own: [{ id: 46 }], order: 'fixed', mode: 'fresh' } })?.seed).toMatchObject({ kind: 'liked', order: 'fixed', mode: 'fresh' });
     expect(loaded?.seed).toMatchObject({ kind: 'artist', order: 'smart', artist: 1076674012 });
     expect(cleanPlaybackSnapshot({ ...saved, seed: { ...saved.seed, artist: -5 } })?.seed).not.toHaveProperty('artist');
 });

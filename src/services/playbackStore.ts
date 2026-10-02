@@ -9,7 +9,7 @@ export interface SavedQueueItem { track: WaveTrack; explicit: boolean; wave: boo
 /** «Моя музыка»: выбранные источники, режим и номера оставшихся треков; сами треки не хранятся, пул собирается заново */
 export interface SavedLibrary { pick: string[]; mode: LibraryMode; left?: number[] }
 export interface SavedSeed {
-    kind: 'track' | 'artist' | 'playlist' | 'daily' | 'forgotten' | 'group' | 'tracks' | 'radar' | 'library'; title: string; tracks: WaveTrack[]; own: WaveTrack[];
+    kind: 'track' | 'artist' | 'playlist' | 'daily' | 'forgotten' | 'liked' | 'group' | 'tracks' | 'radar' | 'library'; title: string; tracks: WaveTrack[]; own: WaveTrack[];
     order?: 'fixed' | 'blend' | 'smart'; mode?: 'similar' | 'fresh'; library?: SavedLibrary;
     /** Волна от артиста: его аккаунт для похожих артистов */
     artist?: number;
@@ -61,7 +61,7 @@ function cleanReason(input: unknown): WaveReason | undefined {
         case 'similar': case 'fresh': case 'version': return { kind: value.kind, seed };
         case 'genreFresh': case 'genrePopular': case 'tasteTag': return { kind: value.kind, genre };
         case 'genreSimilar': case 'mood': return { kind: value.kind, seed, genre };
-        case 'artistTrack': case 'tasteArtist': case 'relatedArtist': return { kind: value.kind, artist };
+        case 'artistTrack': case 'tasteArtist': case 'relatedArtist': case 'likedBy': return { kind: value.kind, artist };
         case 'group': case 'scMix': return { kind: value.kind, name: text(value.name, 200) };
         case 'radar': return { kind: value.kind, why: text(value.why, 300) };
         case 'library': return { kind: value.kind, name: text(value.name, 200) };
@@ -93,7 +93,7 @@ export function cleanPlaybackSnapshot(input: unknown): PlaybackSnapshot | null {
     const kind = String(rawSeed.kind);
     const library = cleanSavedLibrary(rawSeed.library);
     // «Моя музыка» без выбора не восстановится: пул не из чего собрать
-    const known = ['track', 'artist', 'playlist', 'daily', 'forgotten', 'group', 'tracks', 'radar'].includes(kind) || (kind === 'library' && !!library);
+    const known = ['track', 'artist', 'playlist', 'daily', 'forgotten', 'liked', 'group', 'tracks', 'radar'].includes(kind) || (kind === 'library' && !!library);
     const seed: SavedSeed | null = known ? {
         kind: kind as SavedSeed['kind'], title: text(rawSeed.title, 200), tracks: tracks(rawSeed.tracks, 5000), own: tracks(rawSeed.own, 5000),
         order: rawSeed.order === 'fixed' || rawSeed.order === 'blend' || rawSeed.order === 'smart' ? rawSeed.order : undefined,

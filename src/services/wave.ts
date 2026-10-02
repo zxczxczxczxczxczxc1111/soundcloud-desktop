@@ -50,7 +50,7 @@ const { installLibrary } = librarySectionModule;
 const { installRadar } = radarSectionModule;
 const { installShelf } = shelfSectionModule;
 const { installMenu } = menuSectionModule;
-const { installSources, relatedArtistsOf, scMixesOf, interleaveMixes } = waveSourcesModule;
+const { installSources, relatedArtistsOf, scMixesOf, likedOwner, interleaveMixes } = waveSourcesModule;
 // Прежние импорты из wave.ts остаются рабочими
 export type { WaveTrack, WaveMode, OpenTrackResult, WaveReason, WaveCandidate, WaveFilter, WaveLinkKind, WaveTexts, TasteMaps, TasteScore, TasteGroup } from './waveTypes';
 export { WAVE_TEXTS, fillText, reasonText, localDay, countText, formatTime, shapeSamples } from './waveTexts';
@@ -610,6 +610,7 @@ export function installWave(config: WaveConfig, createPlayback: typeof installPl
         ensureTaste,
         ensureUser,
         call,
+        scMixes: () => waveSources.scMixes(),
         render: () => render(),
         showToast,
         el,
@@ -700,6 +701,8 @@ export function installWave(config: WaveConfig, createPlayback: typeof installPl
     // «Моя музыка» кладёт в сессию выбор, режим и номера оставшихся треков, без самих треков: пул на тысячи треков
     // переписывался бы мегабайтами при каждой записи. После перезапуска он собирается заново и идёт с того же места
     function savedSeed(): Seed | null {
+        // Чьи лайки в подборке, знает причина каждого трека в очереди; таблица через мост не передаётся
+        if (seed?.likers) return { ...seed, likers: undefined };
         if (seed?.kind !== 'library' || !seed.library) return seed;
         const left = seed.library.left ?? (ownAdded ? ownQueue.map((item) => item.track.id) : seed.own.map((track) => track.id));
         return { ...seed, tracks: [], own: [], library: { pick: seed.library.pick, mode: seed.library.mode, left: left.slice(0, 5000) } };
@@ -711,7 +714,7 @@ export function installWave(config: WaveConfig, createPlayback: typeof installPl
         let selected = -1;
         // Найденное волной после перезапуска снова пересобирается пропусками (В2.2); своё из подборки, зерно
         // и трек без сохранённой причины остаются на своих местах
-        const ownKinds = new Set<WaveReason['kind']>(['library', 'daily', 'forgotten', 'group', 'radar', 'seedTrack', 'restored']);
+        const ownKinds = new Set<WaveReason['kind']>(['library', 'daily', 'forgotten', 'likedBy', 'group', 'radar', 'seedTrack', 'restored']);
         for (let i = 0; i < saved.items.length; i++) {
             const stored = saved.items[i]; const track = byId.get(stored.track.id);
             const item = track ? createQueueItem(track) : null;
@@ -1799,7 +1802,11 @@ export function installWave(config: WaveConfig, createPlayback: typeof installPl
                 // Свой список отсекает только отданное сайту в этой подборке, а не всё, что волна отдавала раньше
                 const ownFilter: WaveFilter = { ...filter, taken: new Set(seedGiven), ...(current.kind === 'radar' || current.kind === 'artist' ? { recent: new Set<number>() } : {}) };
                 for (const track of current.own)
-                    accept(ownQueue, { track, reason: current.kind === 'radar' ? { kind: 'radar', why: radarSection.reason(track.id) } : reason }, ownFilter);
+                    accept(ownQueue, {
+                        track,
+                        reason: current.kind === 'radar' ? { kind: 'radar', why: radarSection.reason(track.id) }
+                            : current.kind === 'liked' ? { kind: 'likedBy', artist: current.likers?.get(track.id) ?? '' } : reason,
+                    }, ownFilter);
                 // Подборка целиком впереди: похожие понадобятся, когда она кончится
                 if (current.order === 'fixed' && ownQueue.length >= BATCH) return ownQueue.length;
             } else {
@@ -2562,6 +2569,7 @@ export function installWave(config: WaveConfig, createPlayback: typeof installPl
             case 'playlist': return fillText(T.seedPlaylist, { seed: current.title });
             case 'daily': return short ? T.shelfDaily : T.seedDaily;
             case 'forgotten': return short ? T.shelfForgotten : T.seedForgotten;
+            case 'liked': return short ? T.shelfLiked : T.seedLiked;
             case 'group': return fillText(T.seedGroup, { seed: current.title });
             case 'tracks': return fillText(T.seedTracks, { seed: current.title });
             case 'radar': return current.title;
@@ -4678,7 +4686,7 @@ const pageHelpers = [
     artworkUrl, coversOf, formatTime, playEnd, siteSource, moodTags, trackPath, localDay, countText, tasteGroups, capPerArtist, forgottenPicks, daySample, artistNames, performerNames, sharedPerformer, isNewArtist, spreadBy, pickFinds,
     moodList, moodDictionary, trackMood, playlistMood, artistMoods, neighborMood, moodScore,
     ...identity.identityHelpers, ...sources.sourceHelpers, ...libraryMix.libraryHelpers, siteRequires, installPlaybackPage, installPlaybackRecovery,
-    installVersions, installLibrary, installRadar, installShelf, installMenu, installSources, relatedArtistsOf, scMixesOf, interleaveMixes,
+    installVersions, installLibrary, installRadar, installShelf, installMenu, installSources, relatedArtistsOf, scMixesOf, likedOwner, interleaveMixes,
 ];
 
 export function waveScript(resume = false): string {

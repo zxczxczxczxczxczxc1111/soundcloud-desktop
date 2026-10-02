@@ -1,9 +1,9 @@
 import { mkdirSync, readFileSync, renameSync, writeFileSync } from 'fs';
 import { join } from 'path';
 
-/** Карточка полки «Подборки»: находки дня, давно не слушал или один из вкусов */
+/** Карточка полки «Подборки»: находки дня, «Лайкнули твои артисты», давно не слушал или один из вкусов */
 export interface ShelfCard {
-    kind: 'daily' | 'forgotten' | 'group';
+    kind: 'daily' | 'forgotten' | 'liked' | 'group';
     /** Название вкуса; у находок и «давно не слушал» пусто, подпись берёт страница */
     title: string;
     /** Строка под названием вкуса: главные артисты */
@@ -16,6 +16,8 @@ export interface ShelfCard {
     keys: string[];
     /** До четырёх обложек для коллажа */
     art: string[];
+    /** «Лайкнули твои артисты»: чей лайк у трека, по порядку ids */
+    by?: string[];
 }
 /** Подборки на местные сутки: собираются один раз, до полуночи одни и те же */
 export interface ShelfSnapshot {
@@ -24,10 +26,10 @@ export interface ShelfSnapshot {
     v: number;
     cards: ShelfCard[];
 }
-/** Находки дня, «Давно не слушал» и до восьми жанров (решение владельца 26.09.2026) */
-export const SHELF_CARDS = 10;
+/** Находки дня, «Лайкнули твои артисты», «Давно не слушал» и до восьми жанров (решение владельца 26.09.2026) */
+export const SHELF_CARDS = 11;
 
-const KINDS = new Set<ShelfCard['kind']>(['daily', 'forgotten', 'group']);
+const KINDS = new Set<ShelfCard['kind']>(['daily', 'forgotten', 'liked', 'group']);
 const isId = (value: unknown): value is number => typeof value === 'number' && Number.isSafeInteger(value) && value > 0;
 const text = (value: unknown, max: number): string => (typeof value === 'string' ? value.replace(/\s+/g, ' ').trim().slice(0, max) : '');
 function ids(value: unknown, limit: number): number[] {
@@ -58,6 +60,15 @@ function cleanCard(value: unknown): ShelfCard | null {
         art: Array.isArray(source.art) ? source.art.map(artUrl).filter(Boolean).slice(0, 4) : [],
     };
     if (!card.ids.length || (card.kind === 'group' && !card.title)) return null;
+    // Чей лайк идёт парой к номеру: пары собираются по исходному списку, чтобы отброшенный номер не сдвинул имена
+    if (card.kind === 'liked' && Array.isArray(source.by) && Array.isArray(source.ids)) {
+        const names = source.by;
+        const pairs = new Map<number, string>();
+        source.ids.forEach((id, index) => {
+            if (isId(id) && !pairs.has(id)) pairs.set(id, text(names[index], 80));
+        });
+        card.by = card.ids.map((id) => pairs.get(id) ?? '');
+    }
     return card;
 }
 /** Снимок со страницы или из файла; всё, что не проходит проверку, отбрасывается */

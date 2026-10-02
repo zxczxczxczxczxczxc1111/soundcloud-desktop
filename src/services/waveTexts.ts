@@ -78,6 +78,7 @@ export const WAVE_TEXTS: Record<'ru' | 'en', WaveTexts> = {
         undo: 'Отменить', toastLiked: 'Лайк: {title}', toastUnliked: 'Лайк снят: {title}',
         seedCollecting: 'Собираю волну от {title}', seedCollectingAny: 'Собираю волну…',
         whyRelatedArtist: 'Похож на {artist}', whyScMix: 'Из подборки SoundCloud: {name}', whyNeighbors: 'Лайкают слушатели с похожим вкусом',
+        shelfLiked: 'Лайкнули твои артисты', seedLiked: 'Что лайкают артисты, которых ты слушаешь', whyLikedBy: 'Лайк от {artist}', whyLikedAny: 'Лайк от артиста, которого ты слушаешь',
         traitLessCyr: 'Меньше русскоязычного в этой волне', traitLessInst: 'Меньше инструменталов в этой волне', traitLessGenre: 'Меньше {genre} в этой волне',
         traitLessMarker: 'Меньше версий {marker} в этой волне', traitLessForeign: 'Меньше перезаливов с чужих каналов в этой волне',
         forkTitle: 'Куда дальше?', forkClose: 'Закрыть', forkCalm: 'Спокойнее', forkAway: 'Похоже, ищешь другое: варианты на главной',
@@ -160,6 +161,7 @@ export const WAVE_TEXTS: Record<'ru' | 'en', WaveTexts> = {
         undo: 'Undo', toastLiked: 'Liked: {title}', toastUnliked: 'Unliked: {title}',
         seedCollecting: 'Building a wave from {title}', seedCollectingAny: 'Building a wave…',
         whyRelatedArtist: 'Sounds like {artist}', whyScMix: 'From SoundCloud’s {name}', whyNeighbors: 'Liked by listeners with your taste',
+        shelfLiked: 'Liked by your artists', seedLiked: 'What the artists you listen to like', whyLikedBy: 'Liked by {artist}', whyLikedAny: 'Liked by an artist you listen to',
         traitLessCyr: 'Less Russian-language music in this wave', traitLessInst: 'Fewer instrumentals in this wave', traitLessGenre: 'Less {genre} in this wave',
         traitLessMarker: 'Fewer {marker} versions in this wave', traitLessForeign: 'Fewer reuploads from other channels in this wave',
         forkTitle: 'Where to next?', forkClose: 'Close', forkCalm: 'Calmer', forkAway: 'Looking for something else? Options are on the home page',
@@ -197,6 +199,7 @@ export function reasonText(reason: WaveReason, texts: WaveTexts): string {
         case 'relatedArtist': return fillText(texts.whyRelatedArtist, { artist: reason.artist });
         case 'scMix': return fillText(texts.whyScMix, { name: reason.name });
         case 'neighbors': return texts.whyNeighbors;
+        case 'likedBy': return reason.artist ? fillText(texts.whyLikedBy, { artist: reason.artist }) : texts.whyLikedAny;
     }
 }
 

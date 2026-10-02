@@ -7,7 +7,9 @@ import * as waveLinks from '../waveLinks';
 import * as wavePicks from '../wavePicks';
 import * as waveTaste from '../waveTaste';
 import * as waveTexts from '../waveTexts';
+import * as sourcesModule from './sources';
 import type { RadarCard } from './radar';
+import type { ScMix } from './sources';
 import type { MenuTarget, Profile, Seed, TasteMaps, WaveState, WaveTexts, WaveTrack } from '../waveTypes';
 import type { SitePlayer, WaveWindow } from '../wave';
 
@@ -16,6 +18,7 @@ const { canonicalUrl, coversOf, retryDelay } = waveLinks;
 const { capPerArtist, daySample, forgottenPicks, isWaveEligible, shuffleInPlace } = wavePicks;
 const { pickFinds, tasteGroups, tasteOrder } = waveTaste;
 const { countText, fillText, formatTime, localDay } = waveTexts;
+const { interleaveMixes, likedOwner } = sourcesModule;
 
 export interface ShelfCore {
     texts: WaveTexts;
@@ -56,6 +59,8 @@ export interface ShelfCore {
     ensureTaste(): Promise<void>;
     ensureUser(): Promise<number>;
     call(name: string, path: object, query: object): Promise<unknown>;
+    /** Подборки SoundCloud на сегодня; пусто, если сайт не ответил */
+    scMixes(): Promise<ScMix[]>;
     render(): void;
     showToast(text: string): void;
     el<K extends keyof HTMLElementTagNameMap>(tag: K, className: string, text?: string): HTMLElementTagNameMap[K];
@@ -97,11 +102,13 @@ export function installShelf(core: ShelfCore): ShelfSection {
         expandLibrary, ensureExclusions, ensureTaste, ensureUser, call, render, showToast, el, button, textButton, trackRow,
     } = core;
     const isId = (value: unknown): value is number => typeof value === 'number' && Number.isSafeInteger(value) && value > 0;
-    interface ShelfCard { kind: 'daily' | 'forgotten' | 'group'; title: string; sub: string; ids: number[]; seeds: number[]; keys: string[]; art: string[] }
+    // by у «Лайкнули твои артисты»: чей лайк у трека, по порядку ids
+    interface ShelfCard { kind: 'daily' | 'forgotten' | 'liked' | 'group'; title: string; sub: string; ids: number[]; seeds: number[]; keys: string[]; art: string[]; by: string[] }
     interface Shelf { day: string; v: number; cards: ShelfCard[] }
     // Формат сборки полки: 2 это жанры из всех лайков и прослушанного, до восьми, с поджанрами (26.09.2026);
     // 3 это группа по жанру трека, а не по меткам, и не больше SHELF_ARTIST_CAP треков артиста в карточке (26.09.2026);
-    // 4 это выборка дня в «Давно не слушал» и жанрах (28.09.2026).
+    // 4 это выборка дня в «Давно не слушал» и жанрах (28.09.2026); 5 это вес любви в «Давно не слушал» и карточка
+    // «Лайкнули твои артисты» (02.10.2026).
     // Снимок другого формата собирается заново сразу, а не в полночь
     const SHELF_FORMAT = 5;
     const SHELF_ARTIST_CAP = 5;
@@ -180,10 +187,12 @@ export function installShelf(core: ShelfCore): ShelfSection {
         const cards: ShelfCard[] = [];
         for (const item of source.cards as unknown[]) {
             const card = item as Record<string, unknown> | null;
-            if (!card || (card.kind !== 'daily' && card.kind !== 'forgotten' && card.kind !== 'group')) continue;
+            if (!card || (card.kind !== 'daily' && card.kind !== 'forgotten' && card.kind !== 'liked' && card.kind !== 'group')) continue;
             const entry: ShelfCard = {
                 kind: card.kind, title: typeof card.title === 'string' ? card.title : '', sub: typeof card.sub === 'string' ? card.sub : '',
                 ids: ids(card.ids), seeds: ids(card.seeds), keys: strings(card.keys), art: strings(card.art),
+                // Имена идут парой к номерам: нестроку заменяет пустая, а не выбрасывает, иначе пары сдвинутся
+                by: Array.isArray(card.by) ? card.by.map((name: unknown) => (typeof name === 'string' ? name : '')) : [],
             };
             if (entry.ids.length) cards.push(entry);
         }
@@ -241,6 +250,8 @@ export function installShelf(core: ShelfCore): ShelfSection {
         await expandLibrary(p);
         await Promise.all([ensureExclusions(), ensureTaste()]);
         const taste = core.taste();
+        // Подборки SoundCloud грузятся, пока ищутся находки: им нужен свой запрос к сайту
+        const mixesLoad = core.scMixes();
         shelfTracks.clear();
         // Каталог лайков полный после expandLibrary: сеть для подборок не нужна, выборки больше нет
         for (const track of p.likedTracks) shelfTracks.set(track.id, track);
@@ -262,7 +273,32 @@ export function installShelf(core: ShelfCore): ShelfSection {
         const known = confirmedCopies([...p.heard, ...p.liked], core.copyGroups());
         const finds = pickFinds(candidates, (track) => isExcluded(track) || known.has(track.id), taste, 30);
         for (const track of finds) shelfTracks.set(track.id, track);
-        if (finds.length >= 10) cards.push({ kind: 'daily', title: '', sub: '', ids: finds.map((track) => track.id), seeds: daySeeds.map((track) => track.id), keys: [], art: coversOf(finds) });
+        if (finds.length >= 10) cards.push({ kind: 'daily', title: '', sub: '', ids: finds.map((track) => track.id), seeds: daySeeds.map((track) => track.id), keys: [], art: coversOf(finds), by: [] });
+
+        // «Лайкнули твои артисты» (П13): подборки SoundCloud «<артист>'s Picks» по кругу, по треку от каждого, до 60.
+        // Слышанное и лайкнутое, как у находок, не берётся: волна подборки идёт в режиме «Новое» и пропустила бы его.
+        // Скрытое тоже; у трека запоминается, чей это лайк
+        const likedOrder = interleaveMixes((await mixesLoad).filter((mix) => mix.kind === 'liked'), ['liked']).filter((entry) => !known.has(entry.id)).slice(0, 150);
+        if (likedOrder.length >= 8)
+            try {
+                const byId = new Map((await tracksByIds(likedOrder.map((entry) => entry.id))).map((track) => [track.id, track]));
+                const owners = new Map(likedOrder.map((entry) => [entry.id, likedOwner(entry.mix.title)]));
+                const usable = likedOrder.flatMap((entry) => {
+                    const track = byId.get(entry.id);
+                    return track && isWaveEligible(track) && !isExcluded(track) ? [track] : [];
+                });
+                const picked = capPerArtist(usable, SHELF_ARTIST_CAP).slice(0, 60);
+                if (picked.length >= 8) {
+                    const by = picked.map((track) => owners.get(track.id) ?? '');
+                    // Подпись: до трёх артистов, чьих лайков в карточке больше
+                    const counts = new Map<string, number>();
+                    for (const name of by) if (name) counts.set(name, (counts.get(name) ?? 0) + 1);
+                    const sub = [...counts].sort((a, b) => b[1] - a[1]).slice(0, 3).map(([name]) => name).join(', ');
+                    cards.push({ kind: 'liked', title: '', sub, ids: picked.map((track) => track.id), seeds: [], keys: [], art: coversOf(picked), by });
+                }
+            } catch (error) {
+                console.warn('Волна: треки «Лайкнули твои артисты» не загружены', error);
+            }
 
         // «Давно не слушал» по истории конкретной версии; другая загрузка засчитывается только подтверждённой связью.
         // Лайк за 30 дней не забыт: его слушали, когда лайкали, хоть и не в клиенте, а свежий лайк весит во вкусе
@@ -272,7 +308,7 @@ export function installShelf(core: ShelfCore): ShelfSection {
         const lovedTracks = loved.filter((entry) => entry.done >= 3 && !p.liked.has(entry.id)).map(heardTrack).filter((track) => isWaveEligible(track) && !isExcluded(track));
         const forgotten = forgottenPicks(liked, confirmedCopies([...p.recent, ...recentMain, ...freshLikes], core.copyGroups()), weights, 60, day, love, lovedTracks);
         for (const track of forgotten) if (!shelfTracks.has(track.id)) shelfTracks.set(track.id, track);
-        if (forgotten.length >= 8) cards.push({ kind: 'forgotten', title: '', sub: '', ids: forgotten.map((track) => track.id), seeds: [], keys: [], art: coversOf(forgotten) });
+        if (forgotten.length >= 8) cards.push({ kind: 'forgotten', title: '', sub: '', ids: forgotten.map((track) => track.id), seeds: [], keys: [], art: coversOf(forgotten), by: [] });
 
         // До 8 жанров, все видны (решение владельца 26.09.2026). Лайк весит 1 плюс вкус, прослушанное без лайка только
         // своим положительным весом во вкусе (трек плейлиста его получает из плейлиста): пропущенное туда не попадает
@@ -318,6 +354,7 @@ export function installShelf(core: ShelfCore): ShelfSection {
                 seeds: [],
                 keys: group.keys,
                 art: coversOf(shown),
+                by: [],
             });
         }
         return { day, v: SHELF_FORMAT, cards };
@@ -427,6 +464,9 @@ export function installShelf(core: ShelfCore): ShelfSection {
             const ordered = card.kind === 'group' ? shuffleInPlace(own.slice()) : own;
             const next: Seed = card.kind === 'daily'
                 ? { kind: 'daily', title, own: ordered, tracks: shuffleInPlace([...roots, ...own]), order: 'fixed', mode: 'fresh', card: index }
+                // «Лайкнули твои артисты» по порядку, за ними новое по похожим, как у находок
+                : card.kind === 'liked'
+                ? { kind: 'liked', title, own: ordered, tracks: shuffleInPlace(own.slice()), order: 'fixed', mode: 'fresh', card: index, likers: new Map(card.ids.map((id, at) => [id, card.by[at] ?? ''])) }
                 : { kind: card.kind, title, own: ordered, tracks: shuffleInPlace(own.slice()), order: card.kind === 'forgotten' ? 'fixed' : 'blend', mode: 'similar', card: index };
             await beginSeed(request, { seed: next, first });
         } catch (error) {
@@ -478,11 +518,11 @@ export function installShelf(core: ShelfCore): ShelfSection {
             showToast(T.toastFailed);
         });
     }
-    type CardKind = 'radar' | 'uploads' | 'daily' | 'forgotten' | 'group';
+    type CardKind = 'radar' | 'uploads' | 'daily' | 'forgotten' | 'liked' | 'group';
     // Тон карточки по группе: релизы, личные подборки, жанры
     type CardTone = 'release' | 'personal' | 'genre';
     const toneOf = (kind: CardKind): CardTone => (kind === 'radar' || kind === 'uploads' ? 'release' : kind === 'group' ? 'genre' : 'personal');
-    const cardTitle = (card: ShelfCard): string => (card.kind === 'daily' ? T.shelfDaily : card.kind === 'forgotten' ? T.shelfForgotten : card.title);
+    const cardTitle = (card: ShelfCard): string => (card.kind === 'daily' ? T.shelfDaily : card.kind === 'forgotten' ? T.shelfForgotten : card.kind === 'liked' ? T.shelfLiked : card.title);
     // Полка подборок: коллаж обложек, название, число треков или главные артисты; играющая карточка с оранжевой кромкой.
     // Нажатие на карточку раскрывает её треки под полкой, кнопка на обложке сразу включает волну подборки
     // Карточка полки: общая для подборок и радара; кнопки «слушать» нет, пока слушать нечего.
@@ -573,7 +613,7 @@ export function installShelf(core: ShelfCore): ShelfSection {
         // Все жанры видны, последний ряд может быть неполным (решение владельца 26.09.2026)
         if (current)
             current.cards.forEach((card, index) => {
-                add(cardNode(index, cardTitle(card), card.kind === 'group' && card.sub ? card.sub : countText(card.ids.length, T.tracksCount, T.lang), card.art, true, card.kind), index);
+                add(cardNode(index, cardTitle(card), (card.kind === 'group' || card.kind === 'liked') && card.sub ? card.sub : countText(card.ids.length, T.tracksCount, T.lang), card.art, true, card.kind), index);
             });
         // Пока полка собирается: две личные подборки и два жанра, каждая заготовка в своём тоне
         else if (shelfWait) for (let i = 0; i < 4; i++) add(waitCard(i < 2 ? 'personal' : 'genre'), null);

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { interleaveMixes, relatedArtistsOf, scMixesOf, type ScMix } from './sources';
+import { interleaveMixes, likedOwner, relatedArtistsOf, scMixesOf, type ScMix } from './sources';
 
 describe('источники SoundCloud', () => {
     it('похожие артисты: только аккаунты с треками, без повторов, мусор отбрасывается', () => {
@@ -40,5 +40,12 @@ describe('источники SoundCloud', () => {
         const list = interleaveMixes([mix('mix', [1, 2, 3]), mix('daily', [4, 1]), mix('liked', [9]), mix('weekly', [])], ['mix', 'daily', 'weekly']);
         expect(list.map((entry) => entry.id)).toEqual([1, 4, 2, 3]);
         expect(list[1].mix.kind).toBe('daily');
+    });
+
+    it('П13: чьи лайки в «Liked By», по названию подборки', () => {
+        expect(likedOwner("katanacss's Picks")).toBe('katanacss');
+        expect(likedOwner("Liked By HARDX's Picks")).toBe('HARDX');
+        expect(likedOwner(' Liked by Lil’ B’s Picks ')).toBe('Lil’ B');
+        expect(likedOwner('Weekly Wave')).toBe('Weekly Wave');
     });
 });

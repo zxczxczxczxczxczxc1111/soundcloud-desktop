@@ -57,6 +57,11 @@ export function scMixesOf(body: unknown): ScMix[] {
     return mixes;
 }
 
+/** Чьи лайки в подборке «Liked By»: имя из названия «<артист>'s Picks», приставка «Liked By» отрезается */
+export function likedOwner(title: string): string {
+    return title.trim().replace(/^liked by\s+/i, '').replace(/[’']s picks$/i, '').trim();
+}
+
 /** Номера подборок вперемешку: по одному из каждой по кругу, без повторов. Подборка SoundCloud сама уже упорядочена,
  *  а круг не даёт одной Your Mix занять весь проход */
 export function interleaveMixes(mixes: ScMix[], kinds: Array<ScMix['kind']>): Array<{ id: number; mix: ScMix }> {

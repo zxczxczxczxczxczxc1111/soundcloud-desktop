@@ -28,12 +28,20 @@ it('хранит подборки дня и переживает перезап�
     expect(new WaveShelf(directory).load(43)).toBeNull();
 });
 
-it('держит находки, «Давно не слушал» и восемь жанров; снимок без номера формата это формат 1', () => {
-    const cards = [card({ kind: 'daily', title: '' }), card({ kind: 'forgotten', title: '' }), ...Array.from({ length: 9 }, (_, i) => card({ title: 'Жанр ' + i }))];
+it('держит находки, «Лайкнули твои артисты», «Давно не слушал» и восемь жанров; снимок без номера формата это формат 1', () => {
+    const cards = [card({ kind: 'daily', title: '' }), card({ kind: 'liked', title: '' }), card({ kind: 'forgotten', title: '' }), ...Array.from({ length: 9 }, (_, i) => card({ title: 'Жанр ' + i }))];
     const cleaned = cleanShelf({ day: '2026-09-26', cards });
     expect(cleaned?.v).toBe(1);
-    expect(cleaned?.cards).toHaveLength(10);
-    expect(cleaned?.cards[9].title).toBe('Жанр 7');
+    expect(cleaned?.cards).toHaveLength(11);
+    expect(cleaned?.cards[10].title).toBe('Жанр 7');
+});
+
+it('П13: чей лайк идёт парой к номеру трека, отброшенный номер имена не сдвигает', () => {
+    const cleaned = cleanShelf({ day: '2026-10-02', cards: [card({ kind: 'liked', title: '', ids: [5, -1, 5, 7, 9], by: ['kat', 'x', 'dup', 42, 'hardx'] }), card({ by: ['kat', 'kat', 'kat'] })] });
+    expect(cleaned?.cards[0].ids).toEqual([5, 7, 9]);
+    expect(cleaned?.cards[0].by).toEqual(['kat', '', 'hardx']);
+    // У жанра имён нет
+    expect(cleaned?.cards[1]).not.toHaveProperty('by');
 });
 
 it('отбрасывает чужое и неверное со страницы', () => {

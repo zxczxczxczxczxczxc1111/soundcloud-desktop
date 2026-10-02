@@ -59,7 +59,9 @@ export type WaveReason =
     /** Из персональной подборки SoundCloud: name это её название (Your Mix 1, Weekly Wave) */
     | { kind: 'scMix'; name: string }
     /** Свежий лайк слушателей, которые лайкают то же нишевое, что и ты */
-    | { kind: 'neighbors' };
+    | { kind: 'neighbors' }
+    /** «Лайкнули твои артисты» (П13): artist это тот, чей лайк; пусто, если неизвестно */
+    | { kind: 'likedBy'; artist: string };
 
 /** Для журнала: откуда кандидат на самом деле и как его оценил вкус; причина в reason может смениться причиной по вкусу */
 export interface WaveTrace {
@@ -129,7 +131,7 @@ export type WaveTexts = Record<
     | 'libraryModes' | 'librarySources' | 'libraryPlaying' | 'libraryPaused' | 'libraryPlaylists' | 'libraryHere' | 'libraryUnavailable' | 'libraryUnavailableTip' | 'whyLibrary' | 'whyLibraryLikes' | 'seedLibrary'
     | 'presets' | 'presetAll' | 'moodHappy' | 'moodSad' | 'moodAggressive' | 'moodCalm' | 'moodEnergetic' | 'hintPreset' | 'presetShort' | 'whyMoodTag'
     | 'undo' | 'toastLiked' | 'toastUnliked' | 'seedCollecting' | 'seedCollectingAny'
-    | 'whyRelatedArtist' | 'whyScMix' | 'whyNeighbors'
+    | 'whyRelatedArtist' | 'whyScMix' | 'whyNeighbors' | 'shelfLiked' | 'seedLiked' | 'whyLikedBy' | 'whyLikedAny'
     | 'traitLessCyr' | 'traitLessInst' | 'traitLessGenre' | 'traitLessMarker' | 'traitLessForeign' | 'forkTitle' | 'forkClose' | 'forkCalm' | 'forkAway'
     | 'pinned' | 'menuPin' | 'menuUnpin' | 'menuWaveGenre' | 'toastPinned' | 'toastUnpinned' | 'toastPinFull' | 'pinPlay' | 'pinRemove',
     string
@@ -216,7 +218,7 @@ export interface Profile {
 // Волна от трека, артиста или плейлиста из меню по ПКМ: зёрна вместо вкуса, жанр не действует.
 // own это треки самого артиста, они идут в подборку; derived это найденное, от него волна едет дальше.
 // У подборок полки и набора из меню own это сама подборка
-export type SeedKind = WaveLinkKind | 'daily' | 'forgotten' | 'group' | 'tracks' | 'radar' | 'library';
+export type SeedKind = WaveLinkKind | 'daily' | 'forgotten' | 'liked' | 'group' | 'tracks' | 'radar' | 'library';
 export interface Seed {
     kind: SeedKind;
     title: string;
@@ -232,6 +234,8 @@ export interface Seed {
     library?: { pick: string[]; mode: LibraryMode; left?: number[] };
     /** Волна от артиста: его аккаунт, по нему берутся похожие артисты */
     artist?: number;
+    /** «Лайкнули твои артисты»: чей лайк у трека подборки; в сессию не пишется, причина сохраняется у трека в очереди */
+    likers?: Map<number, string>;
 }
 /** Вид отметки из меню и блока: «Не нравится», скрытый артист, «Не сейчас» у трека и артиста, «Больше такого» */
 export type MarkKind = 'track' | 'artist' | 'later-track' | 'later-artist' | 'more';
