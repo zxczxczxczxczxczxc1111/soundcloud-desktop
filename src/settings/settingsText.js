@@ -58,6 +58,8 @@ window.SETTINGS_EN = {
     'Лайкнули': 'Liked by',
     'Артисты, за которыми стоит следить': 'Artists to watch out for',
     'Голосовые от артистов': 'Exclusive Voice Notes',
+    'Новая музыка от артистов': 'New music from artists',
+    'Другие полки': 'Other shelves',
     'Справа': 'Sidebar',
     'Новые треки': 'New tracks',
     'Кого послушать': 'Artists you should follow',

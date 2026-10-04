@@ -12,6 +12,8 @@ export const HOME_BLOCK_KEYS = [
     'homeLiked',
     'homeBuzzing',
     'homeVoiceNotes',
+    'homeNewMusic',
+    'homeOther',
     'homeNewTracks',
     'homeFollow',
     'homeLikes',
@@ -35,6 +37,8 @@ const HOME_BLOCK_TARGETS: Record<HomeBlockKey, { shown: boolean; selectors: stri
     homeLiked: { shown: false, selectors: ['[data-sc-shelf="liked"]'] },
     homeBuzzing: { shown: false, selectors: ['[data-sc-shelf="buzzing"]'] },
     homeVoiceNotes: { shown: false, selectors: ['[data-sc-shelf="voicenotes"]'] },
+    homeNewMusic: { shown: false, selectors: ['[data-sc-shelf="newmusic"]'] },
+    homeOther: { shown: false, selectors: ['[data-sc-shelf="other"]'] },
     homeNewTracks: { shown: false, selectors: ['.l-sidebar-right .artistShortcutsModule'] },
     homeFollow: { shown: false, selectors: ['.l-sidebar-right .whoToFollowModule'] },
     homeLikes: { shown: true, selectors: ['.l-sidebar-right .likesModule'] },
@@ -84,6 +88,7 @@ export function installHomePage(): void {
         ['liked', /^Liked by$/i, () => 'Лайкнули'],
         ['buzzing', /^Artists to watch out for$/i, () => 'Артисты, за которыми стоит следить'],
         ['voicenotes', /^(?:Exclusive )?Voice Notes$/i, () => 'Голосовые от артистов'],
+        ['newmusic', /^New Music From(?: (.+))?$/i, (tail) => 'Новая музыка от' + (tail ? ' ' + tail : '')],
     ];
     const captions: Record<string, string> = {
         'Artist station': 'Станция артиста',
@@ -130,8 +135,8 @@ export function installHomePage(): void {
         for (const item of document.querySelectorAll('li.mixedModularHome__item:not([data-sc-shelf])')) {
             const title = clean(item.querySelector('.mixedSelectionModule__titleText')?.textContent ?? null);
             const shelf = title && shelves.find(([, pattern]) => pattern.test(title));
-            // Незнакомая полка остаётся без метки и всегда видна
-            if (shelf) item.setAttribute('data-sc-shelf', shelf[0]);
+            // Новые полки сайта управляются общим переключателем, независимо от их заголовка.
+            if (title) item.setAttribute('data-sc-shelf', shelf ? shelf[0] : 'other');
         }
         if (!translate) return;
         for (const title of document.querySelectorAll('li.mixedModularHome__item .mixedSelectionModule__titleText')) rewrite(title, translateTitle);

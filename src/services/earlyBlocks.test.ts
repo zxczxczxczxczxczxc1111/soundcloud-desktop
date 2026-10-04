@@ -3,6 +3,7 @@ import { afterEach, expect, it, vi } from 'vitest';
 vi.mock('electron', () => ({ contextBridge: { exposeInMainWorld: vi.fn(), executeInMainWorld: vi.fn() }, ipcRenderer: { sendSync: vi.fn(), on: vi.fn() } }));
 import { installEarlyBlocks } from '../preload';
 import { ARTIST_TOOLS_CSS } from './pageFeatures';
+import { homeBlockDefaults, homeBlocksCss } from './homeBlocks';
 afterEach(() => {
     window.dispatchEvent(new Event('pagehide'));
     Reflect.deleteProperty(window, '__scEarlyBlocks'); document.getElementById('sc-early-blocks')?.remove(); document.body.innerHTML = '';
@@ -22,12 +23,38 @@ it('до появления страницы ставит правила, а п�
     history.pushState(null, '', '/discover');
     expect(document.documentElement.hasAttribute('data-sc-home')).toBe(true);
 });
-it('смена настройки заменяет ранние правила, неизвестный блок виден', async () => {
-    installEarlyBlocks('[data-sc-shelf="more"]{display:none!important}');
-    document.body.innerHTML = '<li class="mixedModularHome__item"><h2 class="mixedSelectionModule__titleText">Something new</h2></li>';
+it('новая музыка от артиста скрывается до кадра, включая поздний заголовок', async () => {
+    history.replaceState(null, '', '/discover');
+    installEarlyBlocks(homeBlocksCss((key) => homeBlockDefaults[key]));
+    document.body.innerHTML = '<li class="mixedModularHome__item"><h2 class="mixedSelectionModule__titleText"></h2></li>';
     await Promise.resolve();
-    expect(document.querySelector('li')?.getAttribute('data-sc-shelf')).toBe('other');
-    installEarlyBlocks(''); expect(document.querySelectorAll('#sc-early-blocks')).toHaveLength(1);
+    const item = document.querySelector('li')!;
+    expect(getComputedStyle(item).visibility).toBe('hidden');
+    document.querySelector('h2')!.textContent = 'New Music From Drake 🦉';
+    await Promise.resolve();
+    expect(item.getAttribute('data-sc-shelf')).toBe('newmusic');
+    expect(getComputedStyle(item).display).toBe('none');
+    installEarlyBlocks(homeBlocksCss((key) => key === 'homeNewMusic' || homeBlockDefaults[key]));
+    expect(getComputedStyle(item).display).not.toBe('none');
+    expect(getComputedStyle(item).visibility).not.toBe('hidden');
+    history.pushState(null, '', '/feed');
+    installEarlyBlocks(homeBlocksCss((key) => homeBlockDefaults[key]));
+    expect(getComputedStyle(item).display).not.toBe('none');
+});
+
+it('неизвестная полка скрывается до кадра и показывается переключателем других полок', async () => {
+    installEarlyBlocks(homeBlocksCss((key) => homeBlockDefaults[key]));
+    document.body.innerHTML = '<li class="mixedModularHome__item"><h2 class="mixedSelectionModule__titleText">Something new</h2></li><section id="sc-wave">Моя волна</section>';
+    await Promise.resolve();
+    const item = document.querySelector('li')!;
+    expect(item.getAttribute('data-sc-shelf')).toBe('other');
+    expect(getComputedStyle(item).display).toBe('none');
+    expect(getComputedStyle(document.querySelector('#sc-wave')!).display).not.toBe('none');
+    installEarlyBlocks(homeBlocksCss((key) => key === 'homeOther' || homeBlockDefaults[key]));
+    expect(getComputedStyle(item).display).not.toBe('none');
+    expect(getComputedStyle(item).visibility).not.toBe('hidden');
+    expect(document.querySelectorAll('#sc-early-blocks')).toHaveLength(1);
+    installEarlyBlocks('');
     expect(document.getElementById('sc-early-blocks')?.textContent).not.toContain('display:none');
 });
 it('скрывает Artist Tools до загрузки iframe на любой странице, сохраняя другие врезки', () => {
