@@ -3,13 +3,17 @@
 // несколько секунд до конца звука хвост трека подхватывает свой звуковой элемент и гаснет, а сайт уже играет следующий
 // трек, и тот набирает громкость. Действует на всё, что играет в клиенте, не только на волну.
 // Раздел страницы волны: installQuiet уходит на страницу текстом вместе с волной (pageHelpers в wave.ts) и зовёт
-// quietBounds и openStream по голому имени.
+// quietBounds, openStream и parseHlsPlaylist по голому имени.
 // Устройство сайта (проверено 02.10.2026 и 10.10.2026 в dev-клиенте): один звуковой элемент вне документа на все треки,
 // на новом треке сайт сам ставит ему свою громкость. Элемент идёт через Web Audio плеера maestro: источник, регуляторы
 // pausePlay, seek, glitchCoverup и выход контекста. Позиция трека у плеера сайта не равна currentTime элемента (у MSE
 // своя шкала), поэтому свой элемент сверяется с sound.currentTime(). Свой элемент подключается в тот же контекст: задержка
 // вывода у обоих одна, и равные позиции дают совпадение звука до миллисекунд (сверено взаимной корреляцией сигналов).
-// Поток трека это HLS AAC, ссылку отдаёт API сайта, Chromium 148 играет его сам
+// Поток трека это HLS AAC, ссылку отдаёт API сайта, Chromium 148 играет открытый поток сам. У части треков AAC только
+// зашифрованный (ctr-encrypted-hls, обычно треки лейблов), открытые mp3 из списка API у них отдают 404, а сайт играет их
+// через MSE и Widevine. Свой элемент делает так же (проверено 10.10.2026 в подписанной сборке): плейлист с данными
+// Widevine, своя сессия ключей, лицензия на сервере SoundCloud по токену из ответа API, куски потока в MediaSource.
+// Совпадение с сайтом по звуку то же, около 2 мс
 import type { SitePlayer, SiteSound } from '../wave';
 import type { WaveTrack } from '../waveTypes';
 
@@ -18,9 +22,9 @@ export interface QuietBounds { introEnd: number; loudEnd: number }
 /** edges: тишина в начале и конце проматывается; crossfade: длина плавного перехода, с, 0 выключает */
 export interface QuietOptions { edges: boolean; crossfade: number }
 /** Чем кончился переход для журнала диагностики: done прошёл, остальное причина, по которой трек просто затих.
- *  late: перемотали слишком близко к концу; no-stream: открытого потока нет; no-audio: звук сайта не найден или спит;
- *  resolve, load, length, seek, start: шаг подготовки хвоста, на котором она сорвалась; sync: хвост не сошёлся */
-export const CROSSFADE_STAGES = ['done', 'late', 'no-stream', 'no-audio', 'resolve', 'load', 'length', 'seek', 'start', 'sync'] as const;
+ *  late: перемотали слишком близко к концу; no-stream: потока AAC нет; no-audio: звук сайта не найден или спит;
+ *  resolve, load, license, length, seek, start: шаг подготовки хвоста, на котором она сорвалась; sync: хвост не сошёлся */
+export const CROSSFADE_STAGES = ['done', 'late', 'no-stream', 'no-audio', 'resolve', 'load', 'license', 'length', 'seek', 'start', 'sync'] as const;
 export type CrossfadeStage = (typeof CROSSFADE_STAGES)[number];
 
 /** Настройки с main: длина перехода целая от 1 до 12 с, всё прочее значит выключено */
@@ -52,27 +56,69 @@ interface StreamTrack extends WaveTrack {
     track_authorization?: string;
     media?: { transcodings?: Array<{ url?: string; snipped?: boolean; format?: { protocol?: string; mime_type?: string } } | null> } | null;
 }
-/** Открытый поток HLS AAC трека для своего элемента: ссылка API вместе с track_authorization. Отрывки и зашифрованные
- *  потоки (у них другой protocol) не берутся: свой элемент их не сыграет */
-export function openStream(track: WaveTrack): string | null {
+/** Поток AAC трека для своего элемента: ссылка API вместе с track_authorization. drm: поток зашифрован для Widevine */
+export interface TailStream { url: string; drm: boolean }
+/** Открытый HLS AAC, а без него зашифрованный для Widevine (ctr-encrypted-hls). Отрывки не берутся, cbc-encrypted-hls
+ *  тоже: это схема FairPlay */
+export function openStream(track: WaveTrack): TailStream | null {
     const { media, track_authorization: auth } = track as StreamTrack;
     if (typeof auth !== 'string' || !auth) return null;
     const list = Array.isArray(media?.transcodings) ? media.transcodings : [];
-    for (const item of list) {
-        const url = item?.url;
-        if (item?.format?.protocol !== 'hls' || !/mp4a/.test(item.format.mime_type ?? '') || item.snipped === true) continue;
-        if (typeof url !== 'string' || !/^https:\/\/api-v2\.soundcloud\.com\/media\//.test(url)) continue;
-        return url + (url.includes('?') ? '&' : '?') + 'track_authorization=' + encodeURIComponent(auth);
+    for (const protocol of ['hls', 'ctr-encrypted-hls']) {
+        for (const item of list) {
+            const url = item?.url;
+            if (item?.format?.protocol !== protocol || !/mp4a/.test(item.format.mime_type ?? '') || item.snipped === true) continue;
+            if (typeof url !== 'string' || !/^https:\/\/api-v2\.soundcloud\.com\/media\//.test(url)) continue;
+            return { url: url + (url.includes('?') ? '&' : '?') + 'track_authorization=' + encodeURIComponent(auth), drm: protocol !== 'hls' };
+        }
     }
     return null;
+}
+
+/** Плейлист HLS из кусков fMP4: кусок с описанием потока, данные Widevine (pssh в base64) и куски с началом и длиной, с */
+export interface HlsPlaylist { init: string; pssh: string | null; segments: Array<{ url: string; start: number; duration: number }>; duration: number }
+/** Разбор плейлиста потока: только то, что нужно своему элементу. Без куска описания или без кусков null */
+export function parseHlsPlaylist(text: string, base: string): HlsPlaylist | null {
+    // Системный идентификатор Widevine в KEYFORMAT; функция уходит на страницу текстом, поэтому всё своё внутри
+    const WIDEVINE = 'edef8ba9-79d6-4ace-a3c8-27dcd51d21ed';
+    const absolute = (value: string): string | null => {
+        try {
+            return new URL(value, base).href;
+        } catch {
+            return null;
+        }
+    };
+    let init: string | null = null;
+    let pssh: string | null = null;
+    let length = NaN;
+    let start = 0;
+    const segments: HlsPlaylist['segments'] = [];
+    for (const raw of text.split('\n')) {
+        const line = raw.trim();
+        if (line.startsWith('#EXT-X-KEY:') && line.toLowerCase().includes(WIDEVINE)) pssh = /URI="data:[^",]*base64,([A-Za-z0-9+/=]+)"/.exec(line)?.[1] ?? pssh;
+        else if (line.startsWith('#EXT-X-MAP:')) {
+            const uri = /URI="([^"]+)"/.exec(line)?.[1];
+            init = uri ? absolute(uri) : null;
+        } else if (line.startsWith('#EXTINF:')) length = parseFloat(line.slice(8));
+        else if (line && !line.startsWith('#')) {
+            const url = absolute(line);
+            if (!url || !(length > 0)) return null;
+            segments.push({ url, start, duration: length });
+            start += length;
+            length = NaN;
+        }
+    }
+    if (!init || !segments.length) return null;
+    return { init, pssh, segments, duration: start };
 }
 
 export interface QuietCore {
     player(): SitePlayer | null;
     /** Сырые отсчёты формы волны трека; null, пока грузятся или их нет. Вызов сам запускает загрузку */
     rawSamples(track: WaveTrack): number[] | null;
-    /** Ссылка на плейлист потока по ссылке API трека. Запрос идёт через API сайта: ключ и вход подставляет он */
-    resolveStream(url: string): Promise<string | null>;
+    /** Ссылка на плейлист потока по ссылке API трека и токен лицензии зашифрованного потока. Запрос идёт через API сайта:
+     *  ключ и вход подставляет он */
+    resolveStream(url: string): Promise<{ url: string; license: string | null } | null>;
     /** Треки сейчас сменяет разведка: переход не нужен */
     held(): boolean;
     options(): QuietOptions;
@@ -104,9 +150,17 @@ export function installQuiet(core: QuietCore): QuietSection {
     // такой переход и ещё 3 с
     const MIN_MIX = 1500;
     const PREP_TIME = 3000;
+    // Сервер лицензий Widevine, куда ходит и сайт (запрос сайта снят 10.10.2026): тело это сообщение сессии ключей,
+    // токен в адресе
+    const LICENSE = 'https://license.media-streaming.soundcloud.cloud/playback/widevine';
 
     interface SiteAudio { context: AudioContext; gain: GainNode; element: HTMLMediaElement | null }
-    interface Deck { context: AudioContext; element: HTMLAudioElement; gain: GainNode; busy: boolean }
+    // keys: MediaKeys элемента, ставятся один раз; session и objectUrl: сессия ключей и MediaSource зашифрованного хвоста;
+    // license: ответ на неё
+    interface Deck {
+        context: AudioContext; element: HTMLAudioElement; gain: GainNode; busy: boolean;
+        keys: MediaKeys | null; session: MediaKeySession | null; license: 'wait' | 'usable' | 'failed'; objectUrl: string;
+    }
     // load: поток грузится; sync: свой элемент играет без звука и подгоняется; ready: сошёлся; out: хвост после передачи
     // readings: последние расхождения с треком сайта, с; stable: шагов подряд в допуске; calm: шагов подряд со скоростью 1
     // stage: шаг подготовки для журнала; begun и ready: начало подготовки и первая готовность, performance.now()
@@ -239,7 +293,7 @@ export function installQuiet(core: QuietCore): QuietSection {
         gain.gain.value = 0;
         source.connect(gain);
         gain.connect(context.destination);
-        const deck: Deck = { context, element, gain, busy: true };
+        const deck: Deck = { context, element, gain, busy: true, keys: null, session: null, license: 'wait', objectUrl: '' };
         decks.push(deck);
         return deck;
     }
@@ -257,6 +311,13 @@ export function installQuiet(core: QuietCore): QuietSection {
         deck.element.removeAttribute('src');
         deck.element.load();
         deck.element.playbackRate = 1;
+        if (deck.objectUrl) {
+            URL.revokeObjectURL(deck.objectUrl);
+            deck.objectUrl = '';
+        }
+        const session = deck.session;
+        deck.session = null;
+        if (session) session.close().catch((error: unknown) => console.warn('Плавный переход: сессия ключей не закрылась', error));
         deck.busy = false;
         if (item.phase === 'out') restoreSite(item.site);
     }
@@ -297,10 +358,86 @@ export function installQuiet(core: QuietCore): QuietSection {
             await sleep(10);
         }
     }
-    // Откуда брать хвост: открытый поток трека и цепочка Web Audio сайта, которая сейчас звучит. null значит не сейчас,
-    // и следующий шаг спросит снова: после паузы контекст сайта просыпается не сразу (замер 10.10: трек уже играет, а
-    // контекст ещё 20 мс suspended)
-    function tailSource(sound: SiteSound): { site: SiteAudio; api: string } | null {
+    // Зашифрованный поток: плейлист, сессия ключей Widevine и куски от позиции from до конца звука хвоста в MediaSource, мс.
+    // Лицензию сервер SoundCloud выдаёт по токену из ответа API, как сайту; ответ виден в deck.license
+    async function loadProtected(deck: Deck, link: { url: string; license: string | null }, from: number, end: number, stale: () => boolean): Promise<void> {
+        const token = link.license;
+        if (!token) throw new Error('API не дал токен лицензии');
+        const playlist = await withTimeout(fetch(link.url), 8000, 'плейлист');
+        if (!playlist.ok) throw new Error('плейлист: ' + playlist.status);
+        const list = parseHlsPlaylist(await playlist.text(), link.url);
+        const pssh = list?.pssh;
+        if (!list || !pssh) throw new Error('в плейлисте нет данных Widevine');
+        const first = list.segments.findIndex((segment) => segment.start + segment.duration > from / 1000);
+        if (first < 0) throw new Error('позиция за концом плейлиста');
+        const wanted = list.segments.slice(first).filter((segment) => segment.start < end / 1000);
+        const element = deck.element;
+        if (!deck.keys) {
+            const access = await navigator.requestMediaKeySystemAccess('com.widevine.alpha', [{
+                initDataTypes: ['cenc'], persistentState: 'optional', distinctiveIdentifier: 'optional', sessionTypes: ['temporary'],
+                audioCapabilities: [{ contentType: 'audio/mp4; codecs="mp4a.40.2"', robustness: 'SW_SECURE_CRYPTO' }],
+            }]);
+            const keys = await access.createMediaKeys();
+            await element.setMediaKeys(keys);
+            deck.keys = keys;
+        }
+        // После каждого ожидания: хвост могли снять, а элемент отдать следующему. Сессию и MediaSource снятого хвоста
+        // закрывает release, дальше этот вызов элемент не трогает
+        if (stale()) return;
+        const session = deck.keys.createSession('temporary');
+        deck.session = session;
+        deck.license = 'wait';
+        session.addEventListener('keystatuseschange', () => {
+            if (deck.session !== session) return;
+            session.keyStatuses.forEach((status) => {
+                if (status === 'usable') deck.license = 'usable';
+                else if (status === 'internal-error' || status === 'output-restricted' || status === 'expired') deck.license = 'failed';
+            });
+        });
+        // Два сообщения подряд: запрос сертификата сервера и сам запрос лицензии (так же у сайта)
+        session.addEventListener('message', (event) => {
+            fetch(LICENSE + '?license_token=' + encodeURIComponent(token), { method: 'POST', body: event.message, headers: { 'Content-Type': 'application/octet-stream' } })
+                .then((response) => {
+                    if (!response.ok) throw new Error('сервер лицензий: ' + response.status);
+                    return response.arrayBuffer();
+                })
+                .then((answer) => session.update(answer))
+                .catch((error: unknown) => {
+                    if (deck.session !== session) return;
+                    deck.license = 'failed';
+                    console.warn('Плавный переход: лицензия не получена', error);
+                });
+        });
+        await session.generateRequest('cenc', Uint8Array.from(atob(pssh), (char) => char.charCodeAt(0)));
+        if (stale()) return;
+        const source = new MediaSource();
+        deck.objectUrl = URL.createObjectURL(source);
+        element.src = deck.objectUrl;
+        await withTimeout(new Promise<void>((resolve) => source.addEventListener('sourceopen', () => resolve(), { once: true })), 5000, 'MediaSource');
+        if (stale()) return;
+        source.duration = list.duration;
+        const buffer = source.addSourceBuffer('audio/mp4; codecs="mp4a.40.2"');
+        const bytes = async (url: string): Promise<ArrayBuffer> => {
+            const response = await fetch(url);
+            if (!response.ok) throw new Error('кусок потока: ' + response.status);
+            return response.arrayBuffer();
+        };
+        const parts = await withTimeout(Promise.all([list.init, ...wanted.map((segment) => segment.url)].map(bytes)), 8000, 'куски потока');
+        for (const part of parts) {
+            if (stale()) return;
+            await new Promise<void>((resolve, reject) => {
+                buffer.addEventListener('updateend', () => resolve(), { once: true });
+                buffer.addEventListener('error', () => reject(new Error('кусок не лёг в буфер')), { once: true });
+                buffer.appendBuffer(part);
+            });
+        }
+        // Последний кусок трека в буфере: элемент доиграет до конца, а не встанет в ожидании данных
+        if (first + wanted.length >= list.segments.length && source.readyState === 'open') source.endOfStream();
+    }
+    // Откуда брать хвост: поток трека и цепочка Web Audio сайта, которая сейчас звучит. null значит не сейчас, и следующий
+    // шаг спросит снова: после паузы контекст сайта просыпается не сразу (замер 10.10: трек уже играет, а контекст ещё
+    // 20 мс suspended)
+    function tailSource(sound: SiteSound): { site: SiteAudio; api: TailStream } | null {
         const track = sound.attributes;
         const api = track ? openStream(track) : null;
         if (!api) {
@@ -316,7 +453,7 @@ export function installQuiet(core: QuietCore): QuietSection {
     }
     // Хвост играющего трека: поток грузится в свой элемент, встаёт на позицию чуть впереди и запускается без звука, когда
     // трек у сайта до неё дойдёт. Дальше его подгоняет скоростью syncTail
-    async function prepare(sound: SiteSound, end: number, source: { site: SiteAudio; api: string }): Promise<void> {
+    async function prepare(sound: SiteSound, end: number, source: { site: SiteAudio; api: TailStream }): Promise<void> {
         const { site, api } = source;
         if (!media && site.element instanceof HTMLAudioElement) watch(site.element);
         let deck: Deck | null;
@@ -335,15 +472,23 @@ export function installQuiet(core: QuietCore): QuietSection {
         tail = current;
         const stale = (): boolean => tail !== current || core.disposed();
         try {
-            const url = await withTimeout(core.resolveStream(api), 8000, 'ссылка на поток');
+            const link = await withTimeout(core.resolveStream(api.url), 8000, 'ссылка на поток');
             if (stale()) return;
-            if (!url) throw new Error('API не дал ссылку на поток');
+            if (!link) throw new Error('API не дал ссылку на поток');
             const element = deck.element;
             current.stage = 'load';
-            element.src = url;
+            if (api.drm) await loadProtected(deck, link, positionOf(sound), end, stale);
+            else element.src = link.url;
+            if (stale()) return;
             await until(() => element.readyState >= 1 || element.error !== null, 8000, 'данные потока');
             if (stale()) return;
             if (element.error) throw new Error('поток не играет: ' + element.error.message);
+            if (api.drm) {
+                current.stage = 'license';
+                await until(() => deck.license !== 'wait', 8000, 'лицензия');
+                if (stale()) return;
+                if (deck.license === 'failed') throw new Error('лицензия не получена');
+            }
             // Поток не тот, что играет сайт (например, отрывок вместо целого трека)
             current.stage = 'length';
             if (Math.abs(element.duration * 1000 - durationOf(sound)) > 1500) throw new Error('длина потока ' + element.duration + ' с');

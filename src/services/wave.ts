@@ -54,7 +54,7 @@ const { installLibrary } = librarySectionModule;
 const { installRadar } = radarSectionModule;
 const { installShelf } = shelfSectionModule;
 const { installMenu } = menuSectionModule;
-const { installQuiet, quietBounds, openStream, quietOptionsOf } = quietSectionModule;
+const { installQuiet, quietBounds, openStream, parseHlsPlaylist, quietOptionsOf } = quietSectionModule;
 const { installScout, scoutStart } = scoutSectionModule;
 const { glowPalette } = glowModule;
 const { installSources, relatedArtistsOf, scMixesOf, likedOwner, likersOf, tasteNeighbors, likedTracksOf, neighborLikes, interleaveMixes } = waveSourcesModule;
@@ -711,8 +711,10 @@ export function installWave(config: WaveConfig, createPlayback: typeof installPl
         resolveStream: async (url) => {
             if (!api) return null;
             const result = await Promise.race([api.callEndpointByUrl('resolve', url), wait(8000).then(() => { throw new Error('Тайм-аут ссылки на поток'); })]);
-            const body = result.body as { url?: unknown } | null | undefined;
-            return typeof body?.url === 'string' && /^https:\/\//.test(body.url) ? body.url : null;
+            // У зашифрованного потока рядом со ссылкой токен лицензии Widevine
+            const body = result.body as { url?: unknown; licenseAuthToken?: unknown } | null | undefined;
+            if (typeof body?.url !== 'string' || !/^https:\/\//.test(body.url)) return null;
+            return { url: body.url, license: typeof body.licenseAuthToken === 'string' && body.licenseAuthToken ? body.licenseAuthToken : null };
         },
         // Разведка сама сменяет треки по 20 секунд
         held: () => scoutSection.active(),
@@ -4961,7 +4963,7 @@ const pageHelpers = [
     artworkUrl, coversOf, formatTime, playEnd, siteSource, moodTags, trackPath, localDay, countText, tasteGroups, capPerArtist, forgottenPicks, daySample, artistNames, performerNames, sharedPerformer, isNewArtist, spreadBy, pickFinds,
     moodList, moodDictionary, trackMood, playlistMood, artistMoods, neighborMood, moodScore,
     ...identity.identityHelpers, ...sources.sourceHelpers, ...libraryMix.libraryHelpers, siteRequires, installPlaybackPage, installPlaybackRecovery,
-    installVersions, installLibrary, installRadar, installShelf, installMenu, installQuiet, quietBounds, openStream, quietOptionsOf, installScout, scoutStart, glowPalette, installSources, relatedArtistsOf, scMixesOf, likedOwner, likersOf, tasteNeighbors, likedTracksOf, neighborLikes, interleaveMixes,
+    installVersions, installLibrary, installRadar, installShelf, installMenu, installQuiet, quietBounds, openStream, parseHlsPlaylist, quietOptionsOf, installScout, scoutStart, glowPalette, installSources, relatedArtistsOf, scMixesOf, likedOwner, likersOf, tasteNeighbors, likedTracksOf, neighborLikes, interleaveMixes,
 ];
 
 /** Смена настроек тихих краёв и плавного перехода в F1: страница подхватывает без перезагрузки */

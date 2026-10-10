@@ -2,7 +2,7 @@
  * @vitest-environment jsdom
  */
 import { afterEach, beforeEach, expect, it, vi } from 'vitest';
-import { installQuiet, openStream, quietBounds, quietOptionsOf, type QuietOptions } from './quiet';
+import { installQuiet, openStream, parseHlsPlaylist, quietBounds, quietOptionsOf, type QuietOptions } from './quiet';
 import type { SitePlayer, SiteSound } from '../wave';
 import type { WaveTrack } from '../waveTypes';
 
@@ -41,13 +41,40 @@ const streamTrack = (id: number): WaveTrack =>
         ] },
     }) as WaveTrack;
 
-it('openStream: открытый HLS AAC с track_authorization, без отрывков и шифрованных потоков', () => {
-    expect(openStream(streamTrack(1))).toBe(API + '?track_authorization=auth%2B1');
-    const snipped = streamTrack(1) as WaveTrack & { media: { transcodings: Array<{ snipped?: boolean }> } };
-    snipped.media.transcodings[2].snipped = true;
-    expect(openStream(snipped)).toBeNull();
+it('openStream: открытый HLS AAC, без него зашифрованный для Widevine; отрывки и FairPlay не берутся', () => {
+    expect(openStream(streamTrack(1))).toEqual({ url: API + '?track_authorization=auth%2B1', drm: false });
+    const track = streamTrack(1) as WaveTrack & { media: { transcodings: Array<{ snipped?: boolean; format: { protocol: string } }> } };
+    track.media.transcodings[2].snipped = true;
+    expect(openStream(track)).toEqual({ url: API + '-enc?track_authorization=auth%2B1', drm: true });
+    track.media.transcodings[1].format.protocol = 'cbc-encrypted-hls';
+    expect(openStream(track)).toBeNull();
     expect(openStream({ ...streamTrack(1), track_authorization: undefined } as WaveTrack)).toBeNull();
     expect(openStream({ id: 1 })).toBeNull();
+});
+
+const CDN = 'https://playback.media-streaming.soundcloud.cloud/cenc/x/aac_160k/u/';
+const PSSH = 'AAAAa3Bzc2gAAAAA7e+LqXnWSs6jyCfc1R0h7QAAAEs=';
+// Плейлист зашифрованного потока как у SoundCloud: ключ Widevine, ключ PlayReady, кусок описания, куски по 10 с
+const PLAYLIST = [
+    '#EXTM3U', '#EXT-X-VERSION:7',
+    '#EXT-X-KEY:METHOD=SAMPLE-AES,URI="data:text/plain;base64,' + PSSH + '",IV=0x28,KEYID=0x28,KEYFORMAT="urn:uuid:edef8ba9-79d6-4ace-a3c8-27dcd51d21ed",KEYFORMATVERSIONS="1"',
+    '#EXT-X-KEY:METHOD=SAMPLE-AES-CTR,URI="data:text/plain;charset=UTF-16;base64,0AMAAAEAAQ==",KEYFORMAT="com.microsoft.playready"',
+    '#EXT-X-MAP:URI="' + CDN + 'init.mp4?expires=1"', '#EXT-X-PLAYLIST-TYPE:VOD', '#EXT-X-TARGETDURATION:11',
+    ...Array.from({ length: 20 }, (_, i) => ['#EXTINF:10.0,', CDN + 'data' + String(i).padStart(3, '0') + '.m4s?expires=1']).flat(),
+    '#EXT-X-ENDLIST', '',
+].join('\r\n');
+
+it('parseHlsPlaylist: кусок описания, данные Widevine и куски с началом, относительные ссылки от плейлиста', () => {
+    const list = parseHlsPlaylist(PLAYLIST, CDN + 'playlist.m3u8?expires=1');
+    expect(list?.init).toBe(CDN + 'init.mp4?expires=1');
+    expect(list?.pssh).toBe(PSSH);
+    expect(list?.segments).toHaveLength(20);
+    expect(list?.segments[3]).toEqual({ url: CDN + 'data003.m4s?expires=1', start: 30, duration: 10 });
+    expect(list?.duration).toBe(200);
+    const relative = parseHlsPlaylist('#EXT-X-MAP:URI="init.mp4"\n#EXTINF:4.5,\ndata000.m4s\n', CDN + 'playlist.m3u8');
+    expect(relative).toEqual({ init: CDN + 'init.mp4', pssh: null, segments: [{ url: CDN + 'data000.m4s', start: 0, duration: 4.5 }], duration: 4.5 });
+    expect(parseHlsPlaylist('#EXTM3U\n#EXTINF:10,\n' + CDN + 'data000.m4s', CDN)).toBeNull();
+    expect(parseHlsPlaylist('#EXT-X-MAP:URI="init.mp4"\n#EXTINF:10,\n', CDN)).toBeNull();
 });
 
 // Поддельный Web Audio: значение регулятора сразу становится конечным значением запланированного изменения
@@ -80,7 +107,8 @@ let siteGain: ReturnType<typeof fakeGain>;
 let deck: HTMLAudioElement | null;
 let deckPlaying = false;
 let deckTime = 0;
-let resolveStream: (url: string) => Promise<string | null>;
+type Link = { url: string; license: string | null } | null;
+let resolveStream: (url: string) => Promise<Link>;
 let hasNext = true;
 let contextState = 'running';
 let reports: Array<[string, number, number]>;
@@ -103,6 +131,7 @@ function makeSound(id: number, position: () => number): SiteSound & { attributes
                 ended: { configurable: true, get: () => false },
                 currentTime: { configurable: true, get: () => (deckPlaying ? firstPosition() / 1000 : deckTime), set: (value: number) => { deckTime = value; } },
                 play: { configurable: true, value: () => { deckPlaying = true; return Promise.resolve(); } },
+                setMediaKeys: { configurable: true, value: () => Promise.resolve() },
                 pause: { configurable: true, value: () => { deckPlaying = false; } },
                 load: { configurable: true, value: () => undefined },
             });
@@ -135,7 +164,7 @@ beforeEach(() => {
     reports = [];
     options = { edges: true, crossfade: 0 };
     raw = form(5, 190, 5);
-    resolveStream = vi.fn(async () => 'https://playback.media-streaming.soundcloud.cloud/x/playlist.m3u8');
+    resolveStream = vi.fn(async (): Promise<Link> => ({ url: 'https://playback.media-streaming.soundcloud.cloud/x/playlist.m3u8', license: null }));
     // В jsdom звук не играет: запуск только отдаёт обещание
     HTMLMediaElement.prototype.play = vi.fn(() => Promise.resolve());
     siteAudio = new Audio();
@@ -282,7 +311,7 @@ it('звук сайта ещё спит после паузы: хвост гот
 it('хвост не успел к переходу: громкость полная, потом затихание от этого места', async () => {
     options = { edges: true, crossfade: 5 };
     // Ссылка на поток не приходит: до конца звука 2,5 с хвост ждут, дальше трек затихает
-    resolveStream = vi.fn(() => new Promise<string | null>(() => undefined));
+    resolveStream = vi.fn(() => new Promise<Link>(() => undefined));
     from = 188500;
     const section = install();
     void siteAudio.play();
@@ -298,6 +327,137 @@ it('хвост не успел к переходу: громкость полн�
     expect(heard(siteAudio)).toBeCloseTo(0.8 * Math.SQRT1_2, 1);
     expect(player.playNext).not.toHaveBeenCalled();
     section.dispose();
+});
+
+it('зашифрованный поток: своя сессия Widevine, лицензия по токену, куски до конца звука, переход как у открытого', async () => {
+    options = { edges: true, crossfade: 5 };
+    // Открытого AAC нет, только ctr-encrypted-hls
+    const track = streamTrack(1) as WaveTrack & { media: { transcodings: Array<{ snipped?: boolean }> } };
+    track.media.transcodings[2].snipped = true;
+    sound.attributes = track;
+    resolveStream = vi.fn(async (): Promise<Link> => ({ url: CDN + 'playlist.m3u8?expires=1', license: 'tok/1' }));
+    const requests: Array<{ url: string; method: string }> = [];
+    vi.stubGlobal('fetch', vi.fn(async (url: string, init?: RequestInit) => {
+        requests.push({ url, method: init?.method ?? 'GET' });
+        return { ok: true, status: 200, text: async () => PLAYLIST, arrayBuffer: async () => new ArrayBuffer(8) };
+    }));
+    const appended: number[] = [];
+    let ended = false;
+    class FakeSourceBuffer extends EventTarget {
+        appendBuffer(data: ArrayBuffer): void {
+            appended.push(data.byteLength);
+            setTimeout(() => this.dispatchEvent(new Event('updateend')), 5);
+        }
+    }
+    class FakeMediaSource extends EventTarget {
+        readyState = 'open';
+        duration = NaN;
+        constructor() {
+            super();
+            setTimeout(() => this.dispatchEvent(new Event('sourceopen')), 5);
+        }
+        addSourceBuffer(): FakeSourceBuffer { return new FakeSourceBuffer(); }
+        endOfStream(): void { ended = true; }
+    }
+    vi.stubGlobal('MediaSource', FakeMediaSource);
+    const closed: number[] = [];
+    let sessions = 0;
+    const keys = {
+        createSession: () => {
+            const index = ++sessions;
+            const statuses = new Map<string, string>();
+            const session = Object.assign(new EventTarget(), {
+                keyStatuses: statuses,
+                generateRequest: async () => {
+                    setTimeout(() => session.dispatchEvent(Object.assign(new Event('message'), { message: new ArrayBuffer(2), messageType: 'license-request' })), 5);
+                },
+                update: async () => {
+                    statuses.set('k', 'usable');
+                    session.dispatchEvent(new Event('keystatuseschange'));
+                },
+                close: async () => { closed.push(index); },
+            });
+            return session;
+        },
+    };
+    Object.defineProperty(navigator, 'requestMediaKeySystemAccess', { configurable: true, value: vi.fn(async () => ({ createMediaKeys: async () => keys })) });
+    const createObjectURL = vi.fn(() => 'blob:tail');
+    const revokeObjectURL = vi.fn();
+    Object.assign(URL, { createObjectURL, revokeObjectURL });
+    try {
+        from = 179000;
+        const section = install();
+        void siteAudio.play();
+        await vi.advanceTimersByTimeAsync(3000);
+        expect(resolveStream).toHaveBeenCalledWith(API + '-enc?track_authorization=auth%2B1');
+        expect(requests[0]).toEqual({ url: CDN + 'playlist.m3u8?expires=1', method: 'GET' });
+        expect(requests.filter((request) => request.method === 'POST').map((request) => request.url)).toEqual(['https://license.media-streaming.soundcloud.cloud/playback/widevine?license_token=tok%2F1']);
+        // Хвост готовится с 180,5 с, звук кончается на 195,5 с: кусок описания и куски 18 и 19, последний с концом потока
+        expect(requests.filter((request) => request.method === 'GET').map((request) => request.url.replace(CDN, '').replace(/\?.*/, ''))).toEqual(['playlist.m3u8', 'init.mp4', 'data018.m4s', 'data019.m4s']);
+        expect(appended).toHaveLength(3);
+        expect(ended).toBe(true);
+        expect(deck?.getAttribute('src')).toBe('blob:tail');
+        expect(deckPlaying).toBe(true);
+        await vi.advanceTimersByTimeAsync(8600);
+        expect(player.playNext).toHaveBeenCalledOnce();
+        expect(reports[0][0]).toBe('done');
+        // Хвост догорел: сессия ключей закрыта, MediaSource отпущен
+        await vi.advanceTimersByTimeAsync(6000);
+        expect(deckPlaying).toBe(false);
+        expect(closed).toEqual([1]);
+        expect(revokeObjectURL).toHaveBeenCalledWith('blob:tail');
+        section.dispose();
+    } finally {
+        vi.unstubAllGlobals();
+        Reflect.deleteProperty(navigator, 'requestMediaKeySystemAccess');
+        Reflect.deleteProperty(URL, 'createObjectURL');
+        Reflect.deleteProperty(URL, 'revokeObjectURL');
+    }
+});
+
+it('зашифрованный поток без лицензии: хвоста нет, трек затихает, в журнале шаг license', async () => {
+    options = { edges: true, crossfade: 5 };
+    const track = streamTrack(1) as WaveTrack & { media: { transcodings: Array<{ snipped?: boolean }> } };
+    track.media.transcodings[2].snipped = true;
+    sound.attributes = track;
+    resolveStream = vi.fn(async (): Promise<Link> => ({ url: CDN + 'playlist.m3u8', license: 'tok' }));
+    vi.stubGlobal('fetch', vi.fn(async (_url: string, init?: RequestInit) =>
+        init?.method === 'POST' ? { ok: false, status: 403 } : { ok: true, status: 200, text: async () => PLAYLIST, arrayBuffer: async () => new ArrayBuffer(8) }));
+    class FakeSourceBuffer extends EventTarget {
+        appendBuffer(): void { setTimeout(() => this.dispatchEvent(new Event('updateend')), 5); }
+    }
+    vi.stubGlobal('MediaSource', class extends EventTarget {
+        readyState = 'open';
+        constructor() {
+            super();
+            setTimeout(() => this.dispatchEvent(new Event('sourceopen')), 5);
+        }
+        addSourceBuffer(): FakeSourceBuffer { return new FakeSourceBuffer(); }
+        endOfStream(): void { /* конец потока не нужен */ }
+    });
+    const session = Object.assign(new EventTarget(), {
+        keyStatuses: new Map<string, string>(),
+        generateRequest: async () => { setTimeout(() => session.dispatchEvent(Object.assign(new Event('message'), { message: new ArrayBuffer(2) })), 5); },
+        update: async () => undefined,
+        close: async () => undefined,
+    });
+    Object.defineProperty(navigator, 'requestMediaKeySystemAccess', { configurable: true, value: async () => ({ createMediaKeys: async () => ({ createSession: () => session }) }) });
+    Object.assign(URL, { createObjectURL: () => 'blob:tail', revokeObjectURL: () => undefined });
+    try {
+        from = 185000;
+        const section = install();
+        void siteAudio.play();
+        await vi.advanceTimersByTimeAsync(8000);
+        expect(player.playNext).not.toHaveBeenCalled();
+        expect(heard(siteAudio)).toBeLessThan(0.8);
+        expect(reports.map(([stage]) => stage)).toEqual(['license']);
+        section.dispose();
+    } finally {
+        vi.unstubAllGlobals();
+        Reflect.deleteProperty(navigator, 'requestMediaKeySystemAccess');
+        Reflect.deleteProperty(URL, 'createObjectURL');
+        Reflect.deleteProperty(URL, 'revokeObjectURL');
+    }
 });
 
 it('потока нет: трек просто затихает к концу звука, новый трек звучит в полную громкость', async () => {
