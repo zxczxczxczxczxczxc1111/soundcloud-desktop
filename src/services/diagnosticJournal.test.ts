@@ -45,6 +45,17 @@ it('пустая волна: в журнал попадают только чи�
     expect(line.title).toBeUndefined();
     expect(line.url).toBeUndefined();
 });
+it('плавный переход: шаг из списка и два времени, без трека', () => {
+    const { root, journal } = create();
+    journal.record('wave.crossfade', { stage: 'no-stream', prepMs: 0, leftMs: 4980, title: 'кровью' });
+    journal.record('wave.crossfade', { stage: 'D:/private', prepMs: 10 });
+    journal.exportTo(join(root, 'export.log'));
+    const lines = readFileSync(join(root, 'export.log'), 'utf8').trim().split('\n').map((line) => JSON.parse(line) as Record<string, unknown>).filter((line) => line.event === 'wave.crossfade');
+    expect(lines).toHaveLength(2);
+    expect(lines[0]).toMatchObject({ stage: 'no-stream', prepMs: 0, leftMs: 4980 });
+    expect(lines[0].title).toBeUndefined();
+    expect(lines[1].stage).toBeUndefined();
+});
 it('резервная копия: причина отказа и время без пути к файлу и содержимого', () => {
     const { root, journal } = create();
     journal.record('backup.failed', { auto: true, reason: 'no-space', file: 'D:/Backups/soundcloud-backup.scbackup', title: 'кровью' });

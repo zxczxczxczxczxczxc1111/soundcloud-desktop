@@ -57,6 +57,7 @@ describe('обработчики волны', () => {
         await ipc.send('soundcloud:wave-journal:add', stranger, 11, [3]);
         await ipc.send('soundcloud:wave-signals:add', stranger, 11, [{}]);
         await ipc.send('soundcloud:wave-empty', stranger, { seen: 1 });
+        await ipc.send('soundcloud:wave-crossfade', stranger, { stage: 'done', prepMs: 1, leftMs: 1 });
         await expect(ipc.invoke('soundcloud:wave-exclusions:load', stranger, 11)).resolves.toBeNull();
         await expect(ipc.invoke('soundcloud:wave-exclusions:set', stranger, 11, 'track', { id: 1 }, true)).resolves.toBe(false);
         await expect(ipc.invoke('soundcloud:wave-taste', stranger, 11)).resolves.toBeNull();
@@ -106,6 +107,16 @@ describe('обработчики волны', () => {
         await ipc.send('soundcloud:wave-empty', site, 'пусто');
         expect(deps.diagnostics.record).toHaveBeenCalledOnce();
         expect(deps.diagnostics.record).toHaveBeenCalledWith('wave.empty', { waveSeen: 0, waveArtistTracks: 10000, waveMoodTags: 0 });
+    });
+    it('исход плавного перехода: шаг только из списка, времена целые и в пределах', async () => {
+        const { ipc, site, deps } = setup();
+        await ipc.send('soundcloud:wave-crossfade', site, { stage: 'late', prepMs: 2410.6, leftMs: -5, title: 'кровью' });
+        await ipc.send('soundcloud:wave-crossfade', site, { stage: 'https://soundcloud.com/a/b', prepMs: 1, leftMs: 1 });
+        await ipc.send('soundcloud:wave-crossfade', site, 'done');
+        await ipc.send('soundcloud:wave-crossfade', site, { stage: 'done', prepMs: 1e12, leftMs: 'много' });
+        expect(deps.diagnostics.record).toHaveBeenCalledTimes(2);
+        expect(deps.diagnostics.record).toHaveBeenNthCalledWith(1, 'wave.crossfade', { stage: 'late', prepMs: 2411, leftMs: 0 });
+        expect(deps.diagnostics.record).toHaveBeenNthCalledWith(2, 'wave.crossfade', { stage: 'done', prepMs: 600000, leftMs: 0 });
     });
     it('подборки дня собираются из прослушанного, плейлистов и свежих лайков', async () => {
         vi.useFakeTimers();

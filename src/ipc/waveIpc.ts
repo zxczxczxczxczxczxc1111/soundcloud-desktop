@@ -6,6 +6,7 @@ import type { WaveJournal } from '../services/waveJournal';
 import type { WaveShelf } from '../services/waveShelf';
 import type { WaveSignals } from '../services/waveSignals';
 import { TASTE_PARAMS } from '../services/tasteParams';
+import { CROSSFADE_STAGES } from '../services/wave/quiet';
 import { validateSettingChange, type SettingChange } from '../settings/validateSetting';
 import type { IpcRegistry, MessageTarget, SenderCheck, Settings, SitePage } from './ipcTypes';
 
@@ -47,6 +48,16 @@ export function registerWaveIpc(ipc: IpcRegistry, deps: WaveIpcDeps): void {
         const value = counts as Record<string, unknown>;
         const count = (input: unknown): number => (typeof input === 'number' && Number.isSafeInteger(input) && input >= 0 ? Math.min(input, 10000) : 0);
         diagnostics.record('wave.empty', { waveSeen: count(value.seen), waveArtistTracks: count(value.artistTracks), waveMoodTags: count(value.moodTags) });
+    });
+    // Плавный переход прошёл или почему трек просто затих: шаг из списка и два времени, без трека и ссылок
+    ipc.removeAllListeners('soundcloud:wave-crossfade');
+    ipc.on('soundcloud:wave-crossfade', (event, entry: unknown) => {
+        if (!isTrustedSoundCloudSender(event) || !entry || typeof entry !== 'object') return;
+        const value = entry as Record<string, unknown>;
+        const stage = CROSSFADE_STAGES.find((item) => item === value.stage);
+        if (!stage) return;
+        const ms = (input: unknown): number => (typeof input === 'number' && Number.isFinite(input) && input >= 0 ? Math.min(Math.round(input), 600000) : 0);
+        diagnostics.record('wave.crossfade', { stage, prepMs: ms(value.prepMs), leftMs: ms(value.leftMs) });
     });
     // Отметки волны («Не нравится», скрытые артисты, «Не сейчас», «Больше такого»): ставит страница, снимает и F1
     for (const channel of ['soundcloud:wave-exclusions:load', 'soundcloud:wave-exclusions:set', 'get-wave-exclusions', 'remove-wave-exclusion', 'soundcloud:wave-taste', 'soundcloud:wave-shelf:load', 'soundcloud:wave-shelf:save', 'soundcloud:wave-library:load', 'soundcloud:wave-library:save', 'soundcloud:wave-library:heard', 'soundcloud:wave-library:recent']) ipc.removeHandler(channel);

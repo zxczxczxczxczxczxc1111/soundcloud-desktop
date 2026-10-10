@@ -82,13 +82,16 @@ let deckPlaying = false;
 let deckTime = 0;
 let resolveStream: (url: string) => Promise<string | null>;
 let hasNext = true;
+let contextState = 'running';
+let reports: Array<[string, number, number]>;
 const originalPlay = HTMLMediaElement.prototype.play;
 // Позиция первого трека идёт по часам, пока он играет
 const firstPosition = (): number => from + (Date.now() - started);
 
 function makeSound(id: number, position: () => number): SiteSound & { attributes: WaveTrack } {
     const context = {
-        state: 'running', currentTime: 0, destination: {},
+        get state() { return contextState; },
+        currentTime: 0, destination: {},
         createGain: fakeGain,
         createMediaElementSource: (element: HTMLAudioElement) => {
             deck = element;
@@ -128,6 +131,8 @@ beforeEach(() => {
     deckPlaying = false;
     deckTime = 0;
     hasNext = true;
+    contextState = 'running';
+    reports = [];
     options = { edges: true, crossfade: 0 };
     raw = form(5, 190, 5);
     resolveStream = vi.fn(async () => 'https://playback.media-streaming.soundcloud.cloud/x/playlist.m3u8');
@@ -154,7 +159,10 @@ afterEach(() => {
 });
 
 function install() {
-    return installQuiet({ player: () => player, rawSamples: () => raw, resolveStream: (url) => resolveStream(url), held: () => false, options: () => options, disposed: () => false });
+    return installQuiet({
+        player: () => player, rawSamples: () => raw, resolveStream: (url) => resolveStream(url), held: () => false, options: () => options, disposed: () => false,
+        report: (stage, prepMs, leftMs) => { reports.push([stage, prepMs, leftMs]); },
+    });
 }
 
 it('тишина в начале проматывается один раз, тихий хвост проматывается к концу', async () => {
@@ -205,9 +213,91 @@ it('плавный переход: хвост в своём элементе, с
     expect(heard(siteAudio)).toBeCloseTo(0.5);
     expect(deckPlaying).toBe(false);
     expect(deck?.hasAttribute('src')).toBe(false);
+    expect(reports).toHaveLength(1);
+    expect(reports[0][0]).toBe('done');
+    expect(reports[0][2]).toBeGreaterThan(4500);
     section.dispose();
     expect(Object.prototype.hasOwnProperty.call(siteAudio, 'volume')).toBe(false);
     expect(siteAudio.volume).toBe(0.5);
+});
+
+it('перемотка к концу: хвост успевает, переход короче, до передачи громкость полная', async () => {
+    options = { edges: true, crossfade: 12 };
+    // Звук кончается на 195,5 с, переход с 183,5 с. Первый шаг на 186 с: до конца 9,5 с, хвост ещё готовится
+    from = 185500;
+    const section = install();
+    void siteAudio.play();
+    siteAudio.volume = 0.8;
+    await vi.advanceTimersByTimeAsync(800);
+    expect(resolveStream).toHaveBeenCalledOnce();
+    expect(player.playNext).not.toHaveBeenCalled();
+    expect(heard(siteAudio)).toBeCloseTo(0.8);
+    await vi.advanceTimersByTimeAsync(1500);
+    expect(player.playNext).toHaveBeenCalledOnce();
+    expect(reports).toHaveLength(1);
+    const [stage, , left] = reports[0];
+    expect(stage).toBe('done');
+    expect(left).toBeGreaterThan(7000);
+    expect(left).toBeLessThan(9500);
+    // Новый трек набирает громкость за оставшиеся секунды, а не за все двенадцать
+    await vi.advanceTimersByTimeAsync(left + 600);
+    expect(heard(siteAudio)).toBeCloseTo(0.8);
+    section.dispose();
+});
+
+it('перемотка в самый конец: хвост не готовится, трек затихает от этого места без скачка', async () => {
+    options = { edges: true, crossfade: 12 };
+    // Первый шаг на 190 с: до конца звука 5,5 с, на хвост не хватает
+    from = 189500;
+    const section = install();
+    void siteAudio.play();
+    siteAudio.volume = 0.8;
+    await vi.advanceTimersByTimeAsync(520);
+    expect(heard(siteAudio)).toBeCloseTo(0.8, 2);
+    await vi.advanceTimersByTimeAsync(2750);
+    expect(heard(siteAudio)).toBeCloseTo(0.8 * Math.SQRT1_2, 1);
+    expect(resolveStream).not.toHaveBeenCalled();
+    expect(player.playNext).not.toHaveBeenCalled();
+    expect(reports).toEqual([['late', 0, 5500]]);
+    section.dispose();
+});
+
+it('звук сайта ещё спит после паузы: хвост готовится, как только проснётся', async () => {
+    options = { edges: true, crossfade: 5 };
+    contextState = 'suspended';
+    from = 181000;
+    const section = install();
+    void siteAudio.play();
+    await vi.advanceTimersByTimeAsync(1500);
+    expect(resolveStream).not.toHaveBeenCalled();
+    contextState = 'running';
+    await vi.advanceTimersByTimeAsync(1500);
+    expect(resolveStream).toHaveBeenCalledOnce();
+    await vi.advanceTimersByTimeAsync(8000);
+    expect(player.playNext).toHaveBeenCalledOnce();
+    expect(reports[0][0]).toBe('done');
+    section.dispose();
+});
+
+it('хвост не успел к переходу: громкость полная, потом затихание от этого места', async () => {
+    options = { edges: true, crossfade: 5 };
+    // Ссылка на поток не приходит: до конца звука 2,5 с хвост ждут, дальше трек затихает
+    resolveStream = vi.fn(() => new Promise<string | null>(() => undefined));
+    from = 188500;
+    const section = install();
+    void siteAudio.play();
+    siteAudio.volume = 0.8;
+    await vi.advanceTimersByTimeAsync(4380);
+    expect(heard(siteAudio)).toBeCloseTo(0.8);
+    await vi.advanceTimersByTimeAsync(170);
+    expect(heard(siteAudio)).toBeCloseTo(0.8, 1);
+    expect(reports).toHaveLength(1);
+    expect(reports[0][0]).toBe('resolve');
+    expect(reports[0][1]).toBeGreaterThan(3500);
+    await vi.advanceTimersByTimeAsync(1250);
+    expect(heard(siteAudio)).toBeCloseTo(0.8 * Math.SQRT1_2, 1);
+    expect(player.playNext).not.toHaveBeenCalled();
+    section.dispose();
 });
 
 it('потока нет: трек просто затихает к концу звука, новый трек звучит в полную громкость', async () => {
@@ -224,6 +314,21 @@ it('потока нет: трек просто затихает к концу з
     await vi.advanceTimersByTimeAsync(300);
     expect(heard(siteAudio)).toBeCloseTo(0.8);
     expect(section.crossfaded(1)).toBe(false);
+    expect(reports.map(([stage, prepMs]) => [stage, prepMs])).toEqual([['resolve', 0]]);
+    section.dispose();
+});
+
+it('открытого потока нет: хвост не готовится, трек затихает с начала перехода', async () => {
+    options = { edges: true, crossfade: 5 };
+    sound.attributes = { ...streamTrack(1), track_authorization: undefined } as WaveTrack;
+    from = 185000;
+    const section = install();
+    void siteAudio.play();
+    await vi.advanceTimersByTimeAsync(8000);
+    expect(resolveStream).not.toHaveBeenCalled();
+    expect(deck).toBeNull();
+    expect(heard(siteAudio)).toBeCloseTo(Math.SQRT1_2, 1);
+    expect(reports.map(([stage, prepMs]) => [stage, prepMs])).toEqual([['no-stream', 0]]);
     section.dispose();
 });
 

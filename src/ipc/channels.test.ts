@@ -14,7 +14,7 @@ import { registerWindowIpc } from './windowIpc';
 const LISTENERS = [
     'add-account', 'apply-changes', 'cancel-refresh', 'close-window', 'logout-account', 'maximize-window', 'minimize-window', 'navigate-back', 'navigate-forward',
     'refresh-page', 'setting-changed', 'soundcloud:early-blocks', 'soundcloud:open-history', 'soundcloud:playback', 'soundcloud:player-area',
-    'soundcloud:profile-update', 'soundcloud:site-state', 'soundcloud:site-translation', 'soundcloud:track-meta', 'soundcloud:track-update', 'soundcloud:wave-empty',
+    'soundcloud:profile-update', 'soundcloud:site-state', 'soundcloud:site-translation', 'soundcloud:track-meta', 'soundcloud:track-update', 'soundcloud:wave-crossfade', 'soundcloud:wave-empty',
     'soundcloud:wave-journal:add', 'soundcloud:wave-signals:add', 'switch-account', 'title-bar-double-click', 'toggle-history', 'toggle-queue', 'toggle-settings',
     'update-screen-later',
 ];
@@ -47,6 +47,6 @@ describe('каналы обработчиков', () => {
         expect([...ipc.listeners.keys()].sort()).toEqual([...LISTENERS].sort());
         expect([...ipc.handlers.keys()].sort()).toEqual([...HANDLERS].sort());
         expect([...ipc.listeners.values()].every((list) => list.length === 1)).toBe(true);
-        expect(LISTENERS.length + HANDLERS.length).toBe(83);
+        expect(LISTENERS.length + HANDLERS.length).toBe(84);
     });
 });

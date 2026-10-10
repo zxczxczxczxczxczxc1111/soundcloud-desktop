@@ -303,6 +303,10 @@ contextBridge.exposeInMainWorld('soundcloudAPI', {
     reportWaveEmpty: (counts: unknown) => {
         ipcRenderer.send('soundcloud:wave-empty', counts);
     },
+    // Чем кончился плавный переход: шаг и два числа в журнал диагностики, проверяет main
+    reportCrossfade: (entry: unknown) => {
+        ipcRenderer.send('soundcloud:wave-crossfade', entry);
+    },
     // Сайт поменялся: чего страница не нашла (плеер, API, модель трека, перевод); флаги проверяет main
     reportSite: (state: unknown) => {
         ipcRenderer.send('soundcloud:site-state', state);

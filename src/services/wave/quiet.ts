@@ -17,6 +17,11 @@ import type { WaveTrack } from '../waveTypes';
 export interface QuietBounds { introEnd: number; loudEnd: number }
 /** edges: тишина в начале и конце проматывается; crossfade: длина плавного перехода, с, 0 выключает */
 export interface QuietOptions { edges: boolean; crossfade: number }
+/** Чем кончился переход для журнала диагностики: done прошёл, остальное причина, по которой трек просто затих.
+ *  late: перемотали слишком близко к концу; no-stream: открытого потока нет; no-audio: звук сайта не найден или спит;
+ *  resolve, load, length, seek, start: шаг подготовки хвоста, на котором она сорвалась; sync: хвост не сошёлся */
+export const CROSSFADE_STAGES = ['done', 'late', 'no-stream', 'no-audio', 'resolve', 'load', 'length', 'seek', 'start', 'sync'] as const;
+export type CrossfadeStage = (typeof CROSSFADE_STAGES)[number];
 
 /** Настройки с main: длина перехода целая от 1 до 12 с, всё прочее значит выключено */
 export function quietOptionsOf(value: unknown): QuietOptions {
@@ -72,6 +77,8 @@ export interface QuietCore {
     held(): boolean;
     options(): QuietOptions;
     disposed(): boolean;
+    /** Исход перехода, раз на трек: сколько готовился хвост и сколько оставалось до конца звука, мс */
+    report(stage: CrossfadeStage, prepMs: number, leftMs: number): void;
 }
 export interface QuietSection {
     /** Трек сменился плавным переходом за секунды до конца: для журнала он дослушан */
@@ -92,12 +99,21 @@ export function installQuiet(core: QuietCore): QuietSection {
     // последних замеров не больше 8 мс: при передаче за 30 мс такой сдвиг не слышен
     const START_LAG = 0.06;
     const SYNCED = 0.008;
+    // Хвост готовится 2-4 с (замер 10.10, с задержкой сети 400 мс 4,4 с). После перемотки близко к концу переход
+    // короче, но не короче половины своей длины и полутора секунд: подготовка начинается, пока до конца звука есть
+    // такой переход и ещё 3 с
+    const MIN_MIX = 1500;
+    const PREP_TIME = 3000;
 
     interface SiteAudio { context: AudioContext; gain: GainNode; element: HTMLMediaElement | null }
     interface Deck { context: AudioContext; element: HTMLAudioElement; gain: GainNode; busy: boolean }
     // load: поток грузится; sync: свой элемент играет без звука и подгоняется; ready: сошёлся; out: хвост после передачи
     // readings: последние расхождения с треком сайта, с; stable: шагов подряд в допуске; calm: шагов подряд со скоростью 1
-    interface Tail { deck: Deck; site: SiteAudio; end: number; phase: 'load' | 'sync' | 'ready' | 'out'; readings: number[]; stable: number; calm: number; until: number }
+    // stage: шаг подготовки для журнала; begun и ready: начало подготовки и первая готовность, performance.now()
+    interface Tail {
+        deck: Deck; site: SiteAudio; end: number; phase: 'load' | 'sync' | 'ready' | 'out'; readings: number[]; stable: number; calm: number; until: number;
+        stage: CrossfadeStage; begun: number; ready: number;
+    }
     interface Incoming { from: number; to: number; at: number; started: number; length: number; tail: Tail }
 
     const own = new WeakSet<HTMLMediaElement>();
@@ -117,6 +133,10 @@ export function installQuiet(core: QuietCore): QuietSection {
     let introDone = false;
     let tailDone = false;
     let tried = false;
+    // Позиция, с которой трек затихает без хвоста, 0 пока не затихает. Причина для журнала и отметка, что исход записан
+    let fadeFrom = 0;
+    let miss: CrossfadeStage | null = null;
+    let reported = false;
     let timer: ReturnType<typeof setTimeout> | undefined;
     const originalPlay = HTMLMediaElement.prototype.play;
     // Элемент сайта живёт вне документа, поэтому ловится при запуске. Свои элементы хвоста не в счёт
@@ -257,6 +277,15 @@ export function installQuiet(core: QuietCore): QuietSection {
         crossfadedIds.push(id);
         if (crossfadedIds.length > 20) crossfadedIds.shift();
     }
+    function outcome(stage: CrossfadeStage, prepMs: number, leftMs: number): void {
+        if (reported) return;
+        reported = true;
+        try {
+            core.report(stage, Math.max(0, Math.round(prepMs)), Math.max(0, Math.round(leftMs)));
+        } catch (error) {
+            console.warn('Плавный переход: исход не записан', error);
+        }
+    }
 
     function withTimeout<T>(promise: Promise<T>, ms: number, what: string): Promise<T> {
         return Promise.race([promise, sleep(ms).then((): T => { throw new Error('Тайм-аут: ' + what); })]);
@@ -268,23 +297,41 @@ export function installQuiet(core: QuietCore): QuietSection {
             await sleep(10);
         }
     }
+    // Откуда брать хвост: открытый поток трека и цепочка Web Audio сайта, которая сейчас звучит. null значит не сейчас,
+    // и следующий шаг спросит снова: после паузы контекст сайта просыпается не сразу (замер 10.10: трек уже играет, а
+    // контекст ещё 20 мс suspended)
+    function tailSource(sound: SiteSound): { site: SiteAudio; api: string } | null {
+        const track = sound.attributes;
+        const api = track ? openStream(track) : null;
+        if (!api) {
+            miss = 'no-stream';
+            return null;
+        }
+        const site = siteAudioOf(sound);
+        if (!site || site.context.state !== 'running') {
+            miss = 'no-audio';
+            return null;
+        }
+        return { site, api };
+    }
     // Хвост играющего трека: поток грузится в свой элемент, встаёт на позицию чуть впереди и запускается без звука, когда
     // трек у сайта до неё дойдёт. Дальше его подгоняет скоростью syncTail
-    async function prepare(sound: SiteSound, end: number): Promise<void> {
-        const track = sound.attributes;
-        const site = siteAudioOf(sound);
-        const api = track ? openStream(track) : null;
-        if (!site || !api || site.context.state !== 'running') return;
+    async function prepare(sound: SiteSound, end: number, source: { site: SiteAudio; api: string }): Promise<void> {
+        const { site, api } = source;
         if (!media && site.element instanceof HTMLAudioElement) watch(site.element);
         let deck: Deck | null;
         try {
             deck = deckFor(site.context);
         } catch (error) {
+            miss = 'no-audio';
             console.warn('Плавный переход: свой элемент не подключился к звуку сайта', error);
             return;
         }
-        if (!deck) return;
-        const current: Tail = { deck, site, end, phase: 'load', readings: [], stable: 0, calm: 0, until: 0 };
+        if (!deck) {
+            miss = 'no-audio';
+            return;
+        }
+        const current: Tail = { deck, site, end, phase: 'load', readings: [], stable: 0, calm: 0, until: 0, stage: 'resolve', begun: performance.now(), ready: 0 };
         tail = current;
         const stale = (): boolean => tail !== current || core.disposed();
         try {
@@ -292,16 +339,29 @@ export function installQuiet(core: QuietCore): QuietSection {
             if (stale()) return;
             if (!url) throw new Error('API не дал ссылку на поток');
             const element = deck.element;
+            current.stage = 'load';
             element.src = url;
             await until(() => element.readyState >= 1 || element.error !== null, 8000, 'данные потока');
             if (stale()) return;
             if (element.error) throw new Error('поток не играет: ' + element.error.message);
             // Поток не тот, что играет сайт (например, отрывок вместо целого трека)
+            current.stage = 'length';
             if (Math.abs(element.duration * 1000 - durationOf(sound)) > 1500) throw new Error('длина потока ' + element.duration + ' с');
-            const target = positionOf(sound) / 1000 + 0.6;
-            element.currentTime = target;
-            await until(() => element.readyState >= 3 && !element.seeking, 5000, 'перемотка потока');
-            if (stale()) return;
+            // Перемотка шла дольше запаса, и трек у сайта уже прошёл это место: ещё раз с запасом побольше, кусок потока
+            // к этому времени уже скачан. Иначе хвост стартует позади и догоняет на 4% скорости дольше, чем есть времени
+            current.stage = 'seek';
+            let lead = 0.6;
+            let target = 0;
+            for (let attempt = 0; ; attempt++) {
+                const began = performance.now();
+                target = positionOf(sound) / 1000 + lead;
+                element.currentTime = target;
+                await until(() => element.readyState >= 3 && !element.seeking, 5000, 'перемотка потока');
+                if (stale()) return;
+                if (positionOf(sound) / 1000 < target - START_LAG - 0.02 || attempt >= 2) break;
+                lead = Math.max(lead, ((performance.now() - began) / 1000) * 2 + 0.3);
+            }
+            current.stage = 'start';
             const left = (target - START_LAG - positionOf(sound) / 1000) * 1000;
             if (left > 20) await sleep(left - 15);
             await until(() => positionOf(sound) / 1000 >= target - START_LAG, 2000, 'позиция сайта');
@@ -311,9 +371,11 @@ export function installQuiet(core: QuietCore): QuietSection {
             element.playbackRate = 1;
             await element.play();
             if (stale()) return;
+            current.stage = 'sync';
             current.phase = 'sync';
         } catch (error) {
             if (stale()) return;
+            miss = current.stage;
             dropTail();
             console.warn('Плавный переход: хвост не готов, трек просто затихнет', error);
         }
@@ -331,6 +393,7 @@ export function installQuiet(core: QuietCore): QuietSection {
         const middle = item.readings.slice().sort((a, b) => a - b)[Math.floor(item.readings.length / 2)];
         // Перемотка человеком или поток встал: хвост этого места больше не годится
         if (Math.abs(middle) > 1 || element.paused || element.ended) {
+            miss = 'sync';
             dropTail();
             tried = false;
             return;
@@ -344,8 +407,10 @@ export function installQuiet(core: QuietCore): QuietSection {
         const recent = item.readings.slice(-3).reduce((sum, value) => sum + value, 0) / Math.min(3, item.readings.length);
         const settled = item.readings.length >= 5 && Math.abs(middle) <= SYNCED && Math.abs(recent) <= SYNCED * 2 && item.calm >= 10;
         item.stable = settled ? item.stable + 1 : 0;
-        if (item.stable >= 6) item.phase = 'ready';
-        else if (!settled) item.phase = 'sync';
+        if (item.stable >= 6) {
+            item.phase = 'ready';
+            if (!item.ready) item.ready = performance.now();
+        } else if (!settled) item.phase = 'sync';
     }
     // Передача хвоста: регулятор сайта уходит в ноль, свой поднимается, оба на звуковом потоке за 30 мс. Следующий трек
     // включается на следующем шаге, когда передача закончится
@@ -460,6 +525,9 @@ export function installQuiet(core: QuietCore): QuietSection {
             introDone = false;
             tailDone = false;
             tried = false;
+            fadeFrom = 0;
+            miss = null;
+            reported = false;
             dropTail();
             if (!incoming) setLevel(1);
         }
@@ -488,25 +556,46 @@ export function installQuiet(core: QuietCore): QuietSection {
         const from = end - length;
         const crossfade = length > 0 && duration >= 30000 && from >= 10000 && typeof player.playNext === 'function' && player.hasNextSound?.() === true && !repeatOne() && !core.held();
         if (crossfade && !incoming) {
-            if (!tail && !tried && position >= from - PREPARE && position < from - 1500) {
-                tried = true;
-                void prepare(sound, end);
+            const left = end - position;
+            const shortest = Math.min(length, Math.max(MIN_MIX, length / 2));
+            // Перемотка назад, раньше окна подготовки: на подходе к концу хвост готовится заново
+            if (position < from - PREPARE) {
+                dropTail();
+                tried = false;
+                miss = null;
+                reported = false;
+            }
+            if (!tail && !tried && position >= from - PREPARE && position < end) {
+                const source = tailSource(sound);
+                if (source && left >= shortest + PREP_TIME) {
+                    tried = true;
+                    void prepare(sound, end, source);
+                } else if (source) miss = 'late';
             }
             if (tail) syncTail(tail, position);
             if (position >= from && position < end) {
-                if (tail?.phase === 'ready') {
-                    handoff(tail, length);
+                // Хвост сошёлся: передача. После поздней перемотки переход короче, на сколько осталось до конца звука
+                if (tail?.phase === 'ready' && left >= shortest) {
+                    outcome('done', tail.ready - tail.begun, left);
+                    handoff(tail, Math.min(length, left));
                     return 10;
                 }
-                // Подгонка сбилась прямо перед переходом: до полутора секунд ждём, громкость пока полная
-                if (tail?.phase === 'sync' && level === 1 && position < from + 1500) return 30;
-                // Хвост не готов к началу перехода: трек просто затихает к концу звука, поздней передачи не будет
+                // Хвост ещё готовится: громкость полная, пока до конца звука хватает на короткий переход
+                if (tail && !fadeFrom && left > shortest) return 30;
+                // Хвоста не будет: трек затихает к концу звука от начала перехода, а если хвост сорвался позже, то от этого места
                 tried = true;
+                if (!fadeFrom) {
+                    fadeFrom = position < from + 300 ? from : position;
+                    outcome(tail?.stage ?? miss ?? 'late', tail ? performance.now() - tail.begun : 0, left);
+                }
                 dropTail();
-                setLevel(Math.cos(Math.min(1, (position - from) / length) * (Math.PI / 2)));
+                setLevel(Math.cos(Math.min(1, (position - fadeFrom) / Math.max(1, end - fadeFrom)) * (Math.PI / 2)));
                 return 40;
             }
-            if (position < from) setLevel(1);
+            if (position < from) {
+                fadeFrom = 0;
+                setLevel(1);
+            }
         } else {
             dropTail();
             if (!incoming) setLevel(1);
@@ -519,7 +608,10 @@ export function installQuiet(core: QuietCore): QuietSection {
         if (incoming || tail) return 30;
         // Хвост после перехода ещё звучит: громкость за ползунком и снятие в срок
         if (fading.length) return 100;
-        if (crossfade && position < from - PREPARE) return Math.max(250, Math.min(1000, from - PREPARE - position));
+        // Перемотку к концу шаг замечает не позже чем через полсекунды: каждая доля секунды идёт на подготовку хвоста
+        if (crossfade && position < from - PREPARE) return Math.max(250, Math.min(500, from - PREPARE - position));
+        // Хвоста нет: шаг к началу перехода, затихание начинается вовремя
+        if (crossfade && position < from) return Math.max(30, Math.min(250, from - position));
         return silentTail && end - position > 1000 ? Math.min(1000, end - position - 500) : 250;
     }
     // Всё своё снимается, звук сайту возвращается целиком

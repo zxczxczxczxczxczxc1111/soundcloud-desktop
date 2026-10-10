@@ -1,12 +1,15 @@
 import { appendFileSync, existsSync, mkdirSync, readFileSync, renameSync, statSync, unlinkSync, writeFileSync } from 'fs';
 import { join, resolve } from 'path';
 import { BACKUP_REASONS } from './backupPolicy';
+import { CROSSFADE_STAGES } from './wave/quiet';
 
-const events = new Set(['session.start', 'session.end', 'performance', 'runtime.error', 'runtime.warn', 'renderer.gone', 'renderer.unresponsive', 'renderer.responsive', 'page.loaded', 'page.load-failed', 'page.soft-navigation', 'system.suspend', 'system.resume', 'gpu.status', 'process.gone', 'wave.empty', 'site.modules-missing', 'backup.saved', 'backup.failed', 'backup.restored', 'backup.restore-failed']);
+const events = new Set(['session.start', 'session.end', 'performance', 'runtime.error', 'runtime.warn', 'renderer.gone', 'renderer.unresponsive', 'renderer.responsive', 'page.loaded', 'page.load-failed', 'page.soft-navigation', 'system.suspend', 'system.resume', 'gpu.status', 'process.gone', 'wave.empty', 'wave.crossfade', 'site.modules-missing', 'backup.saved', 'backup.failed', 'backup.restored', 'backup.restore-failed']);
 const numbers = new Set([
     'cpuPercent', 'workingSetMiB', 'privateMiB', 'processes', 'loopP95Ms', 'loopMaxMs', 'updates', 'trackChanges', 'sinceUpdateMs', 'sinceProgressMs', 'exitCode', 'errorCode', 'line',
-    'droppedEvents', 'uptimeSeconds', 'waveSeen', 'waveArtistTracks', 'waveMoodTags', 'backupMs', 'backupKiB',
+    'droppedEvents', 'uptimeSeconds', 'waveSeen', 'waveArtistTracks', 'waveMoodTags', 'backupMs', 'backupKiB', 'prepMs', 'leftMs',
 ]);
+// Шаг плавного перехода: код из списка, без трека
+const crossfadeStages = new Set<string>(CROSSFADE_STAGES);
 const flags = new Set(['playing', 'hasTrack', 'windowVisible', 'windowMinimized', 'settingsOpen', 'previousUnclean', 'adblock', 'proxy', 'dirty', 'discord', 'githubBadge', 'gpuInProcess', 'gpuAuto', 'gpuNvidiaDetected', 'gpuFallback', 'auto',
     'sitePlayer', 'siteApi', 'siteSound', 'siteTranslation']);
 // Причины отказа резервной копии: код без пути и содержимого файла
@@ -40,6 +43,7 @@ export function safeFields(input: Fields): Fields {
         if (numbers.has(key) && typeof value === 'number' && Number.isFinite(value)) result[key] = Math.round(value * 100) / 100;
         else if (flags.has(key) && typeof value === 'boolean') result[key] = value;
         else if (key === 'reason' && typeof value === 'string' && reasons.has(value)) result[key] = value;
+        else if (key === 'stage' && typeof value === 'string' && crossfadeStages.has(value)) result[key] = value;
         else if (key === 'errorType' && typeof value === 'string' && errorTypes.has(value)) result[key] = value;
         else if (key === 'component' && typeof value === 'string' && sourceFiles.has(value)) result[key] = value;
         else if (['version', 'electron', 'chrome', 'node', 'os'].includes(key) && typeof value === 'string' && /^\d[\d.a-z+-]{0,50}$/i.test(value)) result[key] = value;

@@ -178,6 +178,7 @@ export interface WaveWindow extends Window {
             state(): Promise<unknown>;
         };
         reportWaveEmpty?(counts: { seen: number; artistTracks: number; moodTags: number }): void;
+        reportCrossfade?(entry: { stage: string; prepMs: number; leftMs: number }): void;
         // Сайт поменялся: чего страница не нашла; после находки то же сообщение снимает отметку
         reportSite?(state: SiteState): void;
         sendTrackMeta?(meta: TrackMeta): void;
@@ -717,6 +718,7 @@ export function installWave(config: WaveConfig, createPlayback: typeof installPl
         held: () => scoutSection.active(),
         options: () => quietOptions,
         disposed: () => disposed,
+        report: (stage, prepMs, leftMs) => host.soundcloudAPI?.reportCrossfade?.({ stage, prepMs, leftMs }),
     });
     // Разведка (Ф4): карточка находок играет треки по 20 секунд с лучшего места
     const scoutSection = installScout({
