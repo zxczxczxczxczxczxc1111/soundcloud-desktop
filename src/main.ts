@@ -12,6 +12,7 @@ import { ARTIST_TOOLS_CSS, pageFeaturesScript } from './services/pageFeatures';
 import { fullShuffleScript } from './services/fullShuffle';
 import { homeBlockDefaults, homeBlocksCss, homePageScript, isHomeBlockKey } from './services/homeBlocks';
 import { waveQuietScript, waveScript } from './services/wave';
+import { quietOptionsOf, type QuietOptions } from './services/wave/quiet';
 import { pageMotionScript } from './services/pageMotion';
 import { playerAreaScript } from './services/playerArea';
 import { searchLinkScript } from './services/searchLink';
@@ -150,7 +151,8 @@ const store = new Store<Record<string, unknown>>({
         hideHeaderExtras: true,
         fullShuffle: true,
         quietEdges: true,
-        softEnd: true,
+        crossfade: true,
+        crossfadeSeconds: 5,
         reduceMotion: false,
         siteLanguage: 'ru',
         ...homeBlockDefaults,
@@ -456,9 +458,10 @@ function buildTrayMenu(): Menu {
     ]);
 }
 
-// Тихое начало и конец трека, затухание громкого конца (Ф2): из F1 в волну
-function quietOptions(): { edges: boolean; fade: boolean } {
-    return { edges: store.get('quietEdges', true) !== false, fade: store.get('softEnd', true) !== false };
+// Тихие края трека и плавный переход: из F1 в волну. Выключенный переход уходит длиной 0
+function quietOptions(): QuietOptions {
+    const seconds = store.get('crossfadeSeconds', 5);
+    return quietOptionsOf({ edges: store.get('quietEdges', true) !== false, crossfade: store.get('crossfade', true) !== false ? seconds : 0 });
 }
 
 // Карточка Discord для предпросмотра в F1: трек и то, что из него собрала presenceService
@@ -1273,7 +1276,7 @@ async function init() {
             void contentView.webContents.executeJavaScript(fullShuffleScript(data.value === true)).catch(console.error);
         } else if (key === 'reduceMotion') {
             void contentView.webContents.executeJavaScript(pageMotionScript(data.value === true)).catch(console.error);
-        } else if (key === 'quietEdges' || key === 'softEnd') {
+        } else if (key === 'quietEdges' || key === 'crossfade' || key === 'crossfadeSeconds') {
             void contentView.webContents.executeJavaScript(waveQuietScript(quietOptions())).catch(console.error);
         }
         // Предпросмотр карточки в F1 собирает main: шаблоны, стоп-листы, строка под ником, язык чисел

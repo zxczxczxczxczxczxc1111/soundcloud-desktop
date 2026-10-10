@@ -14,7 +14,7 @@ export const BACKUP_SETTING_KEYS: readonly string[] = [
     'adBlocker', 'proxyEnabled', 'proxyHost', 'proxyPort', 'proxyUsername', 'webhookEnabled', 'webhookTriggerPercentage',
     'discordRichPresence', 'displaySCSmallIcon', 'displayGithubLink', 'displayButtons', 'statusDisplayType', 'discordIncognito', 'richPresencePreviewEnabled',
     'discordLine1', 'discordLine2', 'discordCoverText', 'discordHiddenArtists', 'discordHiddenGenres',
-    'minimizeToTray', 'navigationControlsEnabled', 'trackParserEnabled', 'autoUpdateEnabled', 'reduceMotion', 'fullShuffle', 'quietEdges', 'softEnd', 'siteLanguage',
+    'minimizeToTray', 'navigationControlsEnabled', 'trackParserEnabled', 'autoUpdateEnabled', 'reduceMotion', 'fullShuffle', 'quietEdges', 'crossfade', 'crossfadeSeconds', 'siteLanguage',
     'hidePromotions', 'hideEventsNearYou', 'hideArtistUpsells', 'hideHeaderExtras', ...HOME_BLOCK_KEYS, 'radarDay', 'radarTime', 'radarZone', 'myMusic',
 ];
 /** Отметки переноса настроек: без них перенос при следующем запуске затёр бы восстановленное */

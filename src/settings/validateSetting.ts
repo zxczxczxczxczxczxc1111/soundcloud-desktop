@@ -3,13 +3,13 @@ import { isGpuCompatibilityMode, type GpuCompatibilityMode } from '../services/g
 import { isRadarDay, isRadarTime, isTimeZone } from '../services/radarSchedule';
 import { isMyMusicSetting, type MyMusicSetting } from '../services/libraryMix';
 
-const booleanKeys = new Set(['adBlocker', 'proxyEnabled', 'webhookEnabled', 'displaySCSmallIcon', 'displayGithubLink', 'discordRichPresence', 'displayButtons', 'minimizeToTray', 'navigationControlsEnabled', 'trackParserEnabled', 'richPresencePreviewEnabled', 'hidePromotions', 'hideEventsNearYou', 'hideArtistUpsells', 'hideHeaderExtras', 'fullShuffle', 'quietEdges', 'softEnd', 'autoUpdateEnabled', 'discordIncognito', 'reduceMotion', ...HOME_BLOCK_KEYS]);
-type BooleanKey = 'adBlocker' | 'proxyEnabled' | 'webhookEnabled' | 'displaySCSmallIcon' | 'displayGithubLink' | 'discordRichPresence' | 'displayButtons' | 'minimizeToTray' | 'navigationControlsEnabled' | 'trackParserEnabled' | 'richPresencePreviewEnabled' | 'hidePromotions' | 'hideEventsNearYou' | 'hideArtistUpsells' | 'hideHeaderExtras' | 'fullShuffle' | 'quietEdges' | 'softEnd' | 'autoUpdateEnabled' | 'discordIncognito' | 'reduceMotion' | HomeBlockKey;
+const booleanKeys = new Set(['adBlocker', 'proxyEnabled', 'webhookEnabled', 'displaySCSmallIcon', 'displayGithubLink', 'discordRichPresence', 'displayButtons', 'minimizeToTray', 'navigationControlsEnabled', 'trackParserEnabled', 'richPresencePreviewEnabled', 'hidePromotions', 'hideEventsNearYou', 'hideArtistUpsells', 'hideHeaderExtras', 'fullShuffle', 'quietEdges', 'crossfade', 'autoUpdateEnabled', 'discordIncognito', 'reduceMotion', ...HOME_BLOCK_KEYS]);
+type BooleanKey = 'adBlocker' | 'proxyEnabled' | 'webhookEnabled' | 'displaySCSmallIcon' | 'displayGithubLink' | 'discordRichPresence' | 'displayButtons' | 'minimizeToTray' | 'navigationControlsEnabled' | 'trackParserEnabled' | 'richPresencePreviewEnabled' | 'hidePromotions' | 'hideEventsNearYou' | 'hideArtistUpsells' | 'hideHeaderExtras' | 'fullShuffle' | 'quietEdges' | 'crossfade' | 'autoUpdateEnabled' | 'discordIncognito' | 'reduceMotion' | HomeBlockKey;
 type StringKey = 'proxyHost' | 'proxyPort' | 'proxyUsername' | 'proxyPassword' | 'webhookUrl' | DiscordTextKey;
 /** Шаблоны строк карточки Discord и стоп-листы артистов и жанров */
 export type DiscordTextKey = 'discordLine1' | 'discordLine2' | 'discordCoverText' | 'discordHiddenArtists' | 'discordHiddenGenres';
 export const DISCORD_TEXT_KEYS: ReadonlySet<string> = new Set<DiscordTextKey>(['discordLine1', 'discordLine2', 'discordCoverText', 'discordHiddenArtists', 'discordHiddenGenres']);
-export type SettingChange = { key: BooleanKey; value: boolean } | { key: StringKey; value: string } | { key: 'webhookTriggerPercentage' | 'statusDisplayType'; value: number } | { key: 'siteLanguage'; value: 'ru' | 'en' } | { key: 'gpuCompatibilityMode'; value: GpuCompatibilityMode }
+export type SettingChange = { key: BooleanKey; value: boolean } | { key: StringKey; value: string } | { key: 'webhookTriggerPercentage' | 'statusDisplayType' | 'crossfadeSeconds'; value: number } | { key: 'siteLanguage'; value: 'ru' | 'en' } | { key: 'gpuCompatibilityMode'; value: GpuCompatibilityMode }
     | { key: 'radarDay'; value: number } | { key: 'radarTime' | 'radarZone'; value: string } | { key: 'myMusic'; value: MyMusicSetting };
 
 export function validateSettingChange(input: unknown): input is SettingChange {
@@ -21,6 +21,8 @@ export function validateSettingChange(input: unknown): input is SettingChange {
     if (key === 'siteLanguage') return value === 'ru' || value === 'en';
     if (key === 'statusDisplayType') return value === 0 || value === 1 || value === 2;
     if (key === 'webhookTriggerPercentage') return typeof value === 'number' && Number.isFinite(value) && value >= 0 && value <= 100;
+    // Длина плавного перехода, целые секунды
+    if (key === 'crossfadeSeconds') return Number.isInteger(value) && (value as number) >= 1 && (value as number) <= 12;
     // Расписание радара: день недели, время «ЧЧ:ММ» и IANA-зона
     if (key === 'radarDay') return isRadarDay(value);
     if (key === 'radarTime') return isRadarTime(value);

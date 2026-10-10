@@ -54,7 +54,7 @@ const { installLibrary } = librarySectionModule;
 const { installRadar } = radarSectionModule;
 const { installShelf } = shelfSectionModule;
 const { installMenu } = menuSectionModule;
-const { installQuiet, quietBounds } = quietSectionModule;
+const { installQuiet, quietBounds, openStream, quietOptionsOf } = quietSectionModule;
 const { installScout, scoutStart } = scoutSectionModule;
 const { glowPalette } = glowModule;
 const { installSources, relatedArtistsOf, scMixesOf, likedOwner, likersOf, tasteNeighbors, likedTracksOf, neighborLikes, interleaveMixes } = waveSourcesModule;
@@ -106,9 +106,14 @@ export interface SitePlayer {
     setCurrentItem(item: SiteQueueItem, options: object): void;
     getState(name: string): unknown;
     toggleState(name: string, value: boolean): void;
+    /** Следующий трек так же, как в конце трека: повтор, автоплей и реклама по правилам сайта */
+    playNext?(options?: object): void;
+    hasNextSound?(): boolean;
 }
 interface SiteApi {
     callEndpoint(name: string, path: object, query: object): Promise<{ status?: number; body?: unknown }>;
+    /** Запрос по готовой ссылке с правилами конечной точки name: ключ клиента и вход подставляет сайт */
+    callEndpointByUrl(name: string, url: string): Promise<{ status?: number; body?: unknown }>;
 }
 interface WaveJournalApi {
     load(userId: number): Promise<unknown>;
@@ -184,7 +189,7 @@ interface WaveConfig {
     /** Музыка в этом запуске клиента уже звучала: сессия, сохранённая во время игры, продолжает играть (страница упала
      * или перезагружена). Сразу после запуска клиента сессия встаёт на паузу, чтобы не встречать громкой музыкой */
     resume: boolean;
-    /** Тихое начало и конец трека, затухание громкого конца (Ф2): настройки F1, дальше приходят через __scQuietOptions */
+    /** Тихие края трека и плавный переход: настройки F1, дальше приходят через __scQuietOptions */
     quiet: QuietOptions;
 }
 
@@ -694,13 +699,25 @@ export function installWave(config: WaveConfig, createPlayback: typeof installPl
             return Number.isInteger(index) && index >= 0 ? shelfSection.genreOf(index) : '';
         },
     });
-    // Тихое начало и мягкий конец (Ф2): F1 меняет настройки без перезагрузки страницы
-    let quietOptions: QuietOptions = { edges: config.quiet?.edges !== false, fade: config.quiet?.fade !== false };
+    // Тихие края и плавный переход: F1 меняет настройки без перезагрузки страницы
+    let quietOptions: QuietOptions = quietOptionsOf(config.quiet);
     host.__scQuietOptions = (value: unknown) => {
-        const next = value as Partial<Record<keyof QuietOptions, unknown>> | null;
-        if (next && typeof next === 'object') quietOptions = { edges: next.edges !== false, fade: next.fade !== false };
+        if (value && typeof value === 'object') quietOptions = quietOptionsOf(value);
     };
-    const quietSection = installQuiet({ player: () => player, rawSamples: (track) => waveformOf(track)?.raw ?? null, options: () => quietOptions, disposed: () => disposed });
+    const quietSection = installQuiet({
+        player: () => player,
+        rawSamples: (track) => waveformOf(track)?.raw ?? null,
+        resolveStream: async (url) => {
+            if (!api) return null;
+            const result = await Promise.race([api.callEndpointByUrl('resolve', url), wait(8000).then(() => { throw new Error('Тайм-аут ссылки на поток'); })]);
+            const body = result.body as { url?: unknown } | null | undefined;
+            return typeof body?.url === 'string' && /^https:\/\//.test(body.url) ? body.url : null;
+        },
+        // Разведка сама сменяет треки по 20 секунд
+        held: () => scoutSection.active(),
+        options: () => quietOptions,
+        disposed: () => disposed,
+    });
     // Разведка (Ф4): карточка находок играет треки по 20 секунд с лучшего места
     const scoutSection = installScout({
         texts: T,
@@ -2834,7 +2851,8 @@ export function installWave(config: WaveConfig, createPlayback: typeof installPl
                 fastRun = 0;
             }
             jumped = false;
-            finishPlay(undefined, byUser);
+            // Плавный переход сменил трек за секунды до конца звука: он дослушан, даже если до конца больше 15 секунд тишины
+            finishPlay(quietSection.crossfaded(currentId) ? 'done' : undefined, byUser);
             currentId = id;
             currentSince = Date.now();
             currentPosition = 0;
@@ -4941,15 +4959,15 @@ const pageHelpers = [
     artworkUrl, coversOf, formatTime, playEnd, siteSource, moodTags, trackPath, localDay, countText, tasteGroups, capPerArtist, forgottenPicks, daySample, artistNames, performerNames, sharedPerformer, isNewArtist, spreadBy, pickFinds,
     moodList, moodDictionary, trackMood, playlistMood, artistMoods, neighborMood, moodScore,
     ...identity.identityHelpers, ...sources.sourceHelpers, ...libraryMix.libraryHelpers, siteRequires, installPlaybackPage, installPlaybackRecovery,
-    installVersions, installLibrary, installRadar, installShelf, installMenu, installQuiet, quietBounds, installScout, scoutStart, glowPalette, installSources, relatedArtistsOf, scMixesOf, likedOwner, likersOf, tasteNeighbors, likedTracksOf, neighborLikes, interleaveMixes,
+    installVersions, installLibrary, installRadar, installShelf, installMenu, installQuiet, quietBounds, openStream, quietOptionsOf, installScout, scoutStart, glowPalette, installSources, relatedArtistsOf, scMixesOf, likedOwner, likersOf, tasteNeighbors, likedTracksOf, neighborLikes, interleaveMixes,
 ];
 
-/** Смена настроек тихих краёв трека в F1: страница подхватывает без перезагрузки */
+/** Смена настроек тихих краёв и плавного перехода в F1: страница подхватывает без перезагрузки */
 export function waveQuietScript(quiet: QuietOptions): string {
-    return 'window.__scQuietOptions && window.__scQuietOptions(' + JSON.stringify({ edges: quiet.edges === true, fade: quiet.fade === true }) + ')';
+    return 'window.__scQuietOptions && window.__scQuietOptions(' + JSON.stringify(quietOptionsOf(quiet)) + ')';
 }
 
-export function waveScript(resume = false, quiet: QuietOptions = { edges: true, fade: true }): string {
+export function waveScript(resume = false, quiet: QuietOptions = { edges: true, crossfade: 5 }): string {
     const config: WaveConfig = { texts: WAVE_TEXTS, resume, quiet };
     return '(function(){\n' + pageHelpers.map((helper) => helper.toString()).join('\n') + '\n(' + installWave.toString() + ')(' + JSON.stringify(config) + ', installPlaybackPage, installPlaybackRecovery);\n})();';
 }

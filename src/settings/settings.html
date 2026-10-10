@@ -78,9 +78,26 @@
                             <span class="toggle"><input type="checkbox" id="quietEdges" /><span class="slider"></span></span>
                         </label>
                         <label class="row">
-                            <span class="text"><span>Мягкий конец трека</span><span class="hint">Трек, который обрывается громко, плавно затихает в последние секунды</span></span>
-                            <span class="toggle"><input type="checkbox" id="softEnd" /><span class="slider"></span></span>
+                            <span class="text"><span>Плавный переход между треками</span><span class="hint">Последние секунды трека затихают, следующий вступает поверх них</span></span>
+                            <span class="toggle"><input type="checkbox" id="crossfade" /><span class="slider"></span></span>
                         </label>
+                        <div class="row">
+                            <span class="text">Длина перехода</span>
+                            <select id="crossfadeSeconds" class="input" aria-label="Длина перехода">
+                                <option value="1">1 с</option>
+                                <option value="2">2 с</option>
+                                <option value="3">3 с</option>
+                                <option value="4">4 с</option>
+                                <option value="5">5 с</option>
+                                <option value="6">6 с</option>
+                                <option value="7">7 с</option>
+                                <option value="8">8 с</option>
+                                <option value="9">9 с</option>
+                                <option value="10">10 с</option>
+                                <option value="11">11 с</option>
+                                <option value="12">12 с</option>
+                            </select>
+                        </div>
                     </section>
 
                     <section class="section" id="home" hidden>

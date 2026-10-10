@@ -286,6 +286,7 @@ async function initializeSettings() {
         radarZone.appendChild(option);
     }
     radarZone.value = initial.radarZone || '';
+    document.getElementById('crossfadeSeconds').value = String(initial.crossfadeSeconds ?? 5);
     radarDay.addEventListener('change', () => ipcRenderer.send('setting-changed', { key: 'radarDay', value: Number(radarDay.value) }));
     radarZone.addEventListener('change', () => ipcRenderer.send('setting-changed', { key: 'radarZone', value: radarZone.value }));
     let radarTimeSaved = radarTime.value;
@@ -299,7 +300,7 @@ async function initializeSettings() {
         ipcRenderer.send('setting-changed', { key: 'radarTime', value: radarTime.value });
     });
 
-    for (const id of ['accountSelector', 'siteLanguage', 'gpuCompatibilityMode', 'radarDay', 'radarZone']) {
+    for (const id of ['accountSelector', 'siteLanguage', 'gpuCompatibilityMode', 'radarDay', 'radarZone', 'crossfadeSeconds']) {
         const select = document.getElementById(id);
         if (select) enhanceSelect(select);
     }
@@ -383,11 +384,14 @@ async function initializeSettings() {
     document.getElementById('fullShuffle')?.addEventListener('change', (e) => {
         ipcRenderer.send('setting-changed', { key: 'fullShuffle', value: e.target.checked });
     });
-    for (const key of ['quietEdges', 'softEnd']) {
+    for (const key of ['quietEdges', 'crossfade']) {
         document.getElementById(key)?.addEventListener('change', (e) => {
             ipcRenderer.send('setting-changed', { key, value: e.target.checked });
         });
     }
+    document.getElementById('crossfadeSeconds')?.addEventListener('change', (e) => {
+        ipcRenderer.send('setting-changed', { key: 'crossfadeSeconds', value: Number(e.target.value) });
+    });
     document.getElementById('reduceMotion')?.addEventListener('change', (e) => {
         document.documentElement.classList.toggle('reduce-motion', e.target.checked);
         ipcRenderer.send('setting-changed', { key: 'reduceMotion', value: e.target.checked });
