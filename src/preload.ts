@@ -266,6 +266,9 @@ contextBridge.exposeInMainWorld('soundcloudAPI', {
         radarPlan: (user: number) => ipcRenderer.invoke('soundcloud:recommend:radarPlan', user),
         catalogChecked: (user: number, key: string, label: string, status: string, error: string, found: number) =>
             ipcRenderer.invoke('soundcloud:recommend:catalogChecked', user, key, label, status, error, found),
+        // Найденные аккаунты исполнителя реестра (или отказ поиска)
+        artistResolved: (user: number, key: string, label: string, accounts: Array<{ id: number; name: string }>, status: string, error: string) =>
+            ipcRenderer.invoke('soundcloud:recommend:artistResolved', user, key, label, accounts, status, error),
     },
     // Радар: выпуск с архивом, «Все найденные», пересборка, состояние сбора и свежее с каналов для полки
     radar: {

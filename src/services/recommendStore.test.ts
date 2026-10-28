@@ -290,3 +290,31 @@ it('A17: задача периода одна и переживает перез
     expect(reopened.edition(78, '2026-09-25')).toBeNull();
     expect(reopened.radarTask(77, '../x', cutoff, 'Europe/Moscow')).toBeNull();
 });
+
+it('аккаунты исполнителей (28.10.2026): найденное и проверка источника одной записью, отказ прежнее не стирает, мусор отклоняется', () => {
+    const store = open(folder());
+    expect(store.artistResolved(77, 'artist:alpha', 'Alpha', [{ id: 5, name: 'Alpha' }, { id: 6, name: 'Alpha Music' }, { id: 5, name: 'dup' }], 'ok', '', 100)).toBe(true);
+    expect(store.artistResolved(77, 'artist:alpha', '', [], 'failed', 'rate', 200)).toBe(true);
+    expect(store.artistResolved(77, 'artist:beta', 'Beta', [], 'ok', '', 300)).toBe(true);
+    expect(store.artistResolved(77, 'search:alpha', 'Alpha', [], 'ok', '', 1)).toBe(false);
+    expect(store.artistResolved(77, 'artist:a b', 'x', [], 'ok', '', 1)).toBe(false);
+    expect(store.artistResolved(77, 'artist:alpha', 'x', [{ id: 0, name: 'x' }], 'ok', '', 1)).toBe(false);
+    expect(store.artistResolved(77, 'artist:alpha', 'x', Array.from({ length: 6 }, (_, i) => ({ id: i + 1, name: 'x' })), 'ok', '', 1)).toBe(false);
+    expect(store.artistResolved(77, 'artist:alpha', 'x', [], 'gone', '', 1)).toBe(false);
+    expect(store.artistAccounts(77)).toEqual(new Map([
+        ['alpha', { name: 'Alpha', accounts: [{ id: 5, name: 'Alpha' }, { id: 6, name: 'Alpha Music' }], resolved: 100 }],
+        ['beta', { name: 'Beta', accounts: [], resolved: 300 }],
+    ]));
+    expect(store.catalogState(77).filter((check) => check.key.startsWith('artist:'))).toEqual([
+        { key: 'artist:alpha', label: 'Alpha', checked: 200, status: 'failed', error: 'rate', found: 0 },
+        { key: 'artist:beta', label: 'Beta', checked: 300, status: 'ok', error: '', found: 0 },
+    ]);
+});
+
+it('имена подписок по загрузкам: последнее проверенное имя аккаунта', () => {
+    const store = open(folder());
+    store.recordUploads(77, [track(1, 'Song', 5, { user: { id: 5, username: 'Old Name' } })], 10);
+    store.recordUploads(77, [track(2, 'Song', 5, { user: { id: 5, username: 'New Name' } })], 20);
+    store.recordUploads(77, [track(3, 'Song', 6)], 20);
+    expect(store.uploaderNames(77, [5, 6, 7, 0])).toEqual(new Map([[5, 'New Name'], [6, 'user6']]));
+});

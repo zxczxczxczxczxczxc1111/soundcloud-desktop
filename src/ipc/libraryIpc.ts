@@ -32,6 +32,7 @@ export function registerLibraryIpc(ipc: IpcRegistry, deps: LibraryIpcDeps): void
     // аккаунт задаёт файл, ответ прошлого прогона обхода отклоняется по номеру прогона
     const recommendChannels = [
         'recordUploads', 'uploads', 'recordingLinks', 'setRecordingLink', 'syncStart', 'syncPage', 'syncFinish', 'syncState', 'libraryMembers', 'radarPlan', 'catalogChecked',
+        'artistResolved',
     ] as const;
     for (const method of recommendChannels) {
         const channel = 'soundcloud:recommend:' + method;
@@ -53,6 +54,7 @@ export function registerLibraryIpc(ipc: IpcRegistry, deps: LibraryIpcDeps): void
                 case 'libraryMembers': return library.request(method, userId, a);
                 case 'radarPlan': return library.request(method, userId);
                 case 'catalogChecked': return library.request(method, userId, a, b, c, d, e);
+                case 'artistResolved': return library.request(method, userId, a, b, c, d, e);
             }
         });
     }

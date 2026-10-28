@@ -3,7 +3,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, expect, it } from 'vitest';
 import {
-    RADAR_PARAMS, RadarService, buildRadar, cleanRadarItem, coverageComplete, creditNames, exclusionFilter, freshness, heardIds, heardLast, radarCoverage, radarSources, radarWindow,
+    RADAR_PARAMS, RadarService, buildRadar, cleanRadarItem, coverageComplete, exclusionFilter, freshness, heardIds, heardLast, radarCoverage, radarSources, radarWindow,
     scoreUpload, selectEdition, selectRadar, fanWork, archiveTitle, archiveLast, uploadTrack, channelPicks, channelSet, provenDate, radarCandidates, reversedTitle, type RadarCandidate, type RadarCoverage, type RadarInput,
 } from './radar';
 import { tasteMaps } from './wave';
@@ -322,23 +322,68 @@ it('«слышано»: 70% уникального покрытия, у коро
     expect([...heard].sort((a, b) => a - b)).toEqual([1, 4, 5, 7, 9]);
 });
 
-it('план обхода: подписки и сильные кураторы без скрытых, поиск только по участникам с известным именем; покрытие по свежим проверкам', () => {
-    const profile = { version: 2, artists: [[5, 1.5], [6, 0.1], [9, 2]] as Array<[number, number]>, credits: [['artistname', 1], ['unknown', 3], ['weak', 0.2]] as Array<[string, number]>, families: [], tags: [], markers: [], tracks: [], langs: [], contexts: [], sources: [], counted: 10 };
-    const names = new Map([['artistname', 'Artist Name'], ['weak', 'Weak']]);
+it('план обхода (28.10.2026): подписки, аккаунты исполнителей реестра, поиск аккаунтов раз в месяц, поиск свежего по весомым и безаккаунтным; покрытие без поиска аккаунтов', () => {
+    const profile = { version: 2, artists: [[5, 1.5], [6, 0.1], [9, 2], [12, 0.8]] as Array<[number, number]>, credits: [], families: [], tags: [], markers: [], tracks: [], langs: [], contexts: [], sources: [], counted: 10 };
+    const artist = (key: string, name: string, weight: number, accounts: number[] = []) => ({ key, name, weight, tracks: 3, accounts, followed: false });
+    const registry = [artist('alpha', 'Alpha', 5, [7]), artist('beta', 'Beta', 4), artist('gamma', 'Gamma', 3), artist('delta', 'Delta', 2, [9])];
+    const resolved = new Map([
+        ['alpha', { name: 'Alpha', accounts: [{ id: 8, name: 'Alpha Official' }], resolved: CUTOFF - 5 * DAY }],
+        ['beta', { name: 'Beta', accounts: [], resolved: CUTOFF - 5 * DAY }],
+        ['gamma', { name: 'Gamma', accounts: [{ id: 11, name: 'Gamma' }], resolved: CUTOFF - 40 * DAY }],
+    ]);
     const since = CUTOFF - DAY;
-    const sources = radarSources([4, 5], profile, names, [
+    const sources = radarSources([4, 5], profile, registry, resolved, [
         { key: 'user:4', label: 'Four', checked: since + 1, status: 'ok', error: '', found: 2 },
         { key: 'user:5', label: '', checked: since - 1, status: 'ok', error: '', found: 1 },
-        { key: 'search:artistname', label: 'Artist Name', checked: since + 1, status: 'failed', error: 'rate', found: 0 },
-    ], new Set([9]));
+        { key: 'search:beta', label: 'Beta', checked: since + 1, status: 'failed', error: 'rate', found: 0 },
+    ], new Set([9]), CUTOFF);
     expect(sources.map((source) => [source.key, source.label, source.weight])).toEqual([
-        ['user:4', 'Four', 1], ['user:5', '', 1.5], ['search:artistname', 'Artist Name', 1],
+        // Gamma искали больше месяца назад, Delta не искали вовсе
+        ['artist:gamma', 'Gamma', 3], ['artist:delta', 'Delta', 2],
+        // Подписки (вес во вкусе поднимает подписку 5), аккаунты реестра (свои и найденные, скрытый 9 нет), кураторы не из реестра
+        ['user:4', 'Four', 1], ['user:5', '', 1.5], ['user:7', 'Alpha', 5], ['user:8', 'Alpha Official', 5], ['user:11', 'Gamma', 3], ['user:12', '', 0.8],
+        // Поиск свежего по верху реестра
+        ['search:alpha', 'Alpha', 5], ['search:beta', 'Beta', 4], ['search:gamma', 'Gamma', 3], ['search:delta', 'Delta', 2],
     ]);
-    expect(radarCoverage(sources, since)).toEqual({ accounts: 2, checked: 1, failed: 1, searches: 1, searchesDone: 0 });
-    expect(creditNames([
-        { id: 1, title: 'Artist Name - Song', artistName: 'Channel' },
-        { id: 2, title: 'Tune', artistName: 'Weak | tags' },
-    ], new Set(['artistname', 'weak', 'nobody']))).toEqual(new Map([['weak', 'Weak'], ['artistname', 'Artist Name']]));
+    expect(radarCoverage(sources, since)).toEqual({ accounts: 6, checked: 1, failed: 1, searches: 4, searchesDone: 0 });
+    // Отказ поиска аккаунтов повторяется только через сутки
+    const failed = (checked: number) => radarSources([], null, [artist('delta', 'Delta', 2)], new Map(), [
+        { key: 'artist:delta', label: 'Delta', checked, status: 'failed', error: 'missing', found: 0 },
+    ], new Set(), CUTOFF).map((source) => source.key);
+    expect(failed(CUTOFF - 3600000)).toEqual(['search:delta']);
+    expect(failed(CUTOFF - 2 * DAY)).toEqual(['artist:delta', 'search:delta']);
+});
+
+it('план обхода: поиск свежего по исполнителям без аккаунта не больше предела, сверх верха реестра', () => {
+    const count = RADAR_PARAMS.searches + RADAR_PARAMS.orphanSearches + 10;
+    const registry = Array.from({ length: count }, (_, i) => ({ key: 'artist' + i, name: 'Artist ' + i, weight: count - i, tracks: 2, accounts: [], followed: false }));
+    const resolved = new Map(registry.map((entry) => [entry.key, { name: entry.name, accounts: [], resolved: CUTOFF - DAY }]));
+    const searches = radarSources([], null, registry, resolved, [], new Set(), CUTOFF).filter((source) => source.kind === 'search');
+    expect(searches).toHaveLength(RADAR_PARAMS.searches + RADAR_PARAMS.orphanSearches);
+    expect(searches[searches.length - 1].key).toBe('search:artist' + (RADAR_PARAMS.searches + RADAR_PARAMS.orphanSearches - 1));
+});
+
+it('план в worker (28.10.2026): реестр из лайков хранилища, аккаунты, найденные поиском по имени, входят в обход', () => {
+    const directory = mkdtempSync(join(tmpdir(), 'sc-radar-test-'));
+    folders.push(directory);
+    const store = new RecommendStore(directory);
+    const index = new HistoryIndex(directory, new WaveSignals(directory));
+    const taste = new TasteService(directory, index, () => [], (user, played) => store.tasteLibrary(user, played));
+    const empty: WaveExclusionList = { tracks: [], artists: [], laterTracks: [], laterArtists: [], more: [], families: [] };
+    const radar = new RadarService(store, index, taste, () => empty);
+    const now = Date.now();
+    try {
+        store.recordUploads(77, [1, 2].map((id) => ({ id, kind: 'track', title: 'Song ' + id, user_id: 5, user: { id: 5, username: 'Alpha' }, duration: 200000 })), now);
+        store.syncStart(77, 'likes', false, now);
+        store.syncPage(77, 'likes', 1, [{ key: 'sc:track:1' }, { key: 'sc:track:2' }], null, now);
+        store.syncFinish(77, 'likes', 1, 'complete', '', now);
+        expect(radar.plan(77, now).map((source) => source.key)).toEqual(['artist:alpha', 'user:5', 'search:alpha']);
+        expect(store.artistResolved(77, 'artist:alpha', 'Alpha', [{ id: 5, name: 'Alpha' }, { id: 8, name: 'Alpha Official' }], 'ok', '', now)).toBe(true);
+        expect(radar.plan(77, now + 1000).map((source) => [source.key, source.label])).toEqual([['user:5', 'Alpha'], ['user:8', 'Alpha Official'], ['search:alpha', 'Alpha']]);
+    } finally {
+        index.close();
+        store.close();
+    }
 });
 
 it('подписок больше предела: скрытые место не занимают, остаются весомые во вкусе, а не первые по номеру', () => {
@@ -346,7 +391,7 @@ it('подписок больше предела: скрытые место не
     const last = follows[follows.length - 1];
     // Вес ниже порога кураторов: в обход аккаунт попадает только как подписка
     const profile = { version: 2, artists: [[last, 0.2]] as Array<[number, number]>, credits: [], families: [], tags: [], markers: [], tracks: [], langs: [], contexts: [], sources: [], counted: 10 };
-    const ids = radarSources(follows, profile, new Map(), [], new Set([1])).map((source) => source.id);
+    const ids = radarSources(follows, profile, [], new Map(), [], new Set([1]), CUTOFF).map((source) => source.id);
     expect(ids).toHaveLength(RADAR_PARAMS.follows);
     expect(ids).not.toContain(1);
     expect(ids).toContain(last);
@@ -499,9 +544,13 @@ it('сборка в worker: до конца обхода ждёт, после п
             { id: 52, kind: 'track', title: 'Artist - Reup', user_id: 5, user: { id: 5, username: 'Five' }, duration: 200000, created_at: at(DAY) },
             { id: 53, kind: 'track', title: 'Ancient', user_id: 5, user: { id: 5, username: 'Five' }, duration: 200000, created_at: at(90 * DAY) },
         ], now);
-        expect(radar.plan(77, now).map((source) => source.key)).toEqual(['user:5']);
+        // Подписка входит в реестр по имени аккаунта: поиск его других аккаунтов и свежего по имени
+        expect(radar.plan(77, now).map((source) => source.key)).toEqual(['artist:five', 'user:5', 'search:five']);
         expect(radar.build(77, '2026-09-25', cutoff, false, false, now)).toEqual({ published: false, waiting: true, edition: null });
         store.catalogChecked(77, 'user:5', 'Five', 'ok', '', 3, now - 60000);
+        expect(radar.build(77, '2026-09-25', cutoff, false, false, now)).toEqual({ published: false, waiting: true, edition: null });
+        // Поиск аккаунтов выпуск не держит, поиск свежего держит
+        store.catalogChecked(77, 'search:five', 'Five', 'ok', '', 0, now - 60000);
         const outcome = radar.build(77, '2026-09-25', cutoff, false, false, now);
         expect(outcome).toMatchObject({ published: true, edition: { status: 'complete', revision: 1, coverage: { accounts: 1, checked: 1 } } });
         expect(outcome.edition?.items.map((item) => [item.id, item.reason.kind])).toEqual([[51, 'follow']]);
@@ -534,11 +583,13 @@ it('сборка в worker (28.10.2026): релиз, увиденный толь
         store.syncFinish(77, 'followings', 1, 'complete', '', first - DAY);
         store.recordUploads(77, [track(51, 'Fresh', first - 2 * DAY)], first - DAY);
         store.catalogChecked(77, 'user:5', 'Five', 'ok', '', 1, first - 60000);
+        store.catalogChecked(77, 'search:five', 'Five', 'ok', '', 0, first - 60000);
         expect(radar.build(77, '2026-09-18', first, false, false, first + 1000).edition?.items.map((item) => item.id)).toEqual([51]);
         // Вышел за час до прошлой отсечки, найден через десять часов после сборки; второй вышел уже в новом окне
         store.recordUploads(77, [track(52, 'Late', first - 3600000)], first + 10 * 3600000);
         store.recordUploads(77, [track(53, 'Next', second - DAY)], second - 2 * 3600000);
         store.catalogChecked(77, 'user:5', 'Five', 'ok', '', 3, second - 60000);
+        store.catalogChecked(77, 'search:five', 'Five', 'ok', '', 0, second - 60000);
         const outcome = radar.build(77, '2026-09-25', second, false, false, now);
         expect(outcome.published).toBe(true);
         expect(outcome.edition?.items.flatMap((item) => item.group ?? [item.id]).sort()).toEqual([52, 53]);
@@ -567,6 +618,7 @@ it('выпуск для страницы: «Уже слышал» на сейч�
         store.syncFinish(77, 'followings', 1, 'complete', '', now);
         store.recordUploads(77, [track(51, 'Fresh', at(-2 * DAY)), track(52, 'Artist - Reup', at(-DAY))], now - 4 * 3600000);
         store.catalogChecked(77, 'user:5', 'Five', 'ok', '', 2, now - 4 * 3600000);
+        store.catalogChecked(77, 'search:five', 'Five', 'ok', '', 0, now - 4 * 3600000);
         expect(radar.build(77, '2026-09-25', cutoff, false, false, now).published).toBe(true);
         // После выпуска: лайк позиции и новая загрузка подписки
         store.syncStart(77, 'likes', false, now);

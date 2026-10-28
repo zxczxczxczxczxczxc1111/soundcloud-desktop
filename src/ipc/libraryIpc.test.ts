@@ -32,13 +32,15 @@ describe('запросы страницы к хранилищам', () => {
         expect(request).toHaveBeenLastCalledWith('syncPage', 11, 'a', 'b', 'c', 'd');
         await ipc.invoke('soundcloud:recommend:catalogChecked', site, 11, 'k', 'l', 's', 'e', 3);
         expect(request).toHaveBeenLastCalledWith('catalogChecked', 11, 'k', 'l', 's', 'e', 3);
+        await ipc.invoke('soundcloud:recommend:artistResolved', site, 11, 'artist:k', 'K', [{ id: 1, name: 'K' }], 'ok', '', 'лишнее');
+        expect(request).toHaveBeenLastCalledWith('artistResolved', 11, 'artist:k', 'K', [{ id: 1, name: 'K' }], 'ok', '');
         await ipc.invoke('soundcloud:recommend:recordingLinks', site, 11, 'лишнее');
         expect(request).toHaveBeenLastCalledWith('recordingLinks', 11);
     });
     it('все каналы на месте и повторная регистрация их не ломает', () => {
         const { ipc, deps } = setup();
         expect([...ipc.handlers.keys()].filter((channel) => channel.startsWith('soundcloud:library:'))).toHaveLength(7);
-        expect([...ipc.handlers.keys()].filter((channel) => channel.startsWith('soundcloud:recommend:'))).toHaveLength(11);
+        expect([...ipc.handlers.keys()].filter((channel) => channel.startsWith('soundcloud:recommend:'))).toHaveLength(12);
         expect(() => registerLibraryIpc(ipc, deps)).not.toThrow();
     });
 });

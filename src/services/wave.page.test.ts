@@ -3215,6 +3215,60 @@ it('P6: сбор радара обходит несвежие источники
     ]);
 });
 
+it('сбор (28.10.2026): аккаунты исполнителя ищутся по точному имени, с треками и не меньше десятой доли подписчиков лучшего, отказ отмечается', async () => {
+    const now = Date.now();
+    const recommend = {
+        ...radarBridge([
+            { key: 'artist:alpha', kind: 'artist', id: 0, q: 'Alpha', label: 'Alpha', checked: 0, status: '', weight: 3 },
+            { key: 'artist:beta', kind: 'artist', id: 0, q: 'Beta', label: 'Beta', checked: 0, status: '', weight: 2 },
+            // Каталог проверен позже поиска аккаунтов, но идёт первым: выпуск держит он
+            { key: 'user:5', kind: 'user', id: 5, q: '', label: 'Five', checked: now - 30 * 3600000, status: 'ok', weight: 0.1 },
+        ]),
+        artistResolved: vi.fn(async () => true),
+    };
+    Object.assign(window, { soundcloudAPI: { recommend } });
+    const site = fakeSite(relatedTracks, (name, path, query) => {
+        if (name === 'userTracks') return { collection: [] };
+        if (name !== 'searchCategory' || (path as { category?: string }).category !== 'users') return undefined;
+        if (query.q === 'Beta') return Promise.reject({ status: 429, headers: {} });
+        return { collection: [
+            { id: 1, username: 'Alpha', track_count: 40, followers_count: 50000 },
+            { id: 2, username: 'ALPHA', track_count: 3, followers_count: 6000 },
+            { id: 3, username: 'Alpha', track_count: 0, followers_count: 90000 },
+            { id: 4, username: 'Alpha', track_count: 5, followers_count: 30 },
+            { id: 5, username: 'Alpha Beats', track_count: 9, followers_count: 70000 },
+        ] };
+    });
+    window.eval(waveScript());
+    await vi.advanceTimersByTimeAsync(100);
+    const collect = (window as unknown as { __scRadarCollect: RadarCollect }).__scRadarCollect;
+    const pending = collect(60000, now - 3600000);
+    await vi.advanceTimersByTimeAsync(20000);
+    expect(await pending).toEqual({ user: 77, checked: 3, remaining: 0, stopped: '' });
+    const order = site.api.callEndpoint.mock.calls.filter(([name, path]) => name === 'userTracks' || (path as { category?: string }).category === 'users').map(([name]) => name);
+    expect(order).toEqual(['userTracks', 'searchCategory', 'searchCategory']);
+    expect(site.api.callEndpoint).toHaveBeenCalledWith('searchCategory', { category: 'users' }, { q: 'Alpha', limit: 20 });
+    expect(recommend.artistResolved.mock.calls).toEqual([
+        [77, 'artist:alpha', 'Alpha', [{ id: 1, name: 'Alpha' }, { id: 2, name: 'ALPHA' }], 'ok', ''],
+        [77, 'artist:beta', 'Beta', [], 'failed', expect.any(String)],
+    ]);
+    expect(recommend.catalogChecked.mock.calls).toEqual([[77, 'user:5', 'Five', 'ok', '', 0]]);
+});
+
+it('сбор: без моста artistResolved поиск аккаунтов в план не берётся и не числится оставшимся', async () => {
+    const now = Date.now();
+    const recommend = radarBridge([{ key: 'artist:alpha', kind: 'artist', id: 0, q: 'Alpha', label: 'Alpha', checked: 0, status: '', weight: 3 }]);
+    Object.assign(window, { soundcloudAPI: { recommend } });
+    const site = fakeSite(relatedTracks, () => undefined);
+    window.eval(waveScript());
+    await vi.advanceTimersByTimeAsync(100);
+    const collect = (window as unknown as { __scRadarCollect: RadarCollect }).__scRadarCollect;
+    const pending = collect(60000, now - 3600000);
+    await vi.advanceTimersByTimeAsync(20000);
+    expect(await pending).toEqual({ user: 77, checked: 0, remaining: 0, stopped: '' });
+    expect(site.api.callEndpoint.mock.calls.filter(([, path]) => (path as { category?: string }).category === 'users')).toEqual([]);
+});
+
 it('сбор перед выпуском (28.10.2026): сначала несвежее больше суток по давности, затем перепроверка по весу', async () => {
     const now = Date.now();
     const recommend = radarBridge([

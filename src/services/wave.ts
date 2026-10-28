@@ -169,6 +169,7 @@ export interface WaveWindow extends Window {
             recordingLinks?(user: number): Promise<unknown>;
             radarPlan?(user: number): Promise<unknown>;
             catalogChecked?(user: number, key: string, label: string, status: string, error: string, found: number): Promise<unknown>;
+            artistResolved?(user: number, key: string, label: string, accounts: Array<{ id: number; name: string }>, status: string, error: string): Promise<unknown>;
             setRecordingLink?(user: number, a: string, b: string, same: boolean): Promise<unknown>;
         };
         radar?: {
@@ -1175,10 +1176,10 @@ export function installWave(config: WaveConfig, createPlayback: typeof installPl
         const loaded = await bridge.radarPlan(user);
         const plan = (Array.isArray(loaded) ? loaded : []).flatMap((value) => {
             const item = value && typeof value === 'object' ? (value as Record<string, unknown>) : {};
-            const kind = item.kind === 'search' ? 'search' as const : 'user' as const;
+            const kind = item.kind === 'search' || item.kind === 'artist' ? item.kind : 'user' as const;
             const id = typeof item.id === 'number' && Number.isSafeInteger(item.id) ? item.id : 0;
             const q = typeof item.q === 'string' ? item.q : '';
-            if (typeof item.key !== 'string' || (kind === 'user' ? id <= 0 : !q)) return [];
+            if (typeof item.key !== 'string' || (kind === 'user' ? id <= 0 : !q) || (kind === 'artist' && !bridge.artistResolved)) return [];
             return [{
                 key: item.key, kind, id, q, label: typeof item.label === 'string' ? item.label : '', status: item.status,
                 checked: typeof item.checked === 'number' ? item.checked : 0, weight: typeof item.weight === 'number' ? item.weight : 0,
@@ -1186,11 +1187,12 @@ export function installWave(config: WaveConfig, createPlayback: typeof installPl
         });
         // Срочные (старше urgentBefore и отказы) первыми самые давние, остальные несвежие по весу: перед выпуском
         // сначала любимые. Источник с отказом повторяется не чаще раза в 10 минут
+        // Поиск аккаунтов исполнителя не срочный и идёт после каталогов и поисков свежего: выпуск держат они
         const retryBefore = Date.now() - 10 * 60000;
-        const urgent = (source: { checked: number; status: unknown }): boolean =>
-            source.checked < urgentBefore || (source.status === 'failed' && source.checked < retryBefore);
+        const urgent = (source: { kind: string; checked: number; status: unknown }): boolean =>
+            source.kind !== 'artist' && (source.checked < urgentBefore || (source.status === 'failed' && source.checked < retryBefore));
         const due = plan.filter((source) => source.checked < staleBefore || urgent(source))
-            .sort((a, b) => Number(urgent(b)) - Number(urgent(a))
+            .sort((a, b) => Number(a.kind === 'artist') - Number(b.kind === 'artist') || Number(urgent(b)) - Number(urgent(a))
                 || (urgent(a) ? a.checked - b.checked || b.weight - a.weight : b.weight - a.weight || a.checked - b.checked));
         result.remaining = due.length;
         if (!due.length) return result;
@@ -1205,6 +1207,19 @@ export function installWave(config: WaveConfig, createPlayback: typeof installPl
         for (const source of due) {
             if (disposed || Date.now() >= deadline) break;
             let label = source.label;
+            if (source.kind === 'artist' && bridge.artistResolved) {
+                try {
+                    await bridge.artistResolved(user, source.key, label, await artistAccounts(source.q), 'ok', '');
+                } catch (error) {
+                    const failure = classifyFailure(error, Date.now());
+                    await bridge.artistResolved(user, source.key, label, [], 'failed', failure.kind)
+                        .catch((cause: unknown) => console.warn('Радар: отказ поиска аккаунтов не записан', cause));
+                    if (failure.kind === 'auth') return { ...result, stopped: 'auth' };
+                }
+                result.checked++;
+                result.remaining--;
+                continue;
+            }
             try {
                 const tracks = source.kind === 'user' ? await accountTracks(source.id, from) : await freshSearch(source.q);
                 if (source.kind === 'user') label = tracks.find((track) => track.user?.id === source.id)?.user?.username ?? label;
@@ -1235,6 +1250,26 @@ export function installWave(config: WaveConfig, createPlayback: typeof installPl
             query = nextQuery(body);
         }
         return tracks;
+    }
+    // Аккаунты исполнителя реестра по точному имени: у артиста бывает старый свой и дистрибьюторский аккаунт, релизы
+    // выходят на любом. Берутся до трёх с треками и не меньше десятой доли подписчиков лучшего: однофамилец
+    // с пятью подписчиками не становится источником
+    async function artistAccounts(q: string): Promise<Array<{ id: number; name: string }>> {
+        const body = await backgroundCall('searchCategory', { category: 'users' }, { q, limit: 20 });
+        const list = (body as { collection?: unknown } | null)?.collection;
+        if (!Array.isArray(list)) throw new Error('Неожиданный ответ searchCategory users');
+        const wanted = nameKey(q);
+        const users = list.flatMap((value) => {
+            const user = value && typeof value === 'object' ? (value as Record<string, unknown>) : {};
+            const id = typeof user.id === 'number' && Number.isSafeInteger(user.id) && user.id > 0 ? user.id : 0;
+            const name = typeof user.username === 'string' ? user.username : '';
+            const tracks = typeof user.track_count === 'number' ? user.track_count : 0;
+            const followers = typeof user.followers_count === 'number' ? user.followers_count : 0;
+            return id && tracks > 0 && nameKey(name) === wanted ? [{ id, name, followers }] : [];
+        });
+        const best = Math.max(0, ...users.map((user) => user.followers));
+        return users.filter((user) => user.followers >= best * 0.1).sort((a, b) => b.followers - a.followers || a.id - b.id).slice(0, 3)
+            .map(({ id, name }) => ({ id, name }));
     }
     // Свежее за неделю по имени любимого участника по всему каталогу, без привязки к аккаунту. Поиск текстовый:
     // по имени находится и всё, где это слово просто есть в названии, поэтому пишутся только треки, где участник

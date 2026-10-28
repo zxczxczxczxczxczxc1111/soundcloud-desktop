@@ -42,6 +42,7 @@ export interface LibraryOperations {
     libraryMembers: Operation<RecommendStore['libraryMembers']>;
     playlistTracks: Operation<RecommendStore['playlistTracks']>;
     catalogChecked: Operation<RecommendStore['catalogChecked']>;
+    artistResolved: Operation<RecommendStore['artistResolved']>;
     radarPlan: Operation<RadarService['plan']>;
     radarStatus: Operation<RecommendStore['radarStatus']>;
     radarTask: Operation<RecommendStore['radarTask']>;

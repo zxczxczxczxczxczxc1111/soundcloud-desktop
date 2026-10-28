@@ -12,6 +12,7 @@ import {
 import { tagShares, tasteMaps, tasteScore, type TasteMaps, type WaveTrack } from './wave';
 import { RADAR_FRESH_MS } from './radarSchedule';
 import { isWaveEligible } from './wavePicks';
+import { buildRegistry, REGISTRY_PARAMS, type RegistryArtist } from './artistRegistry';
 
 const DAY = 86400000;
 
@@ -21,7 +22,9 @@ const DAY = 86400000;
  *  6: фанатские работы отдельной карточкой, архивные записи вниз своего списка (02.10.2026).
  *  7 (28.10.2026): окно от отсечки прошлого выпуска, опоздавшие к нему записи и без повторов показанного; дата релиза
  *  доказывает только с ISRC или у своего аккаунта; фит любимого у незнакомого аккаунта и слив «Название - Исполнитель»
- *  это фанатские работы; одна песня с разных аккаунтов одной строкой; каналы без любимых исполнителей уходят на полку */
+ *  это фанатские работы; одна песня с разных аккаунтов одной строкой; каналы без любимых исполнителей уходят на полку;
+ *  обход строится от реестра исполнителей (artistRegistry): их аккаунты, найденные поиском по имени, и поиск свежего по
+ *  самым весомым, кураторов из вкуса меньше */
 export const RADAR_PARAMS = {
     version: 7,
     /** Окно свежести версии у первого выпуска, дни до отсечки; дальше окно начинается с отсечки прошлого выпуска */
@@ -68,13 +71,17 @@ export const RADAR_PARAMS = {
     /** Отметка «слышано»: доля уникального покрытия, у записей короче 30 секунд строже */
     heardShare: 0.7,
     heardShareShort: 0.8,
-    /** Аккаунты-кураторы из вкуса в обходе: не больше и не слабее */
-    curators: 100,
+    /** Аккаунты-кураторы из вкуса в обходе, кроме аккаунтов реестра: не больше и не слабее. Главное за реестром
+     *  исполнителей, кураторы нужны каналам для полки и фанатским работам */
+    curators: 40,
     curatorWeight: 0.3,
     follows: 2000,
-    /** Поиск свежего по любимым участникам */
+    /** Поиск свежего по самым весомым исполнителям реестра: находит их участие в чужих релизах */
     searches: 20,
-    searchWeight: 0.5,
+    /** И по стольким исполнителям без аккаунта: каждый поиск держит полноту выпуска, их не может быть сотни */
+    orphanSearches: 20,
+    /** Поиск аккаунтов исполнителя по точному имени повторяется раз в столько дней */
+    resolveDays: 30,
     /** Канал: среди последних сохранённых загрузок аккаунта (не меньше channelMin) чужих исполнителей от этой доли */
     channelMin: 5,
     channelShare: 0.6,
@@ -367,10 +374,11 @@ export function otherVersion(track: WaveTrack, families: Map<string, Set<string>
     return !!kept && !kept.has(versionKey(track));
 }
 
-/** Источник обхода: каталог аккаунта (подписка или куратор из вкуса) либо поиск свежего по любимому участнику */
+/** Источник обхода: каталог аккаунта (подписка, аккаунт исполнителя реестра, куратор из вкуса), поиск свежего
+ *  по исполнителю или поиск аккаунтов исполнителя по точному имени (artist) */
 export interface RadarSource {
     key: string;
-    kind: 'user' | 'search';
+    kind: 'user' | 'search' | 'artist';
     id: number;
     q: string;
     label: string;
@@ -379,7 +387,16 @@ export interface RadarSource {
     /** Порядок при равной давности: подписки и любимые раньше */
     weight: number;
 }
-export function radarSources(follows: number[], profile: TasteProfile | null, names: Map<string, string>, checks: CatalogCheck[], hidden: Set<number>): RadarSource[] {
+/** Найденные аккаунты исполнителя реестра (artistAccounts хранилища) */
+export type ResolvedArtists = Map<string, { name: string; accounts: Array<{ id: number; name: string }>; resolved: number }>;
+/**
+ * План обхода (разбор 28.10.2026): подписки, все аккаунты исполнителей реестра (свои по загрузкам и найденные поиском
+ * по имени), поиск аккаунтов для тех, кого не искали месяц, поиск свежего по самым весомым и по исполнителям без
+ * аккаунта, и немного кураторов из вкуса для полки и фанатских работ
+ */
+export function radarSources(
+    follows: number[], profile: TasteProfile | null, registry: RegistryArtist[], resolved: ResolvedArtists, checks: CatalogCheck[], hidden: Set<number>, now: number,
+): RadarSource[] {
     const P = RADAR_PARAMS;
     const known = new Map(checks.map((check) => [check.key, check]));
     const sources: RadarSource[] = [];
@@ -387,7 +404,12 @@ export function radarSources(follows: number[], profile: TasteProfile | null, na
         const check = known.get(source.key);
         sources.push({ ...source, label: check?.label || source.label, checked: check?.checked ?? 0, status: check?.status ?? '' });
     };
-    const accounts = new Map<number, number>();
+    const accounts = new Map<number, { weight: number; label: string }>();
+    const account = (id: number, weight: number, label: string): void => {
+        if (hidden.has(id)) return;
+        const current = accounts.get(id);
+        accounts.set(id, { weight: Math.max(current?.weight ?? 0, weight), label: current?.label || label });
+    };
     // Скрытые не занимают место в пределе. Подписок больше предела: остаются те, что весят во вкусе, а не первые
     // по номеру аккаунта (дата подписки у сайта неизвестна, хранилище отдаёт их по ключу)
     const followed = follows.filter((id) => !hidden.has(id));
@@ -395,49 +417,55 @@ export function radarSources(follows: number[], profile: TasteProfile | null, na
     const kept = followed.length > P.follows
         ? new Set(followed.map((id, order) => ({ id, order, weight: taste.get(id) ?? 0 })).sort((a, b) => b.weight - a.weight || a.order - b.order).slice(0, P.follows).map((entry) => entry.id))
         : null;
-    for (const id of followed) if (!kept || kept.has(id)) accounts.set(id, 1);
+    for (const id of followed) if (!kept || kept.has(id)) account(id, 1, '');
+    const searches = new Map<string, { name: string; weight: number }>();
+    for (const artist of registry.slice(0, P.searches)) searches.set(artist.key, { name: artist.name, weight: artist.weight });
+    let orphans = 0;
+    for (const artist of registry) {
+        const found = resolved.get(artist.key);
+        for (const id of artist.accounts) account(id, artist.weight, artist.name);
+        for (const item of found?.accounts ?? []) account(item.id, artist.weight, item.name);
+        if (!found || found.resolved < now - P.resolveDays * DAY) {
+            // Отказ поиска повторяется через сутки, а не каждым сбором: недоступный поиск не съедает бюджет
+            const check = known.get('artist:' + artist.key);
+            if (check?.status !== 'failed' || check.checked < now - DAY) add({ key: 'artist:' + artist.key, kind: 'artist', id: 0, q: artist.name, label: artist.name, weight: artist.weight });
+        } else if (!artist.accounts.length && !found.accounts.length && !searches.has(artist.key) && orphans < P.orphanSearches) {
+            // Аккаунта нет и поиск его не нашёл: остаётся поиск свежего по имени, для самых весомых из таких
+            searches.set(artist.key, { name: artist.name, weight: artist.weight });
+            orphans++;
+        }
+    }
+    // Вес во вкусе поднимает и уже взятые аккаунты; в предел кураторов идут только новые
     const curators = (profile?.artists ?? []).filter(([id, weight]) => weight >= P.curatorWeight && !hidden.has(id)).sort((a, b) => b[1] - a[1] || a[0] - b[0]);
-    for (const [id, weight] of curators.slice(0, P.curators)) accounts.set(id, Math.max(accounts.get(id) ?? 0, weight));
-    for (const [id, weight] of accounts) add({ key: 'user:' + id, kind: 'user', id, q: '', label: '', weight });
-    const credits = (profile?.credits ?? []).filter(([key, weight]) => weight >= P.searchWeight && names.has(key)).sort((a, b) => b[1] - a[1] || (a[0] < b[0] ? -1 : 1));
-    for (const [key, weight] of credits.slice(0, P.searches)) {
-        const name = names.get(key) ?? '';
-        if (name.length >= 2) add({ key: 'search:' + key, kind: 'search', id: 0, q: name, label: name, weight });
+    let added = 0;
+    for (const [id, weight] of curators) {
+        if (accounts.has(id)) account(id, weight, '');
+        else if (added < P.curators) {
+            account(id, weight, '');
+            added++;
+        }
     }
+    for (const [id, { weight, label }] of accounts) add({ key: 'user:' + id, kind: 'user', id, q: '', label, weight });
+    for (const [key, { name, weight }] of searches) if (name.length >= 2) add({ key: 'search:' + key, kind: 'search', id: 0, q: name, label: name, weight });
     return sources;
-}
-/** Имена любимых участников для поиска: ключ имени из разбора названий истории обратно в написанное имя */
-export function creditNames(plays: Array<Pick<TastePlay, 'id' | 'title' | 'artistName'>>, wanted: Set<string>): Map<string, string> {
-    const names = new Map<string, string>();
-    const seen = new Set<number>();
-    for (let i = plays.length - 1; i >= 0 && names.size < wanted.size; i--) {
-        const play = plays[i];
-        if (seen.has(play.id)) continue;
-        seen.add(play.id);
-        const uploader = play.artistName.split('|')[0].trim();
-        const own = nameKey(uploader);
-        if (own && wanted.has(own) && !names.has(own)) names.set(own, uploader);
-        if (!play.title) continue;
-        for (const credit of trackCredits({ id: play.id, title: play.title, user: { username: play.artistName } }))
-            if (wanted.has(credit.key) && !names.has(credit.key)) names.set(credit.key, credit.name);
-    }
-    return names;
 }
 
 export interface RadarCoverage {
-    /** Аккаунты радара: подписки и кураторы из вкуса */
+    /** Аккаунты радара: подписки, аккаунты исполнителей реестра и кураторы из вкуса */
     accounts: number;
     /** Проверены не раньше чем за сутки до слота (или аккаунта больше нет) */
     checked: number;
     /** Источники с ошибкой при последней проверке */
     failed: number;
-    /** Поиск свежего по любимым участникам */
+    /** Поиск свежего по исполнителям реестра */
     searches: number;
     searchesDone: number;
 }
 export function radarCoverage(sources: RadarSource[], since: number): RadarCoverage {
     const coverage: RadarCoverage = { accounts: 0, checked: 0, failed: 0, searches: 0, searchesDone: 0 };
     for (const source of sources) {
+        // Поиск аккаунтов исполнителя выпуск не держит: найденные аккаунты войдут в план и покрытие следующей проверкой
+        if (source.kind === 'artist') continue;
         const fresh = source.checked >= since;
         if (source.kind === 'user') coverage.accounts++;
         else coverage.searches++;
@@ -783,10 +811,9 @@ const isId = (value: unknown): value is number => typeof value === 'number' && N
 const memberIds = (keys: Array<{ key: string }>, prefix: string): number[] =>
     keys.map((member) => Number(member.key.slice(prefix.length))).filter(isId);
 
-// Радар в worker: план обхода для страницы и сборка выпуска из хранилищ. Имена участников для поиска
-// кэшируются на 6 часов: разбор истории на каждой проверке раз в 10 минут не нужен
+// Радар в worker: план обхода для страницы и сборка выпуска из хранилищ
 export class RadarService {
-    private names = new Map<number, { at: number; wanted: string; names: Map<string, string> }>();
+    private registries = new Map<number, { at: number; hidden: string; artists: RegistryArtist[] }>();
     private channelMarks = new Map<number, Map<number, { at: number; channel: boolean }>>();
 
     constructor(
@@ -799,15 +826,31 @@ export class RadarService {
     public plan(userId: unknown, now = Date.now()): RadarSource[] {
         if (!isId(userId)) return [];
         const profile = this.taste.profile(userId);
-        const wanted = (profile?.credits ?? []).filter(([, weight]) => weight >= RADAR_PARAMS.searchWeight).map(([key]) => key).slice(0, RADAR_PARAMS.searches * 3);
-        const signature = wanted.join(',');
-        let cached = this.names.get(userId);
-        if (!cached || cached.wanted !== signature || now - cached.at > 6 * 3600000) {
-            cached = { at: now, wanted: signature, names: creditNames(this.index.tastePlays(userId, now - 180 * DAY), new Set(wanted)) };
-            this.names.set(userId, cached);
-        }
         const hidden = new Set(this.exclusions(userId).artists.map((entry) => entry.id));
-        return radarSources(memberIds(this.store.libraryMembers(userId, 'followings'), 'sc:user:'), profile, cached.names, this.store.catalogState(userId), hidden);
+        const follows = memberIds(this.store.libraryMembers(userId, 'followings'), 'sc:user:');
+        return radarSources(follows, profile, this.registry(userId, hidden, now), this.store.artistAccounts(userId), this.store.catalogState(userId), hidden, now);
+    }
+    /** Реестр исполнителей (artistRegistry) с кэшем на 6 часов: разбор полугода истории на каждой проверке не нужен */
+    public registry(userId: number, hidden: Set<number>, now: number): RegistryArtist[] {
+        const signature = [...hidden].sort((a, b) => a - b).join(',');
+        const cached = this.registries.get(userId);
+        if (cached && cached.hidden === signature && now - cached.at <= 6 * 3600000) return cached.artists;
+        const plays = this.index.tastePlays(userId, now - REGISTRY_PARAMS.playsDays * DAY);
+        const library = this.store.tasteLibrary(userId, plays.map((play) => play.id));
+        const names = this.store.uploaderNames(userId, library.follows);
+        // Каналы проверяются среди загрузчиков, с которыми есть касания: их имя не делается исполнителем
+        const uploaders = [
+            ...library.likes.flatMap((like) => (like.upload ? [like.upload.uploader] : [])),
+            ...library.playlists.flatMap((track) => (track.upload ? [track.upload.uploader] : [])),
+            ...plays.map((play) => play.artist),
+            ...library.follows,
+        ];
+        const artists = buildRegistry({
+            likes: library.likes, playlists: library.playlists, plays, uploads: new Map(library.uploads.map((upload) => [upload.id, upload])),
+            follows: library.follows.map((id) => ({ id, name: names.get(id) ?? '' })), channels: this.channelsOf(userId, uploaders, now), hidden, now,
+        });
+        this.registries.set(userId, { at: now, hidden: signature, artists });
+        return artists;
     }
     /** Собрать и записать выпуск периода. force: бюджет сбора вышел, неполный выпуск с релизами допустим */
     public build(userId: unknown, period: unknown, cutoff: unknown, force: unknown, manual: unknown, now = Date.now()): RadarBuildOutcome {

@@ -26,7 +26,7 @@ const HANDLERS = [
     'soundcloud:wave-journal:load', 'soundcloud:wave-library:heard', 'soundcloud:wave-library:load', 'soundcloud:wave-library:recent', 'soundcloud:wave-library:save', 'soundcloud:wave-shelf:load',
     'soundcloud:wave-shelf:save', 'soundcloud:wave-taste',
     ...['loadSession', 'saveSession', 'loadCatalog', 'saveCatalog', 'listMixes', 'saveMix', 'removeMix'].map((method) => 'soundcloud:library:' + method),
-    ...['recordUploads', 'uploads', 'recordingLinks', 'setRecordingLink', 'syncStart', 'syncPage', 'syncFinish', 'syncState', 'libraryMembers', 'radarPlan', 'catalogChecked']
+    ...['recordUploads', 'uploads', 'recordingLinks', 'setRecordingLink', 'syncStart', 'syncPage', 'syncFinish', 'syncState', 'libraryMembers', 'radarPlan', 'catalogChecked', 'artistResolved']
         .map((method) => 'soundcloud:recommend:' + method),
 ];
 
@@ -47,6 +47,6 @@ describe('каналы обработчиков', () => {
         expect([...ipc.listeners.keys()].sort()).toEqual([...LISTENERS].sort());
         expect([...ipc.handlers.keys()].sort()).toEqual([...HANDLERS].sort());
         expect([...ipc.listeners.values()].every((list) => list.length === 1)).toBe(true);
-        expect(LISTENERS.length + HANDLERS.length).toBe(85);
+        expect(LISTENERS.length + HANDLERS.length).toBe(86);
     });
 });

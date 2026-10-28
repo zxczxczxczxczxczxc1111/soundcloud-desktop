@@ -53,6 +53,11 @@ export const RECOMMEND_MIGRATIONS: string[][] = [
         'create index uploads_created on uploads(created_at)',
         'create index uploads_release on uploads(release_day)',
     ],
+    [
+        // Аккаунты исполнителя реестра, найденные поиском по точному имени (разбор 28.10.2026): accounts это JSON
+        // [{id, name}], resolved время поиска; поиск повторяется раз в месяц
+        "create table artists(key text primary key, name text not null default '', accounts text not null default '[]', resolved integer not null default 0)",
+    ],
 ];
 
 export type SyncStatus = 'idle' | 'running' | 'complete' | 'partial' | 'failed';
@@ -153,8 +158,8 @@ const isTrackKey = (value: unknown): value is string => isEntityKey(value) && va
 const isSource = (value: unknown): value is string => typeof value === 'string' && /^[a-z][a-z0-9:_-]{0,60}$/.test(value);
 const DAY = 86400000;
 const CATALOG_STATUSES = new Set<string>(['ok', 'gone', 'failed']);
-/** Источник радара: каталог аккаунта или поиск по ключу имени (буквы и цифры) */
-export const isCatalogKey = (value: unknown): value is string => typeof value === 'string' && /^(?:user:[1-9]\d{0,15}|search:[\p{L}\p{N}]{1,80})$/u.test(value);
+/** Источник радара: каталог аккаунта, поиск свежего или поиск аккаунтов исполнителя по ключу имени (буквы и цифры) */
+export const isCatalogKey = (value: unknown): value is string => typeof value === 'string' && /^(?:user:[1-9]\d{0,15}|(?:search|artist):[\p{L}\p{N}]{1,80})$/u.test(value);
 /** Период выпуска: местная дата слота */
 const isPeriod = (value: unknown): value is string => typeof value === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(value);
 const isTime = (value: unknown): value is number => typeof value === 'number' && Number.isSafeInteger(value) && value > 0;
@@ -185,6 +190,17 @@ export function cleanCursor(value: unknown): Record<string, string | number> | n
     return JSON.stringify(cursor).length <= 2000 ? cursor : null;
 }
 
+// Аккаунты исполнителя со страницы недоверенные: до пяти, id и имя разумной длины; null, если формат не тот
+function cleanAccounts(value: unknown): Array<{ id: number; name: string }> | null {
+    if (!Array.isArray(value) || value.length > 5) return null;
+    const list: Array<{ id: number; name: string }> = [];
+    for (const item of value) {
+        const entry = item && typeof item === 'object' ? (item as Record<string, unknown>) : {};
+        if (!isId(entry.id) || typeof entry.name !== 'string') return null;
+        if (!list.some((known) => known.id === entry.id)) list.push({ id: entry.id, name: text(entry.name, 200) });
+    }
+    return list;
+}
 function toUpload(row: Values): StoredUpload {
     const version = str(row.version);
     const credits = parseJson(str(row.credits));
@@ -589,6 +605,57 @@ export class RecommendStore {
                 const credits = parseJson(str(row.credits));
                 return { uploader: num(row.uploader), uploaderName: str(row.uploader_name), credits: Array.isArray(credits) ? (credits as TrackCredit[]) : [] };
             }));
+        });
+    }
+    /** Найденные аккаунты исполнителей реестра по ключу имени */
+    public artistAccounts(userId: unknown): Map<string, { name: string; accounts: Array<{ id: number; name: string }>; resolved: number }> {
+        const result = new Map<string, { name: string; accounts: Array<{ id: number; name: string }>; resolved: number }>();
+        if (!isId(userId)) return result;
+        return this.guarded(userId, (db) => {
+            for (const row of db.prepare('select key, name, accounts, resolved from artists limit 20000').all() as Values[]) {
+                const parsed = parseJson(str(row.accounts));
+                result.set(str(row.key), { name: str(row.name), accounts: cleanAccounts(parsed) ?? [], resolved: num(row.resolved) });
+            }
+            return result;
+        });
+    }
+    /**
+     * Страница нашла аккаунты исполнителя (или поиск не удался): аккаунты и проверка источника artist:<ключ> одной
+     * транзакцией. При отказе прежние аккаунты остаются, повтор решает план по статусу
+     */
+    public artistResolved(userId: unknown, key: unknown, label: unknown, accounts: unknown, status: unknown, error: unknown, now = Date.now()): boolean {
+        if (!isId(userId) || typeof key !== 'string' || !key.startsWith('artist:') || !isCatalogKey(key) || (status !== 'ok' && status !== 'failed')) return false;
+        const list = status === 'ok' ? cleanAccounts(accounts) : [];
+        if (!list) return false;
+        const artist = key.slice('artist:'.length);
+        return this.guarded(userId, (db) => this.transaction(db, () => {
+            if (status === 'ok') {
+                db.prepare(
+                    'insert into artists(key, name, accounts, resolved) values (?, ?, ?, ?) on conflict(key) do update set ' +
+                        "name = case when excluded.name != '' then excluded.name else artists.name end, accounts = excluded.accounts, resolved = excluded.resolved",
+                ).run(artist, text(label, 200), JSON.stringify(list), now);
+            }
+            db.prepare(
+                'insert into catalog(key, label, checked, status, error, found) values (?, ?, ?, ?, ?, ?) on conflict(key) do update set ' +
+                    "label = case when excluded.label != '' then excluded.label else catalog.label end, checked = excluded.checked, status = excluded.status, " +
+                    'error = excluded.error, found = excluded.found',
+            ).run(key, text(label, 200), now, status, text(error, 200), list.length);
+            return true;
+        }));
+    }
+    /** Последнее имя каждого аккаунта по его загрузкам: подписки в реестр идут по имени */
+    public uploaderNames(userId: unknown, uploaders: unknown): Map<number, string> {
+        const names = new Map<number, string>();
+        if (!isId(userId) || !Array.isArray(uploaders)) return names;
+        const ids = [...new Set(uploaders.filter(isId))].slice(0, 5000);
+        if (!ids.length) return names;
+        return this.guarded(userId, (db) => {
+            const select = db.prepare("select uploader_name from uploads where uploader = ? and uploader_name != '' order by checked desc limit 1");
+            for (const id of ids) {
+                const name = str((select.get(id) as Values | undefined)?.uploader_name);
+                if (name) names.set(id, name);
+            }
+            return names;
         });
     }
     /** Источники радара с последней проверкой */
