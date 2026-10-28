@@ -502,6 +502,13 @@ it('аккаунт исполнителя реестра (28.10.2026): втор�
     expect(scoreUpload(other, 'release', CUTOFF - DAY, maps, new Set(), false, CUTOFF)).toBeNull();
     const linked = scoreUpload(other, 'release', CUTOFF - DAY, maps, new Set(), false, CUTOFF, false, { weight: 3, name: 'Alpha' });
     expect(linked).toMatchObject({ linked: true, reason: { kind: 'artist', name: 'Alpha' }, fan: false });
+    // Основной аккаунт, который слушали мало: слабый свой вес заменяется весом исполнителя, причина исполнитель, а не жанр
+    const faint = tasteMaps({ artists: [[8, 0.05]], credits: [['alpha', 3]], tags: [['jazz', 1]], families: [], markers: [], tracks: [] })!;
+    const weak = scoreUpload(other, 'release', CUTOFF - DAY, faint, new Set(), false, CUTOFF)!;
+    const strong = scoreUpload(other, 'release', CUTOFF - DAY, faint, new Set(), false, CUTOFF, false, { weight: 3, name: 'Alpha' })!;
+    expect(weak.reason.kind).toBe('tag');
+    expect(strong).toMatchObject({ linked: true, reason: { kind: 'artist', name: 'Alpha' } });
+    expect(strong.base).toBeGreaterThan(weak.base);
     // Аккаунт, который вкус не любит, весом исполнителя не спасается
     const disliked = tasteMaps({ artists: [[8, -2]], credits: [['alpha', 3]], tags: [['phonk', 1]], families: [], markers: [], tracks: [] })!;
     expect(scoreUpload(other, 'release', CUTOFF - DAY, disliked, new Set(), false, CUTOFF, false, { weight: 3, name: 'Alpha' })).toBeNull();
@@ -520,6 +527,8 @@ it('каналы (28.10.2026): аккаунт с чужими исполните
         ...works(80, 'Oslated', ['A - One', 'B - Two', 'C - Three', 'D - Four', 'Oslated Mix']),
         ...works(81, 'Artist', ['One', 'Two', 'Guest - Three', 'Four', 'Five']),
         ...works(82, 'Tiny', ['A - One', 'B - Two']),
+        // Свои релизы, где в метаданных записаны только соавторы: исполнителя в названии нет, это не канал
+        ...[0, 1, 2, 3, 4].map((i) => ({ uploader: 85, uploaderName: 'Band', credits: [{ name: 'Guest ' + i, key: 'guest' + i, role: 'artist' as const, source: 'metadata' as const }] })),
         // Битмейкер и ремиксер выкладывают своё, хотя исполнитель в названии другой
         ...works(83, 'Beatmaker', ['A - One (prod. Beatmaker)', 'B - Two (prod. Beatmaker)', 'C - Three (prod. Beatmaker)', 'D - Four (prod. Beatmaker)', 'E - Five']),
         ...works(84, 'Remixer', ['A - One (Remixer Remix)', 'B - Two (Remixer Remix)', 'C - Three (Remixer Remix)', 'D - Four (Remixer Remix)', 'E - Five']),

@@ -193,11 +193,15 @@ export function scoreUpload(
     const score = tasteScore(track, maps);
     if (score.track <= -1) return null;
     const followed = follows.has(upload.uploader);
-    // Аккаунт исполнителя реестра без своего веса во вкусе (второй аккаунт, найденный поиском по имени): имя загрузчика
-    // оценка пропускает, поэтому вес исполнителя идёт вместо веса аккаунта, насыщенно, как часть артиста. Минус самого
-    // аккаунта во вкусе (его пропускают) весом исполнителя не перекрывается
-    const registryArtist = !channel && account && score.artist === 0 ? account : null;
-    const registryPart = registryArtist ? (2 * registryArtist.weight) / (2 + registryArtist.weight) : 0;
+    // Аккаунт исполнителя реестра со слабым своим весом во вкусе (второй аккаунт, найденный поиском по имени, или
+    // основной, который слушали мало): имя загрузчика оценка пропускает, поэтому вес исполнителя идёт вместо веса
+    // аккаунта, насыщенно, как часть артиста. Живая проверка 28.10.2026: свой релиз Juice WRLD шёл 45-м «по жанру».
+    // Минус самого аккаунта во вкусе (его пропускают) весом исполнителя не перекрывается
+    const soft = (value: number): number => (2 * value) / (2 + Math.abs(value));
+    const registryArtist = !channel && account && score.artist >= 0 && account.weight > score.artist ? account : null;
+    const registryFull = registryArtist ? soft(registryArtist.weight) : 0;
+    // Сверх части аккаунта, уже вошедшей в оценку
+    const registryPart = registryArtist ? registryFull - soft(score.artist) : 0;
     // Подписка без истории всё равно слабая связь: её релиз может войти, если остальное не против
     const raw = score.score + Math.max(registryPart, followed && score.artist <= 0 ? 0.5 : 0);
     if (raw <= 0) return null;
@@ -208,7 +212,7 @@ export function scoreUpload(
             ? { kind: 'follow', name: upload.uploaderName }
             : score.artist >= Math.max(score.tag, 0.3) && upload.uploaderName
                 ? { kind: 'artist', name: upload.uploaderName }
-                : registryArtist && registryPart >= Math.max(score.tag, 0.3)
+                : registryArtist && registryFull >= Math.max(score.tag, 0.3)
                     ? { kind: 'artist', name: registryArtist.name || upload.uploaderName }
                 : score.tagKey
                     ? { kind: 'tag', tag: score.tagKey }
@@ -701,7 +705,10 @@ export function channelSet(works: Array<Pick<StoredUpload, 'uploader' | 'uploade
         // Продюсер («prod. Me») и ремиксер («Me Remix») выкладывают свою работу, хотя исполнитель в названии другой
         const own = nameKey(work.uploaderName);
         const maker = work.credits.some((credit) => (credit.role === 'producer' || credit.role === 'remixer') && credit.key === own);
-        if (fanWork(work.uploaderName, work.credits) && !maker) count.foreign++;
+        // Чужой исполнитель считается только из названия («A - B [Label]»): в метаданных своих релизов исполнитель часто
+        // пишет одних соавторов, и официальный аккаунт с ISRC выходил каналом (живая проверка 28.10.2026, «Три дня дождя»)
+        const titled = work.credits.filter((credit) => credit.source === 'title');
+        if (fanWork(work.uploaderName, titled) && !maker) count.foreign++;
         counts.set(work.uploader, count);
     }
     const P = RADAR_PARAMS;
