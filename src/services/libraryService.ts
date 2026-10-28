@@ -50,6 +50,7 @@ export interface LibraryOperations {
     radarEdition: Operation<RecommendStore['edition']>;
     radarView: Operation<RadarService['view']>;
     radarFound: Operation<RadarService['found']>;
+    radarChannels: Operation<RadarService['channels']>;
     backupSave: Operation<BackupService['save']>;
     backupInspect: Operation<BackupService['inspect']>;
     backupRestore: Operation<BackupService['restore']>;
@@ -101,7 +102,7 @@ export class LibraryService {
     }
     public request<K extends keyof LibraryOperations>(method: K, ...args: LibraryOperations[K]['args']): Promise<LibraryOperations[K]['result']> {
         try {
-            if (method === 'sync' || method === 'profile' || method === 'view' || method === 'radarBuild' || method === 'radarView' || method === 'radarFound' || method === 'backupSave' || method === 'backupInspect') this.flush();
+            if (method === 'sync' || method === 'profile' || method === 'view' || method === 'radarBuild' || method === 'radarView' || method === 'radarFound' || method === 'radarChannels' || method === 'backupSave' || method === 'backupInspect') this.flush();
             const worker = this.start();
             const id = ++this.sequence;
             const backup = method.startsWith('backup');

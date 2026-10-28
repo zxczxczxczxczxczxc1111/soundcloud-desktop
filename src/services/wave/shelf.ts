@@ -11,11 +11,11 @@ import * as waveTexts from '../waveTexts';
 import * as sourcesModule from './sources';
 import type { RadarCard } from './radar';
 import type { ScMix } from './sources';
-import type { MenuTarget, Profile, Seed, TasteMaps, WaveReason, WaveState, WaveTexts, WaveTrack } from '../waveTypes';
+import type { MenuTarget, Profile, Seed, TasteGroup, TasteMaps, WaveReason, WaveState, WaveTexts, WaveTrack } from '../waveTypes';
 import type { SitePlayer, WaveWindow } from '../wave';
 
 const { confirmedCopies } = identity;
-const { genreMain } = waveGenres;
+const { genreMain, trackMatchesGenre } = waveGenres;
 const { canonicalUrl, coversOf, retryDelay } = waveLinks;
 const { capPerArtist, daySample, forgottenPicks, isWaveEligible, shuffleInPlace } = wavePicks;
 const { pickFinds, tasteForTime, tasteGroups, tasteOrder, tasteScore, tasteSlot } = waveTaste;
@@ -116,9 +116,11 @@ export function installShelf(core: ShelfCore): ShelfSection {
     // Формат сборки полки: 2 это жанры из всех лайков и прослушанного, до восьми, с поджанрами (26.09.2026);
     // 3 это группа по жанру трека, а не по меткам, и не больше SHELF_ARTIST_CAP треков артиста в карточке (26.09.2026);
     // 4 это выборка дня в «Давно не слушал» и жанрах (28.09.2026); 5 это вес любви в «Давно не слушал» и карточка
-    // «Лайкнули твои артисты» (02.10.2026).
+    // «Лайкнули твои артисты» (02.10.2026); 6 это свежие загрузки каналов в жанровых карточках (28.10.2026).
     // Снимок другого формата собирается заново сразу, а не в полночь
-    const SHELF_FORMAT = 5;
+    const SHELF_FORMAT = 6;
+    /** Свежих загрузок каналов в одной жанровой карточке, не больше */
+    const SHELF_CHANNEL_CAP = 8;
     const SHELF_ARTIST_CAP = 5;
     // Прослушанное от 30 секунд из индекса истории: main отдаёт его вместе со снимком
     interface HeardTrack { id: number; artist: number; title: string; artistName: string; genre: string; tags: string; path: string; artwork: string; dur: number; share?: number }
@@ -206,6 +208,42 @@ export function installShelf(core: ShelfCore): ShelfSection {
             if (entry.ids.length) cards.push(entry);
         }
         return { day: source.day, v: typeof (source as { v?: unknown }).v === 'number' ? (source as { v: number }).v : 1, cards };
+    }
+    // Свежие загрузки каналов, которые радар не берёт (решение владельца 28.10.2026): премьеры техно-каналов
+    // и подобное, связанное со вкусом только самим каналом или жанром. Отказ оставляет полку без них
+    // Ответ один на день: пересборка полки после соседей по вкусу его не повторяет
+    let channelDay: { day: string; tracks: WaveTrack[] } | null = null;
+    async function channelFresh(day: string, liked: Set<number>): Promise<WaveTrack[]> {
+        const bridge = host.soundcloudAPI?.radar;
+        if (!bridge?.channels) return [];
+        const usable = (tracks: WaveTrack[]): WaveTrack[] => tracks.filter((track) => isWaveEligible(track) && !isExcluded(track) && !liked.has(track.id));
+        if (channelDay?.day === day) {
+            for (const track of channelDay.tracks) shelfTracks.set(track.id, track);
+            return usable(channelDay.tracks);
+        }
+        try {
+            const user = await ensureUser();
+            const value = user ? await bridge.channels(user) : [];
+            const ids = (Array.isArray(value) ? value : []).map((item: unknown) => (item && typeof item === 'object' ? (item as { id?: unknown }).id : 0)).filter(isId).slice(0, 40);
+            const tracks = ids.length ? await tracksByIds(ids) : [];
+            channelDay = { day, tracks };
+            return usable(tracks);
+        } catch (error) {
+            console.warn('Волна: свежее с каналов для полки не загружено', error);
+            return [];
+        }
+    }
+    // Каждой свежей загрузке канала первая по весу жанровая карточка, чей главный жанр совпал с жанром трека
+    function channelExtras(groups: TasteGroup[], fresh: WaveTrack[]): Map<TasteGroup, WaveTrack[]> {
+        const extras = new Map<TasteGroup, WaveTrack[]>();
+        for (const track of fresh) {
+            const group = groups.find((entry) => trackMatchesGenre(track, entry.keys.slice(0, 3), true));
+            if (!group || group.tracks.some((item) => item.id === track.id)) continue;
+            const list = extras.get(group) ?? [];
+            if (list.length < SHELF_CHANNEL_CAP) list.push(track);
+            extras.set(group, list);
+        }
+        return extras;
     }
     async function tracksByIds(ids: number[]): Promise<WaveTrack[]> {
         const missing = [...new Set(ids)].filter((id) => !shelfTracks.has(id));
@@ -459,6 +497,8 @@ export function installShelf(core: ShelfCore): ShelfSection {
         const tasted = [...liked.map((track) => ({ track, weight: 1 + Math.max(0, weights?.get(track.id) ?? 0) })), ...listened];
         const tastedWeight = new Map(tasted.map((entry) => [entry.track.id, entry.weight]));
         const groups = tasteGroups(tasted, 8, 8);
+        // Новое с каналов весит как простой лайк и не больше восьми на карточку: не вытесняет любимое
+        const extras = channelExtras(groups, await channelFresh(day, p.liked));
         const artistTotal = new Map<string, number>();
         for (const { track } of tasted) {
             const name = artistName(track).trim();
@@ -478,7 +518,8 @@ export function installShelf(core: ShelfCore): ShelfSection {
             const strong = [...artists].filter(([name, count]) => count >= 2 && typical(name, count) >= 1);
             const sub = (strong.length ? strong : [...artists]).sort((x, y) => typical(y[0], y[1]) - typical(x[0], x[1]) || y[1] - x[1]).slice(0, 3).map(([name]) => name);
             // Каждый день своя выборка жанра с весом по вкусу, а не одни и те же первые 60 (решение владельца 28.09.2026)
-            const daily = daySample(group.tracks, (track) => track.id, (track) => tastedWeight.get(track.id) ?? 1, group.tracks.length, day + ':' + group.keys.join(','));
+            const pool = [...group.tracks, ...(extras.get(group) ?? [])];
+            const daily = daySample(pool, (track) => track.id, (track) => tastedWeight.get(track.id) ?? 1, pool.length, day + ':' + group.keys.join(','));
             const shown = capPerArtist(daily, SHELF_ARTIST_CAP).slice(0, 60);
             cards.push({
                 kind: 'group',

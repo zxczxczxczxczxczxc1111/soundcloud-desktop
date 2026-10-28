@@ -60,6 +60,7 @@ function run(request: LibraryRequest): unknown {
         case 'radarEdition': return recommend.edition(...request.args);
         case 'radarView': return radar.view(...request.args);
         case 'radarFound': return radar.found(...request.args);
+        case 'radarChannels': return radar.channels(...request.args);
         case 'backupSave': return backup.save(...request.args);
         case 'backupInspect': return backup.inspect(...request.args);
         case 'backupRestore': return backup.restore(...request.args);

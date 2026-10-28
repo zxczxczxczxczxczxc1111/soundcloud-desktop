@@ -56,9 +56,11 @@ export function registerRadarIpc(ipc: IpcRegistry, deps: RadarIpcDeps): void {
         if (typeof userId !== 'number' || !Number.isSafeInteger(userId) || userId <= 0) throw new Error('Пользователь не определён');
         return userId;
     };
-    for (const channel of ['soundcloud:radar:view', 'soundcloud:radar:found', 'soundcloud:radar:rebuild', 'soundcloud:radar:state']) ipc.removeHandler(channel);
+    for (const channel of ['soundcloud:radar:view', 'soundcloud:radar:found', 'soundcloud:radar:rebuild', 'soundcloud:radar:state', 'soundcloud:radar:channels']) ipc.removeHandler(channel);
     ipc.handle('soundcloud:radar:view', (event, userId: unknown, period: unknown, revision: unknown) => library.request('radarView', radarUser(event, userId), period, revision));
     ipc.handle('soundcloud:radar:found', (event, userId: unknown, period: unknown, revision: unknown) => library.request('radarFound', radarUser(event, userId), period, revision));
+    // Свежие загрузки каналов для жанровых карточек полки: радар их не берёт
+    ipc.handle('soundcloud:radar:channels', (event, userId: unknown) => library.request('radarChannels', radarUser(event, userId)));
     ipc.handle('soundcloud:radar:rebuild', async (event, userId: unknown) => {
         const user = radarUser(event, userId);
         const period = radarPeriod(Date.now(), cleanSchedule(store.get('radarDay'), store.get('radarTime'), store.get('radarZone')));

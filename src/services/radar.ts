@@ -1,13 +1,17 @@
-// Пятничный радар (раздел 8 плана): свежесть конкретной версии, оценка по вкусу, отбор до 50 записей с мягким
+// Радар релизов (раздел 8 плана): свежесть конкретной версии, оценка по вкусу, отбор до 50 записей с мягким
 // разнообразием, план обхода источников и покрытие. Чистые функции получают время, профиль и историю аргументами;
 // RadarService в worker только собирает их из хранилищ
 import type { CatalogCheck, CatalogStatus, EditionSummary, RecommendStore, StoredUpload } from './recommendStore';
 import type { HistoryIndex, TastePlay } from './historyIndex';
 import type { TasteProfile, TasteService } from './tasteModel';
 import type { ExclusionEntry, WaveExclusionList } from './waveExclusions';
-import { confirmedCopies, confirmedGroups, copyKey, copyKeys, familyKey, nameKey, performerKey, trackCredits, versionKey, type TrackCredit } from './trackIdentity';
+import {
+    confirmedCopies, confirmedGroups, copyKey, copyKeys, familyKey, identityText, nameKey, parseTrackTitle, performerKey, splitNames, trackCredits, trackDuration, versionKey,
+    type TrackCredit,
+} from './trackIdentity';
 import { tagShares, tasteMaps, tasteScore, type TasteMaps, type WaveTrack } from './wave';
 import { RADAR_FRESH_MS } from './radarSchedule';
+import { isWaveEligible } from './wavePicks';
 
 const DAY = 86400000;
 
@@ -15,7 +19,9 @@ const DAY = 86400000;
  *  4: потолок аккаунта и в «Новых загрузках» (26.09.2026).
  *  5: прибавка свежести только последним трём дням окна, недобор открытий отдаётся связанным (28.09.2026).
  *  6: фанатские работы отдельной карточкой, архивные записи вниз своего списка (02.10.2026).
- *  7: окно от отсечки прошлого выпуска, опоздавшие к нему записи и без повторов показанного (28.10.2026) */
+ *  7 (28.10.2026): окно от отсечки прошлого выпуска, опоздавшие к нему записи и без повторов показанного; дата релиза
+ *  доказывает только с ISRC или у своего аккаунта; фит любимого у незнакомого аккаунта и слив «Название - Исполнитель»
+ *  это фанатские работы; одна песня с разных аккаунтов одной строкой; каналы без любимых исполнителей уходят на полку */
 export const RADAR_PARAMS = {
     version: 7,
     /** Окно свежести версии у первого выпуска, дни до отсечки; дальше окно начинается с отсечки прошлого выпуска */
@@ -69,14 +75,35 @@ export const RADAR_PARAMS = {
     /** Поиск свежего по любимым участникам */
     searches: 20,
     searchWeight: 0.5,
+    /** Канал: среди последних сохранённых загрузок аккаунта (не меньше channelMin) чужих исполнителей от этой доли */
+    channelMin: 5,
+    channelShare: 0.6,
+    /** Свежих загрузок каналов для жанровых карточек полки, не больше */
+    shelfChannels: 40,
 };
 
 export type Freshness = 'release' | 'upload' | 'old' | 'future';
+type Provenance = Pick<StoredUpload, 'releaseDay' | 'isrc' | 'uploaderName' | 'credits'>;
+/** Аккаунт выложил своё: чужого исполнителя в титрах нет, загрузчик среди исполнителей или это его переделка */
+export function ownWork(upload: Pick<StoredUpload, 'uploaderName' | 'credits'>): boolean {
+    const uploader = nameKey(upload.uploaderName);
+    const credits: TrackCredit[] = Array.isArray(upload.credits) ? upload.credits : [];
+    const foreign = credits.some((credit) => credit.role === 'artist' && credit.key !== uploader);
+    return !foreign || credits.some((credit) => credit.role === 'remixer' && credit.key === uploader);
+}
+/** Заявленная дата релиза доказывает версию только вместе с ISRC или у своего аккаунта: дату ставит любой загрузчик,
+ *  сливы и перезаливы тоже (разбор 28.10.2026). У канала своего нет: доказывает только ISRC */
+export function provenDate(upload: Provenance, channel = false): boolean {
+    return /^\d{4}-\d{2}-\d{2}$/.test(upload.releaseDay) && (!!upload.isrc || (!channel && ownWork(upload)));
+}
 /** Свежесть конкретной версии в окне [from, to]. release: дата версии доказана и в окне; upload: свежа только
- *  публикация (перезалив, чужой канал без даты релиза, старая дата релиза) и место ей в «Новых загрузках» */
-export function freshness(upload: Pick<StoredUpload, 'createdAt' | 'displayAt' | 'releaseDay' | 'uploaderName' | 'credits'>, earlierCopy: boolean, from: number, to: number): { kind: Freshness; at: number } {
+ *  публикация (перезалив, чужой канал, старая дата релиза) и место ей в «Новых загрузках». channel: загрузчик канал (channelSet) */
+export function freshness(
+    upload: Provenance & Pick<StoredUpload, 'createdAt' | 'displayAt'>, earlierCopy: boolean, from: number, to: number, channel = false,
+): { kind: Freshness; at: number } {
     const published = upload.displayAt || upload.createdAt;
-    const release = /^\d{4}-\d{2}-\d{2}$/.test(upload.releaseDay) ? Date.parse(upload.releaseDay + 'T00:00:00Z') : NaN;
+    // Недоказанная дата релиза не в счёт: запись оценивается по публикации
+    const release = provenDate(upload, channel) ? Date.parse(upload.releaseDay + 'T00:00:00Z') : NaN;
     // К отсечке запись ещё не была опубликована: её место в следующем выпуске, какой бы ни была дата релиза
     if (published > to) return { kind: 'future', at: published };
     if (Number.isFinite(release)) {
@@ -88,12 +115,20 @@ export function freshness(upload: Pick<StoredUpload, 'createdAt' | 'displayAt' |
     if (!published || published < from) return { kind: 'old', at: published };
     if (earlierCopy) return { kind: 'upload', at: published };
     // Дата публикации доказывает версию, только если аккаунт выложил своё: исполнитель или автор этой переделки.
-    // Сборный канал с чужой песней без даты релиза даёт лишь свежую загрузку
-    const uploader = nameKey(upload.uploaderName);
-    const credits: TrackCredit[] = Array.isArray(upload.credits) ? upload.credits : [];
-    const foreign = credits.some((credit) => credit.role === 'artist' && credit.key !== uploader);
-    const ownRework = credits.some((credit) => credit.role === 'remixer' && credit.key === uploader);
-    return { kind: !foreign || ownRework ? 'release' : 'upload', at: published };
+    // Сборный канал с чужой песней даёт лишь свежую загрузку, канал с фитом без исполнителя в названии тоже
+    return { kind: ownWork(upload) && !channel ? 'release' : 'upload', at: published };
+}
+
+/** «Название - Исполнитель» (так выкладывают сливы): во второй части известный вкусу исполнитель, в первой никого
+ *  известного. Тогда части меняются местами, хвост в скобках остаётся у названия; иначе null */
+export function reversedTitle(title: string, known: (key: string) => boolean): string | null {
+    const match = /^(.+?)\s+-\s+([^()[\]{}|]+?)(\s*[([{|].*)?$/.exec(identityText(title));
+    if (!match) return null;
+    const names = (text: string): string[] => splitNames(text).map(nameKey).filter(Boolean);
+    const first = names(match[1]);
+    const second = names(match[2]);
+    if (!first.length || !second.length || first.some(known) || !second.some(known)) return null;
+    return match[2] + ' - ' + match[1] + (match[3] ?? '');
 }
 
 /** Строка хранилища обратно в трек для оценки вкусом; участники из метаданных возвращаются туда же, откуда их берёт разбор */
@@ -102,7 +137,7 @@ export function uploadTrack(upload: StoredUpload): WaveTrack {
         upload.credits.filter((credit) => credit.source === 'metadata' && credit.role === role).map((credit) => credit.name).join(', ') || null;
     return {
         id: upload.id, kind: 'track', title: upload.title, user_id: upload.uploader, user: { id: upload.uploader, username: upload.uploaderName },
-        duration: upload.duration, genre: upload.genre, tag_list: upload.tags,
+        duration: upload.duration, genre: upload.genre, tag_list: upload.tags, ...(upload.policy ? { policy: upload.policy } : {}),
         publisher_metadata: { artist: names('artist'), writer_composer: names('writer'), isrc: upload.isrc || null },
     };
 }
@@ -125,8 +160,10 @@ export interface RadarCandidate {
     reason: RadarReason;
     /** Исполнитель для группы выпуска (performerKey): свой загрузчик или исполнитель у сборного канала */
     performer: string;
-    /** Фанатская работа: чужая песня у аккаунта не из подписок, без ISRC и даты релиза */
+    /** Фанатская работа у аккаунта не из подписок без ISRC: чужая песня или связь со вкусом только через участника */
     fan: boolean;
+    /** Связь со вкусом через исполнителя, участника или ремиксера в титрах, а не через сам аккаунт или жанр */
+    credited: boolean;
     /** Архивная запись: в названии год старше archiveYears, даты релиза в окне нет */
     archive: boolean;
 }
@@ -139,8 +176,11 @@ export interface RadarPick extends RadarCandidate {
 // Оценка по вкусу в 0..1: насыщение, чтобы один огромный вес не делал остальное неразличимым
 export const baseScore = (score: number): number => (score > 0 ? 1 - Math.exp(-score / 2) : 0);
 
-/** Кандидат из загрузки или null, если вкус против неё (сильный минус трека) или связи со вкусом нет вовсе */
-export function scoreUpload(upload: StoredUpload, kind: Freshness, at: number, maps: TasteMaps, follows: Set<number>, heard: boolean, to: number): RadarCandidate | null {
+/** Кандидат из загрузки или null, если вкус против неё (сильный минус трека) или связи со вкусом нет вовсе.
+ *  channel: загрузчик канал, его вес во вкусе не делает загрузку своей работой */
+export function scoreUpload(
+    upload: StoredUpload, kind: Freshness, at: number, maps: TasteMaps, follows: Set<number>, heard: boolean, to: number, channel = false,
+): RadarCandidate | null {
     const track = uploadTrack(upload);
     const score = tasteScore(track, maps);
     if (score.track <= -1) return null;
@@ -158,15 +198,23 @@ export function scoreUpload(upload: StoredUpload, kind: Freshness, at: number, m
                 : score.tagKey
                     ? { kind: 'tag', tag: score.tagKey }
                     : { kind: 'taste' };
-    const linked = followed || score.artist >= RADAR_PARAMS.linkWeight || score.creditBest >= RADAR_PARAMS.linkWeight || score.track > 0 || score.family > 0;
+    const P = RADAR_PARAMS;
+    const linked = followed || score.artist >= P.linkWeight || score.creditBest >= P.linkWeight || score.track > 0 || score.family > 0;
     const credits = Array.isArray(upload.credits) ? upload.credits : [];
-    const dated = /^\d{4}-\d{2}-\d{2}$/.test(upload.releaseDay);
-    const archive = !(kind === 'release' && dated) && archiveTitle(upload.title, to);
+    const uploader = nameKey(upload.uploaderName);
+    const weight = (key: string): number => maps.credits.get(key) ?? 0;
+    // Участник в титрах (не продюсер и не автор слов) весит во вкусе. Загрузчик известен: аккаунт или его имя
+    // как исполнитель весят во вкусе, тогда это второй аккаунт артиста, а не фанат. Канал известным так не становится
+    const credited = credits.some((credit) => credit.role !== 'producer' && credit.role !== 'writer' && credit.key !== uploader && weight(credit.key) >= P.linkWeight);
+    const knownUploader = !channel && (score.artist >= P.linkWeight || weight(uploader) >= P.linkWeight);
+    const archive = !(kind === 'release' && provenDate(upload, channel)) && archiveTitle(upload.title, to);
     return {
-        key: upload.key, id: upload.id, base: archive ? Math.max(0, base - RADAR_PARAMS.archivePenalty) : base,
+        key: upload.key, id: upload.id, base: archive ? Math.max(0, base - P.archivePenalty) : base,
         direction: score.tagKey || tagShares(upload.genre, upload.tags, [upload.uploaderName])[0]?.[0] || '', family: familyKey(track) || upload.key,
         uploader: upload.uploader, kind, at, heard, linked, reason, performer: performerKey(upload.uploader, upload.uploaderName, credits),
-        fan: !followed && !upload.isrc && !dated && fanWork(upload.uploaderName, credits), archive,
+        // Фит или ремикс любимого артиста у незнакомого аккаунта без ISRC это тоже фанатская работа (разбор 28.10.2026):
+        // «Painkillers! feat. Lil Peep», «No Fame (feat. Juice WRLD)»
+        fan: !followed && !upload.isrc && (fanWork(upload.uploaderName, credits) || (credited && !knownUploader)), credited, archive,
     };
 }
 
@@ -523,6 +571,8 @@ export interface RadarInput {
     excluded: (upload: StoredUpload) => boolean;
     /** Подтверждённые группы записей: копии одной записи в выпуске одной строкой */
     groups: Map<string, string>;
+    /** Каналы: аккаунты, где большинство загрузок это чужие исполнители (премьеры, сборники, перезаливы) */
+    channels: Set<number>;
     history: string[][];
     coverage: RadarCoverage;
 }
@@ -542,36 +592,117 @@ export function radarCandidates(input: RadarInput, to: number): RadarCandidate[]
     const { window } = input;
     // Показанное раньше не повторяется ни подтверждённой, ни вероятной копией
     const shown = confirmedCopies(window.shown, input.groups);
-    // Вероятные и подтверждённые копии одной версии в выпуске одной строкой: остаётся релиз раньше перезалива,
-    // затем лучшая оценка, при равенстве меньший id. Порядок входа не решает, какая копия остаётся
-    // Запись отмечается ключом подтверждённой группы и серединой ключей вероятной копии; новая ищет свои ключи
-    // с соседними шагами длительности. Так копия члена группы тоже склеивается с ним
-    interface Entry { candidate: RadarCandidate; centers: string[] }
+    const known = knownCredit(maps);
+    // Копии в выпуске одной строкой. Ключи: подтверждённая группа, вероятная копия той же версии (copyKeys) и одна
+    // песня с разных аккаунтов без общего ISRC: то же ядро названия и пометки, длительность рядом и общий исполнитель
+    // среди загрузчика и титров («ROMEO» у Pepel Nahudi и «ROMEO (feat. Pepel Nahudi)» у SLATTCRANK). Остаётся релиз
+    // раньше перезалива, затем копия с ISRC, затем своя у исполнителя, затем лучшая оценка, при равенстве меньший id.
+    // Запись отмечается серединами ключей, новая ищет свои с соседними шагами длительности: порядок входа не решает
+    interface Entry { candidate: RadarCandidate; isrc: boolean; performers: Set<string>; centers: string[] }
     const index = new Map<string, Entry>();
-    const better = (a: RadarCandidate, b: RadarCandidate): boolean =>
-        a.kind !== b.kind ? a.kind === 'release' : a.base !== b.base ? a.base > b.base : a.id < b.id;
-    for (const upload of input.uploads.slice().sort((a, b) => a.id - b.id)) {
-        if (input.excluded(upload) || shown.has(upload.id)) continue;
+    const better = (a: Entry, b: Entry): boolean =>
+        a.candidate.kind !== b.candidate.kind ? a.candidate.kind === 'release'
+            : a.isrc !== b.isrc ? a.isrc
+                : a.candidate.performer.startsWith('u:') !== b.candidate.performer.startsWith('u:') ? a.candidate.performer.startsWith('u:')
+                    : a.candidate.base !== b.candidate.base ? a.candidate.base > b.candidate.base : a.candidate.id < b.candidate.id;
+    for (const stored of input.uploads.slice().sort((a, b) => a.id - b.id)) {
+        if (input.excluded(stored) || shown.has(stored.id)) continue;
+        const upload = reorderedUpload(stored, known);
+        const track = uploadTrack(upload);
+        // Недоступное и отрывки сразу мимо: страница всё равно их спрячет, а место в выпуске будет занято
+        if (!isWaveEligible(track)) continue;
         const from = upload.firstSeen > window.seenAfter ? window.lateFrom : window.from;
-        const { kind, at } = freshness(upload, input.reuploads.has(upload.key), from, to);
+        const channel = input.channels.has(upload.uploader);
+        const { kind, at } = freshness(upload, input.reuploads.has(upload.key), from, to, channel);
         if (kind !== 'release' && kind !== 'upload') continue;
-        const copies = copyKeys(uploadTrack(upload));
+        const copies = copyKeys(track);
         if (copies.some((key) => window.shownCopies.has(key))) continue;
-        const candidate = scoreUpload(upload, kind, at, maps, follows, input.heard.has(upload.id), to);
+        const candidate = scoreUpload(upload, kind, at, maps, follows, input.heard.has(upload.id), to, channel);
         if (!candidate) continue;
+        // Канал (премьеры, сборники) связан со вкусом только собой или жанром: это не релизы, их место на полке
+        // в жанровой карточке (решение владельца 28.10.2026). Запись любимого исполнителя на канале остаётся
+        if (channel && !candidate.credited) continue;
         const root = input.groups.get(upload.key);
-        const lookups = root ? ['g:' + root, ...copies] : copies;
-        const entry: Entry = { candidate, centers: [...(root ? ['g:' + root] : []), copies.length === 3 ? copies[1] : copies[0]] };
+        const loose = songKeys(track);
+        const entry: Entry = {
+            candidate, isrc: !!upload.isrc, performers: performersOf(upload),
+            centers: [...(root ? ['g:' + root] : []), copies.length === 3 ? copies[1] : copies[0], ...(loose.length ? [loose[1]] : [])],
+        };
         const rivals = new Set<Entry>();
-        for (const key of lookups) {
+        for (const key of root ? ['g:' + root, ...copies] : copies) {
             const rival = index.get(key);
             if (rival) rivals.add(rival);
         }
-        if ([...rivals].some((rival) => better(rival.candidate, candidate))) continue;
+        for (const key of loose) {
+            const rival = index.get(key);
+            if (rival && [...rival.performers].some((name) => entry.performers.has(name))) rivals.add(rival);
+        }
+        if ([...rivals].some((rival) => better(rival, entry))) continue;
         for (const rival of rivals) for (const key of rival.centers) if (index.get(key) === rival) index.delete(key);
         for (const key of entry.centers) index.set(key, entry);
     }
     return demoteBulk([...new Set(index.values())].map((entry) => entry.candidate), input.uploads);
+}
+
+/** Каналы среди аккаунтов по их последним загрузкам: премьеры и сборники выкладывают чужих исполнителей */
+export function channelSet(works: Array<Pick<StoredUpload, 'uploader' | 'uploaderName' | 'credits'>>): Set<number> {
+    const counts = new Map<number, { total: number; foreign: number }>();
+    for (const work of works) {
+        const count = counts.get(work.uploader) ?? { total: 0, foreign: 0 };
+        count.total++;
+        if (fanWork(work.uploaderName, work.credits)) count.foreign++;
+        counts.set(work.uploader, count);
+    }
+    const P = RADAR_PARAMS;
+    return new Set([...counts].filter(([, count]) => count.total >= P.channelMin && count.foreign >= count.total * P.channelShare).map(([uploader]) => uploader));
+}
+/** Свежие загрузки каналов, которые радар не берёт (связь только каналом или жанром), для жанровых карточек полки:
+ *  ещё не слышанные, лучшие по оценке */
+export function channelPicks(input: Pick<RadarInput, 'uploads' | 'profile' | 'follows' | 'heard' | 'excluded' | 'channels'>, from: number, to: number): Array<{ id: number; base: number }> {
+    const maps = tasteMaps(input.profile) ?? tasteMaps({});
+    if (!maps) return [];
+    const follows = new Set(input.follows);
+    const known = knownCredit(maps);
+    const picks: Array<{ id: number; base: number }> = [];
+    for (const stored of input.uploads) {
+        if (!input.channels.has(stored.uploader) || input.excluded(stored) || input.heard.has(stored.id)) continue;
+        // Тот же разворот «Название - Исполнитель», что у радара: иначе запись встала бы и туда, и сюда
+        const upload = reorderedUpload(stored, known);
+        if (!isWaveEligible(uploadTrack(upload))) continue;
+        const { kind, at } = freshness(upload, false, from, to, true);
+        if (kind !== 'release' && kind !== 'upload') continue;
+        const candidate = scoreUpload(upload, kind, at, maps, follows, false, to, true);
+        if (candidate && !candidate.credited) picks.push({ id: upload.id, base: round(candidate.base) });
+    }
+    return picks.sort((a, b) => b.base - a.base || a.id - b.id).slice(0, RADAR_PARAMS.shelfChannels);
+}
+
+/** Исполнитель известен вкусу: его вес как участника от порога связи */
+const knownCredit = (maps: TasteMaps) => (key: string): boolean => (maps.credits.get(key) ?? 0) >= RADAR_PARAMS.linkWeight;
+/** Загрузка с исправленным порядком «Название - Исполнитель» (reversedTitle): разбор, семья и участники заново */
+export function reorderedUpload(upload: StoredUpload, known: (key: string) => boolean): StoredUpload {
+    const title = reversedTitle(upload.title, known);
+    if (!title) return upload;
+    const track = { ...uploadTrack(upload), title };
+    const parsed = parseTrackTitle(title);
+    return { ...upload, title, familyKey: familyKey(track, parsed), versionKey: versionKey(track, parsed), version: parsed.version, credits: trackCredits(track, parsed) };
+}
+/** Ключи одной песни с разных аккаунтов: ядро названия без участников и скобок, пометки версии, длительность шагом
+ *  2 секунды с соседями. Безымянную переделку так не склеить: два разных ремикса бывают одной длины */
+export function songKeys(track: WaveTrack): string[] {
+    const parsed = parseTrackTitle(track.title);
+    const duration = trackDuration(track);
+    if (!parsed.baseKey || parsed.anonymous || !duration) return [];
+    const step = Math.round(duration / 2000);
+    return [step - 1, step, step + 1].map((value) => 's:' + parsed.baseKey + '|' + parsed.version.join('+') + '|' + value);
+}
+/** Исполнители записи для склейки копий: загрузчик, исполнители и гости из титров и метаданных */
+export function performersOf(upload: Pick<StoredUpload, 'uploaderName' | 'credits'>): Set<string> {
+    const names = new Set<string>();
+    const own = nameKey(upload.uploaderName);
+    if (own) names.add(own);
+    for (const credit of upload.credits) if ((credit.role === 'artist' || credit.role === 'featured') && credit.key) names.add(credit.key);
+    return names;
 }
 
 /** Пачка без дат релиза (решение владельца 25.09.2026): аккаунт, выложивший за bulkDays больше bulkSize записей, чья
@@ -579,7 +710,7 @@ export function radarCandidates(input: RadarInput, to: number): RadarCandidate[]
  *  остальные становятся «Новыми загрузками». Записи с датой релиза в счёт не идут и не трогаются */
 export function demoteBulk(candidates: RadarCandidate[], uploads: StoredUpload[]): RadarCandidate[] {
     const P = RADAR_PARAMS;
-    const dated = new Set(uploads.filter((upload) => /^\d{4}-\d{2}-\d{2}$/.test(upload.releaseDay)).map((upload) => upload.key));
+    const dated = new Set(uploads.filter((upload) => provenDate(upload)).map((upload) => upload.key));
     const undated = new Map<number, RadarCandidate[]>();
     for (const candidate of candidates) {
         if (candidate.kind !== 'release' || dated.has(candidate.key)) continue;
@@ -656,6 +787,7 @@ const memberIds = (keys: Array<{ key: string }>, prefix: string): number[] =>
 // кэшируются на 6 часов: разбор истории на каждой проверке раз в 10 минут не нужен
 export class RadarService {
     private names = new Map<number, { at: number; wanted: string; names: Map<string, string> }>();
+    private channelMarks = new Map<number, Map<number, { at: number; channel: boolean }>>();
 
     constructor(
         private store: RecommendStore,
@@ -742,10 +874,30 @@ export class RadarService {
         const groups = confirmedGroups(this.store.recordingLinks(userId));
         const heard = heardIds(this.index.tastePlays(userId, from - 30 * DAY), memberIds(this.store.libraryMembers(userId, 'likes'), 'sc:track:'), groups);
         const profile = withUploads ? this.taste.profile(userId) : null;
+        const channels = this.channelsOf(userId, window.uploads.map((upload) => upload.uploader), now);
         return {
             now, uploads: window.uploads, reuploads: new Set(window.reuploads), profile, tasteVersion: profile?.version ?? 0,
-            follows: memberIds(this.store.libraryMembers(userId, 'followings'), 'sc:user:'), heard, excluded: exclusionFilter(this.exclusions(userId), groups, now), groups,
+            follows: memberIds(this.store.libraryMembers(userId, 'followings'), 'sc:user:'), heard, excluded: exclusionFilter(this.exclusions(userId), groups, now), groups, channels,
         };
+    }
+    // Каналы среди загрузчиков: признак аккаунта кэшируется на 6 часов, из хранилища читаются только новые и устаревшие.
+    // Без кэша каждая сборка, «Все найденные» и полка читали бы последние загрузки сотен аккаунтов
+    private channelsOf(userId: number, uploaders: number[], now: number): Set<number> {
+        const marks = this.channelMarks.get(userId) ?? new Map<number, { at: number; channel: boolean }>();
+        this.channelMarks.set(userId, marks);
+        const wanted = [...new Set(uploaders)];
+        const stale = wanted.filter((id) => (marks.get(id)?.at ?? -Infinity) < now - 6 * 3600000);
+        if (stale.length) {
+            const found = channelSet(this.store.recentWorks(userId, stale));
+            for (const id of stale) marks.set(id, { at: now, channel: found.has(id) });
+        }
+        return new Set(wanted.filter((id) => marks.get(id)?.channel === true));
+    }
+    /** Свежие загрузки каналов за две недели для жанровых карточек полки (решение владельца 28.10.2026) */
+    public channels(userId: unknown, now = Date.now()): Array<{ id: number; base: number }> {
+        if (!isId(userId)) return [];
+        const from = now - RADAR_PARAMS.lateDays * DAY;
+        return channelPicks(this.inputs(userId, from, now, now), from, now);
     }
 }
 export interface RadarView {

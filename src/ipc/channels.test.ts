@@ -22,7 +22,7 @@ const HANDLERS = [
     'backup-auto', 'backup-folder', 'backup-pick', 'backup-restore', 'backup-save', 'backup-state', 'check-updates', 'export-diagnostics', 'get-accounts',
     'get-current-track', 'get-header-texts', 'get-minimize-to-tray', 'get-navigation-controls-enabled', 'get-translations', 'get-update-state', 'get-wave-exclusions',
     'install-update-now', 'is-maximized', 'open-data-folder', 'open-external-url', 'open-release-page', 'remove-wave-exclusion', 'soundcloud:radar:found',
-    'soundcloud:radar:rebuild', 'soundcloud:radar:state', 'soundcloud:radar:view', 'soundcloud:wave-exclusions:load', 'soundcloud:wave-exclusions:set',
+    'soundcloud:radar:channels', 'soundcloud:radar:rebuild', 'soundcloud:radar:state', 'soundcloud:radar:view', 'soundcloud:wave-exclusions:load', 'soundcloud:wave-exclusions:set',
     'soundcloud:wave-journal:load', 'soundcloud:wave-library:heard', 'soundcloud:wave-library:load', 'soundcloud:wave-library:recent', 'soundcloud:wave-library:save', 'soundcloud:wave-shelf:load',
     'soundcloud:wave-shelf:save', 'soundcloud:wave-taste',
     ...['loadSession', 'saveSession', 'loadCatalog', 'saveCatalog', 'listMixes', 'saveMix', 'removeMix'].map((method) => 'soundcloud:library:' + method),
@@ -47,6 +47,6 @@ describe('каналы обработчиков', () => {
         expect([...ipc.listeners.keys()].sort()).toEqual([...LISTENERS].sort());
         expect([...ipc.handlers.keys()].sort()).toEqual([...HANDLERS].sort());
         expect([...ipc.listeners.values()].every((list) => list.length === 1)).toBe(true);
-        expect(LISTENERS.length + HANDLERS.length).toBe(84);
+        expect(LISTENERS.length + HANDLERS.length).toBe(85);
     });
 });

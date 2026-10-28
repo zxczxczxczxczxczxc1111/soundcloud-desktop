@@ -176,6 +176,7 @@ export interface WaveWindow extends Window {
             found(user: number, period: string, revision?: number): Promise<unknown>;
             rebuild(user: number): Promise<unknown>;
             state(): Promise<unknown>;
+            channels?(user: number): Promise<unknown>;
         };
         reportWaveEmpty?(counts: { seen: number; artistTracks: number; moodTags: number }): void;
         reportCrossfade?(entry: { stage: string; prepMs: number; leftMs: number }): void;

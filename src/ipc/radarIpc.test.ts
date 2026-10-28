@@ -23,7 +23,7 @@ describe('обработчики радара', () => {
     it('чужой отправитель и неверный пользователь отклонены до хранилища', async () => {
         const { ipc, site, request } = setup();
         const stranger = fakeEvent();
-        for (const channel of ['soundcloud:radar:view', 'soundcloud:radar:found', 'soundcloud:radar:rebuild'])
+        for (const channel of ['soundcloud:radar:view', 'soundcloud:radar:found', 'soundcloud:radar:rebuild', 'soundcloud:radar:channels'])
             await expect(ipc.invoke(channel, stranger, 11)).rejects.toThrow('Недопустимый отправитель радара');
         await expect(ipc.invoke('soundcloud:radar:state', stranger)).rejects.toThrow('Недопустимый отправитель радара');
         for (const user of [0, -1, 1.5, '11', null])
@@ -34,8 +34,10 @@ describe('обработчики радара', () => {
         const { ipc, site, request } = setup();
         await ipc.invoke('soundcloud:radar:view', site, 11, '2026-09-18', 2);
         await ipc.invoke('soundcloud:radar:found', site, 11, '2026-09-18', 1);
+        await ipc.invoke('soundcloud:radar:channels', site, 11);
         expect(request).toHaveBeenNthCalledWith(1, 'radarView', 11, '2026-09-18', 2);
         expect(request).toHaveBeenNthCalledWith(2, 'radarFound', 11, '2026-09-18', 1);
+        expect(request).toHaveBeenNthCalledWith(3, 'radarChannels', 11);
     });
     it('пересборка: при готовом выпуске новая ревизия, без него сборка сейчас', async () => {
         const period = radarPeriod(Date.now(), { day: 5, time: '09:00', zone: 'Europe/Moscow' });

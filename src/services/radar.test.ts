@@ -4,7 +4,7 @@ import { join } from 'node:path';
 import { afterEach, expect, it } from 'vitest';
 import {
     RADAR_PARAMS, RadarService, buildRadar, cleanRadarItem, coverageComplete, creditNames, exclusionFilter, freshness, heardIds, heardLast, radarCoverage, radarSources, radarWindow,
-    scoreUpload, selectEdition, selectRadar, fanWork, archiveTitle, archiveLast, uploadTrack, type RadarCandidate, type RadarCoverage, type RadarInput,
+    scoreUpload, selectEdition, selectRadar, fanWork, archiveTitle, archiveLast, uploadTrack, channelPicks, channelSet, provenDate, radarCandidates, reversedTitle, type RadarCandidate, type RadarCoverage, type RadarInput,
 } from './radar';
 import { tasteMaps } from './wave';
 import { RecommendStore, type StoredUpload } from './recommendStore';
@@ -31,7 +31,7 @@ function upload(id: number, title: string, uploader: number, uploaderName: strin
 }
 const input = (uploads: StoredUpload[], extra: Partial<RadarInput> = {}): RadarInput => ({
     period: '2026-09-25', now: CUTOFF + 1000, cutoff: CUTOFF, window: radarWindow(CUTOFF, []), uploads, reuploads: new Set(), tasteVersion: 2, follows: [], heard: new Set(), excluded: () => false,
-    groups: new Map(), history: [], coverage: FULL,
+    groups: new Map(), channels: new Set(), history: [], coverage: FULL,
     profile: { artists: [[1, 3], [3, 2]], credits: [['artist', 2]], tags: [['phonk', 1], ['jazz', 0.6]], families: [], markers: [], tracks: [] },
     ...extra,
 });
@@ -45,7 +45,10 @@ it('свежесть версии: своя публикация это рели
     // A09: новый ремикс старой песни, выложенный самим ремиксером, доказан датой публикации
     expect(freshness(upload(4, 'Old Artist - Classic (Remixer Remix)', 4, 'Remixer'), false, FROM, CUTOFF).kind).toBe('release');
     // Заявленная дата релиза главнее: в окне релиз, давняя дата делает свежую публикацию перезаливом, будущая ждёт
-    expect(freshness(upload(5, 'Artist - Song', 5, 'Label', { createdAt: CUTOFF - 90 * DAY, releaseDay: '2026-09-20' }), false, FROM, CUTOFF)).toEqual({ kind: 'release', at: Date.parse('2026-09-20T00:00:00Z') });
+    expect(freshness(upload(5, 'Artist - Song', 5, 'Label', { createdAt: CUTOFF - 90 * DAY, releaseDay: '2026-09-20', isrc: 'QZ1234567890' }), false, FROM, CUTOFF))
+        .toEqual({ kind: 'release', at: Date.parse('2026-09-20T00:00:00Z') });
+    // Та же дата у чужого канала без ISRC ничего не доказывает (разбор 28.10.2026): по публикации запись старая
+    expect(freshness(upload(12, 'Artist - Song', 5, 'Label', { createdAt: CUTOFF - 90 * DAY, releaseDay: '2026-09-20' }), false, FROM, CUTOFF).kind).toBe('old');
     expect(freshness(upload(6, 'Song', 6, 'Artist', { releaseDay: '2019-01-01' }), false, FROM, CUTOFF).kind).toBe('upload');
     expect(freshness(upload(7, 'Song', 7, 'Artist', { releaseDay: '2026-10-02' }), false, FROM, CUTOFF).kind).toBe('future');
     expect(freshness(upload(11, 'Song', 11, 'Artist', { releaseDay: '2026-09-24', createdAt: CUTOFF + 3600000 }), false, FROM, CUTOFF).kind).toBe('future');
@@ -83,7 +86,8 @@ it('A05: подтверждённые и вероятные копии одно�
 
 it('группы исполнителей (решение владельца 26.09.2026): одна строка на исполнителя, у сборного канала исполнитель из названия, потолок аккаунта считает группы', () => {
     const own = Array.from({ length: 4 }, (_, i) => upload(41 + i, 'Own ' + i, 1, 'Artist', { createdAt: CUTOFF - (5 - i) * DAY }));
-    const channel = ['Alpha - A', 'Alpha - B', 'Beta - C', 'Gamma - D', 'Delta - E'].map((title, i) => upload(51 + i, title, 2, 'Vibes', { releaseDay: '2026-09-23' }));
+    // Лейбл с ISRC: дата релиза доказана
+    const channel = ['Alpha - A', 'Alpha - B', 'Beta - C', 'Gamma - D', 'Delta - E'].map((title, i) => upload(51 + i, title, 2, 'Vibes', { releaseDay: '2026-09-23', isrc: 'QZ12345678' + (10 + i) }));
     const edition = buildRadar(input([...own, ...channel]))!;
     const artist = edition.items.filter((item) => item.id >= 41 && item.id <= 44);
     expect(artist).toHaveLength(1);
@@ -126,7 +130,7 @@ it('«Не нравится» с подтверждёнными копиями, 
 });
 
 const candidate = (id: number, base: number, direction: string, extra: Partial<RadarCandidate> = {}): RadarCandidate => ({
-    key: 'sc:track:' + id, id, base, direction, family: 'f' + id, uploader: id, kind: 'release', at: CUTOFF - DAY, heard: false, linked: true, reason: { kind: 'taste' }, performer: 'u:' + id, fan: false, archive: false, ...extra,
+    key: 'sc:track:' + id, id, base, direction, family: 'f' + id, uploader: id, kind: 'release', at: CUTOFF - DAY, heard: false, linked: true, reason: { kind: 'taste' }, performer: 'u:' + id, fan: false, credited: false, archive: false, ...extra,
 });
 
 it('A12: редкий устойчивый вкус получает место при сопоставимом качестве, слабое ради разнообразия не подставляется', () => {
@@ -204,7 +208,7 @@ it('В7: прибавка свежести только последним тр�
 it('связь со вкусом: подписка, аккаунт и участник из вкуса связаны; чужой трек по жанру и аккаунт с одним прослушиванием нет', () => {
     const edition = buildRadar(input([
         upload(1, 'Night Drive', 1, 'Artist'),
-        upload(2, 'Artist - Collab', 50, 'Label', { releaseDay: '2026-09-23' }),
+        upload(2, 'Artist - Collab', 50, 'Label', { releaseDay: '2026-09-23', isrc: 'QZ1234567893' }),
         upload(3, 'Genre Only', 60, 'Stranger'),
         upload(4, 'Followed', 70, 'Friend', { genre: 'country' }),
         upload(5, 'Barely', 80, 'Once'),
@@ -266,9 +270,10 @@ it('П10: фанатские работы отдельно от релизов �
         upload(69, 'Classic (1979)', 6, 'Oldies'),
     ], { follows: [5], profile: { artists: [[1, 3], [2, 1], [3, 1], [4, 1], [5, 1], [6, 6]], credits: [['artist', 2]], tags: [['phonk', 1]], families: [], markers: [], tracks: [] } }))!;
     const fans = edition.uploads.filter((item) => item.fan).flatMap((item) => item.group ?? [item.id]);
-    expect(fans.sort()).toEqual([62, 63]);
-    // Перезалив с ISRC, запись со старой датой релиза и чужая песня у подписки остаются новыми загрузками
-    expect(edition.uploads.filter((item) => !item.fan).flatMap((item) => item.group ?? [item.id]).sort()).toEqual([64, 65, 66]);
+    expect(fans.sort()).toEqual([62, 63, 65]);
+    // Перезалив с ISRC и чужая песня у подписки остаются новыми загрузками; самодельная дата релиза у чужого канала
+    // от фанатской работы не спасает (разбор 28.10.2026)
+    expect(edition.uploads.filter((item) => !item.fan).flatMap((item) => item.group ?? [item.id]).sort()).toEqual([64, 66]);
     expect(edition.items.flatMap((item) => item.group ?? [item.id])).not.toContain(62);
     // Архив в группе исполнителя не ведёт, а отдельной строкой встаёт в конец списка
     expect(edition.items.find((item) => item.group?.includes(67))?.id).not.toBe(67);
@@ -391,6 +396,82 @@ it('опоздавшие (28.10.2026): релиз за час до прошло�
     ], { window, groups: confirmedGroups([{ a: 'sc:track:3', b: 'sc:track:4', same: true, source: 'user', at: 1 }]) }))!;
     expect([...edition.items, ...edition.uploads].flatMap((item) => item.group ?? [item.id])).toEqual([1]);
     expect(edition.items[0]).toMatchObject({ id: 1, kind: 'release' });
+});
+
+it('чужое не в основной список (28.10.2026): самодельная дата, фит любимого у незнакомого аккаунта, «Название - Исполнитель»', () => {
+    const profile = { artists: [[1, 3], [7, 2]], credits: [['juicewrld', 3], ['lilpeep', 3], ['markul', 2]], tags: [['phonk', 1]], families: [], markers: [], tracks: [] };
+    const edition = buildRadar(input([
+        // Слив с датой релиза, поставленной загрузчиком, и обратным порядком частей
+        upload(1, 'Scheming - Juice WRLD', 50, 'orbit', { releaseDay: '2026-09-22' }),
+        // Фит любимого у незнакомого аккаунта без ISRC
+        upload(2, 'Painkillers! (feat. Lil Peep)', 51, 'lil reaper'),
+        // Тот же фит, но у второго аккаунта самого артиста (имя загрузчика весит во вкусе) это его релиз
+        upload(3, 'New One (feat. Lil Peep)', 52, 'Markul'),
+        // С ISRC фит остаётся релизом
+        upload(4, 'Song (feat. Juice WRLD)', 53, 'Someone', { isrc: 'QZ1234567891' }),
+        // Отрывок и запрещённое страница всё равно спрячет: место в выпуске они не занимают
+        upload(5, 'Snippet', 1, 'Artist', { policy: 'SNIP' }),
+        upload(6, 'Blocked', 1, 'Artist', { policy: 'BLOCK' }),
+        upload(8, 'Short', 1, 'Artist', { duration: 20000 }),
+    ], { profile }))!;
+    const fans = edition.uploads.filter((item) => item.fan).map((item) => item.id).sort();
+    expect(fans).toEqual([1, 2]);
+    expect(edition.items.map((item) => item.id).sort()).toEqual([3, 4]);
+    expect([...edition.items, ...edition.uploads].map((item) => item.id)).not.toContain(5);
+    expect([...edition.items, ...edition.uploads].flatMap((item) => item.group ?? [item.id]).filter((id) => id >= 5)).toEqual([]);
+    // Причина слива: исполнитель из второй части названия
+    expect(edition.uploads.find((item) => item.id === 1)?.reason).toEqual({ kind: 'artist', name: 'Juice WRLD' });
+    const known = (key: string): boolean => ['juicewrld'].includes(key);
+    expect(reversedTitle('Scheming - Juice WRLD (Unreleased)', known)).toBe('Juice WRLD - Scheming (Unreleased)');
+    expect(reversedTitle('Juice WRLD - Scheming', known)).toBeNull();
+    expect(reversedTitle('Lucid Dreams - Unknown', known)).toBeNull();
+    expect(provenDate({ releaseDay: '2026-09-22', isrc: '', uploaderName: 'orbit', credits: trackCredits({ id: 1, title: 'Juice WRLD - Scheming', user: { username: 'orbit' } }) })).toBe(false);
+    expect(provenDate({ releaseDay: '2026-09-22', isrc: '', uploaderName: 'Juice WRLD', credits: [] })).toBe(true);
+});
+
+it('одна песня одной строкой (28.10.2026): «ROMEO» у двух аккаунтов без общего ISRC, остаётся копия с ISRC', () => {
+    const profile = { artists: [[60, 2], [61, 2]], credits: [['slattcrank', 2], ['pepelnahudi', 2]], tags: [['phonk', 1]], families: [], markers: [], tracks: [] };
+    const metadata = [{ name: 'Slattcrank', key: 'slattcrank', role: 'artist' as const, source: 'metadata' as const }];
+    const edition = buildRadar(input([
+        upload(70, 'ROMEO', 60, 'Pepel Nahudi', { credits: metadata }),
+        upload(71, 'ROMEO (feat. Pepel Nahudi)', 61, 'SLATTCRANK', { isrc: 'QZ1234567892', duration: 181000 }),
+        // Другая песня тех же людей рядом по длительности не склеивается
+        upload(72, 'JULIET', 61, 'SLATTCRANK', { duration: 180500 }),
+        // Два безымянных ремикса одной длины у разных аккаунтов это разные переделки
+        upload(73, 'Slattcrank - ROMEO (Remix)', 60, 'Pepel Nahudi', { duration: 200000 }),
+        upload(74, 'Slattcrank - ROMEO (Remix)', 61, 'SLATTCRANK', { duration: 200000 }),
+    ], { profile }))!;
+    const rows = [...edition.items, ...edition.uploads].flatMap((item) => item.group ?? [item.id]).sort();
+    expect(rows).toEqual([71, 72, 73, 74]);
+});
+
+it('каналы (28.10.2026): аккаунт с чужими исполнителями в большинстве загрузок; его премьеры не в радаре, а на полке', () => {
+    const works = (uploader: number, name: string, titles: string[]) => titles.map((title) => ({ uploader, uploaderName: name, credits: trackCredits({ id: 1, title, user: { username: name } }) }));
+    const channels = channelSet([
+        ...works(80, 'Oslated', ['A - One', 'B - Two', 'C - Three', 'D - Four', 'Oslated Mix']),
+        ...works(81, 'Artist', ['One', 'Two', 'Guest - Three', 'Four', 'Five']),
+        ...works(82, 'Tiny', ['A - One', 'B - Two']),
+    ]);
+    expect([...channels]).toEqual([80]);
+    const profile = { artists: [[80, 3]], credits: [['lovedone', 3]], tags: [['techno', 1]], families: [], markers: [], tracks: [] };
+    const uploads = [
+        upload(90, 'Stranger - Premiere [Label]', 80, 'Oslated', { genre: 'Techno' }),
+        // Релиз любимого исполнителя на канале остаётся в радаре
+        upload(91, 'Loved One - Track', 80, 'Oslated', { genre: 'Techno' }),
+    ];
+    const ids = radarCandidates(input(uploads, { profile, channels }), CUTOFF).map((candidate) => candidate.id);
+    expect(ids).toEqual([91]);
+    expect(channelPicks({ ...input(uploads, { profile, channels }) }, FROM, CUTOFF).map((pick) => pick.id)).toEqual([90]);
+    // Фит любимого на канале без ISRC: не релиз канала, а фанатская работа, даже если канал весит во вкусе
+    const feat = buildRadar(input([upload(92, 'Night (feat. Loved One)', 80, 'Oslated', { genre: 'Techno', releaseDay: '2026-09-23' })], { profile, channels }))!;
+    expect(feat.items).toEqual([]);
+    expect(feat.uploads.map((item) => [item.id, item.fan === true])).toEqual([[92, true]]);
+    // Слив «Название - Исполнитель» на канале после разворота связан с любимым: на полку он не идёт
+    const reversed = [upload(93, 'Track - Loved One', 80, 'Oslated', { genre: 'Techno' })];
+    expect(radarCandidates(input(reversed, { profile, channels }), CUTOFF).map((candidate) => candidate.id)).toEqual([93]);
+    expect(channelPicks(input(reversed, { profile, channels }), FROM, CUTOFF)).toEqual([]);
+    // Уже слышанное на полку не идёт
+    expect(channelPicks({ ...input(uploads, { profile, channels, heard: new Set([90]) }) }, FROM, CUTOFF)).toEqual([]);
 });
 
 const folders: string[] = [];

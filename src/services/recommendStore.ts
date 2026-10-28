@@ -578,6 +578,19 @@ export class RecommendStore {
     public playlistTracks(userId: unknown): TasteLibrary['playlists'] {
         return isId(userId) ? this.guarded(userId, playlistRows) : [];
     }
+    /** Последние limit загрузок каждого аккаунта: имя загрузчика и участники, по ним радар узнаёт каналы */
+    public recentWorks(userId: unknown, uploaders: unknown, limit = 30): Array<{ uploader: number; uploaderName: string; credits: TrackCredit[] }> {
+        if (!isId(userId) || !Array.isArray(uploaders)) return [];
+        const ids = [...new Set(uploaders.filter(isId))].slice(0, 5000);
+        if (!ids.length) return [];
+        return this.guarded(userId, (db) => {
+            const select = db.prepare('select uploader, uploader_name, credits from uploads where uploader = ? order by created_at desc limit ?');
+            return ids.flatMap((id) => (select.all(id, Math.max(1, Math.min(limit, 200))) as Values[]).map((row) => {
+                const credits = parseJson(str(row.credits));
+                return { uploader: num(row.uploader), uploaderName: str(row.uploader_name), credits: Array.isArray(credits) ? (credits as TrackCredit[]) : [] };
+            }));
+        });
+    }
     /** Источники радара с последней проверкой */
     public catalogState(userId: unknown): CatalogCheck[] {
         if (!isId(userId)) return [];
