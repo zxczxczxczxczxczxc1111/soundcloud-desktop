@@ -13,7 +13,7 @@ const { capPerArtist, isWaveEligible, shuffleInPlace, spreadBy, trackArtist } = 
 // Ответ main недоверенный: берутся только пары [id или ключ, конечное число]. Старый профиль без новых частей даёт пустые
 export function tasteMaps(input: unknown): TasteMaps | null {
     if (!input || typeof input !== 'object') return null;
-    const source = input as Record<'version' | 'artists' | 'credits' | 'families' | 'tags' | 'markers' | 'tracks' | 'langs' | 'contexts' | 'sources', unknown>;
+    const source = input as Record<'version' | 'artists' | 'credits' | 'families' | 'tags' | 'markers' | 'tracks' | 'langs' | 'contexts' | 'sources' | 'tired', unknown>;
     const isId = (value: unknown): value is number => typeof value === 'number' && Number.isSafeInteger(value) && value > 0;
     const isKey = (value: unknown): value is string => typeof value === 'string' && value.length > 0 && value.length <= 200;
     const isCount = (value: unknown): value is number => typeof value === 'number' && Number.isSafeInteger(value) && value >= 0;
@@ -31,19 +31,22 @@ export function tasteMaps(input: unknown): TasteMaps | null {
         if (typeof key === 'number' && Number.isInteger(key) && key >= 0 && key < 8) contexts.set(key, { artists: pairs(entry?.artists, isId, 100), tags: pairs(entry?.tags, isKey, 60) });
     }
     const sources: TasteMaps['sources'] = new Map();
-    for (const item of Array.isArray(source.sources) ? source.sources.slice(0, 30) : [])
+    for (const item of Array.isArray(source.sources) ? source.sources.slice(0, 120) : [])
         if (Array.isArray(item) && isKey(item[0]) && isCount(item[1]) && isCount(item[2])) sources.set(item[0], { done: item[1], early: item[2] });
+    const tags = pairs(source.tags, isKey, 300);
     return {
         version: typeof source.version === 'number' && Number.isInteger(source.version) && source.version > 0 && source.version <= 1000 ? source.version : 0,
         artists: pairs(source.artists, isId, 1000),
         credits: pairs(source.credits, isKey, 1000),
         families: pairs(source.families, isKey, 1000),
-        tags: pairs(source.tags, isKey, 300),
+        tags,
         markers: pairs(source.markers, isKey, 50),
         tracks: pairs(source.tracks, isId, 1000),
         langs: pairs(source.langs, isKey, 5),
         contexts,
         sources,
+        tired: new Map([...pairs(source.tired, isId, 300)].filter(([, count]) => count >= 1 && count <= 1000)),
+        tagTop: Math.max(0, ...tags.values()),
     };
 }
 
@@ -62,7 +65,7 @@ export function tasteForTime(base: TasteMaps, now: number): TasteMaps {
     for (const [id, delta] of shift.artists) if (artists.has(id)) artists.set(id, (artists.get(id) ?? 0) + delta);
     const tags = new Map(base.tags);
     for (const [key, delta] of shift.tags) if (tags.has(key)) tags.set(key, (tags.get(key) ?? 0) + delta);
-    return { ...base, artists, tags };
+    return { ...base, artists, tags, tagTop: Math.max(0, ...tags.values()) };
 }
 
 // Признаки трека для серии пропусков (П7): пометки версии, язык кроме латиницы (она у большинства и ничего не
@@ -182,8 +185,7 @@ export function tasteScore(track: WaveTrack, taste: TasteMaps): TasteScore {
     // Плюс тегов против самого любимого тега вкуса (разбор 28.10.2026): x/(1+x) давал рэпу с весом 57 и техно с весом 11
     // почти одинаковые 0.98 и 0.92. Доля от главного насыщается мягко: главный жанр 1, жанр в пять раз слабее около 0.55.
     // Минус нелюбимого жанра действует полностью (В2.8)
-    const topTag = Math.max(0, ...taste.tags.values());
-    const share = topTag > 0 ? tags.value / topTag : 0;
+    const share = taste.tagTop > 0 ? tags.value / taste.tagTop : 0;
     const tag = tags.value > 0 ? Math.min(1, (1.25 * share) / (share + 0.25)) : tags.value;
     // Язык против самого любимого языка, насыщенно и половинной долей (П6): любимый даёт 0, нелюбимый до -1.
     // Сравнение, а не сам вес: за год оба привычных языка копят десятки, и разницу даёт только соотношение
@@ -197,7 +199,10 @@ export function tasteScore(track: WaveTrack, taste: TasteMaps): TasteScore {
     // в срез ±3 у 63% кандидатов, и порядок среди них был случайным, а поправки сессии любимое не сдвигали.
     // Предел части k, около нуля часть почти линейна
     const soft = (value: number, k: number): number => (k * value) / (k + Math.abs(value));
-    const parts = [soft(own, 2), soft(artist, 2), soft(credit, 1), soft(family, 1), soft(marker, 0.5), tag, lang];
+    // Усталость: дослушан за неделю больше двух раз, по четверти за каждый сверх, не больше единицы. Вес трека только
+    // рос с прослушиваниями, и заезженное вставало вперёд снова и снова
+    const tired = Math.min(1, 0.25 * Math.max(0, (taste.tired.get(track.id) ?? 0) - 2));
+    const parts = [soft(own, 2) - tired, soft(artist, 2), soft(credit, 1), soft(family, 1), soft(marker, 0.5), tag, lang];
     return {
         score: parts.reduce((sum, value) => sum + value, 0),
         parts: parts.map((value) => Math.round(value * 100) / 100),

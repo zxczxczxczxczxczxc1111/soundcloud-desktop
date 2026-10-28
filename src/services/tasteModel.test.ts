@@ -162,6 +162,16 @@ it('канал перезаливов (28.10.2026): за чужое веса к�
     expect(weightOf(single.artists, 60)).toBeCloseTo(blended(0.4 * TASTE_PARAMS.curatorShare, HOUR_AGE, false), 2);
 });
 
+it('усталость (28.10.2026): дослушанный за неделю от трёх раз трек уходит в профиль со счётом, старое и недослушанное не считается', () => {
+    const plays = [
+        ...[1, 2, 3, 4].map((day) => play({ id: 1, at: NOW - day * DAY })),
+        ...[1, 2].map((day) => play({ id: 2, at: NOW - day * DAY })),
+        ...[8, 9, 10].map((day) => play({ id: 3, at: NOW - day * DAY })),
+        ...[1, 2, 3].map((day) => play({ id: 4, at: NOW - day * DAY, heard: 60000, end: 'done' })),
+    ];
+    expect(buildTaste([...confident, ...plays], [], empty, NOW).profile.tired).toEqual([[1, 4]]);
+});
+
 it('старое живёт в устойчивой части, переслушивание за 14 дней добавляет треку', () => {
     const old = buildTaste([...confident, play({ id: 1, at: NOW - 60 * DAY })], [], empty, NOW).profile;
     expect(weightOf(old.tracks, 1)).toBeCloseTo(blended(1, 60), 2);

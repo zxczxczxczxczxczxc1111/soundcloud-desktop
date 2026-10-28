@@ -595,6 +595,43 @@ it('волна по треку из замкнутого круга похожи
     expect(queued.filter((item) => item.sound.id >= 7000).length).toBeGreaterThan(0);
 });
 
+it('зёрна (28.10.2026): лайков вдвое больше истории, и кириллица лайков не тонет в латинской истории', async () => {
+    vi.spyOn(Math, 'random').mockReturnValue(0.5);
+    const history = Array.from({ length: 12 }, (_, i) => ({ track: { id: 7001 + i, kind: 'track', user_id: 700 + i, duration: 180000, title: 'Techno ' + i } }));
+    const liked = Array.from({ length: 12 }, (_, i): WaveTrack => ({ id: 8001 + i, kind: 'track', user_id: 800 + i, duration: 180000, title: 'Песня ' + i, user: { id: 800 + i, username: 'Артист ' + i } }));
+    const site = fakeSite(relatedTracks, (name, _path, query) => {
+        if (name === 'playHistoryTracks') return { collection: history };
+        if (name === 'soundLikesIds') return { collection: liked.map((track) => track.id) };
+        if (name === 'trackBatch') return batchOf(liked)(query);
+        return undefined;
+    });
+    window.eval(waveScript());
+    await vi.advanceTimersByTimeAsync(100);
+    document.querySelector<HTMLButtonElement>('#sc-wave .scw-play')!.click();
+    await vi.advanceTimersByTimeAsync(1100);
+    const seeds = site.api.callEndpoint.mock.calls.filter(([name]) => name === 'relatedSounds').map(([, path]) => (path as { track_id: number }).track_id);
+    expect(seeds.length).toBeGreaterThanOrEqual(3);
+    expect(seeds.slice(0, 3).filter((id) => id > 8000).length).toBeGreaterThanOrEqual(2);
+});
+
+it('П9 (28.10.2026): поправка источника берётся по паре «источник волны|причина»', async () => {
+    vi.spyOn(Math, 'random').mockReturnValue(0.5);
+    const site = fakeSite(relatedTracks, (name, _path, query) => {
+        if (name === 'mixedSelections') return { collection: [{ urn: 'soundcloud:selections:your-moods', items: { collection: [{ kind: 'system-playlist', urn: 'soundcloud:system-playlists:your-moods:77:1', title: 'Your Mix 1', tracks: Array.from({ length: 20 }, (_, i) => ({ id: 8801 + i, kind: 'track' })) }] } }] };
+        if (name === 'trackBatch' && typeof query.ids === 'string') return { collection: query.ids.split(',').map(Number).filter((id) => id >= 8800).map((id) => ({ id, kind: 'track', title: 'Mix ' + id, duration: 200000, user_id: id, user: { id, username: 'U' + id } })) };
+        return undefined;
+    });
+    // Похожее в этой волне рано пропускают, подборку SoundCloud дослушивают; та же причина на полке пару не трогает
+    const sources = [['wave:similar|similar', 0, 300], ['wave:similar|scMix', 300, 0], ['wave:group|similar', 300, 0]];
+    Object.assign(window, { soundcloudAPI: { waveTaste: { load: vi.fn(async () => ({ artists: [], tags: [], tracks: [], sources })) } } });
+    window.eval(waveScript());
+    await vi.advanceTimersByTimeAsync(100);
+    document.querySelector<HTMLButtonElement>('#sc-wave .scw-play')!.click();
+    await vi.advanceTimersByTimeAsync(1100);
+    const ids = site.player.getQueue().slice().map((item) => item.sound.id);
+    expect(ids.slice(0, 3).every((id) => id >= 8801 && id <= 8820)).toBe(true);
+});
+
 it('П9: трек со станции уходит в журнал своим источником station, а не как обычное похожее', async () => {
     const site = fakeSite(closedCircle, stationExtra);
     fakeExclusions();
@@ -785,6 +822,30 @@ it('В2.14: три ранних пропуска подряд берут нов�
     next.remove();
 });
 
+it('два ранних пропуска подряд (28.10.2026) уже берут новые зёрна и убирают найденное от пропущенных', async () => {
+    vi.spyOn(Math, 'random').mockReturnValue(0.5);
+    const history = [1, 2, 3, 4, 5, 6].map((id) => ({ track: { id, kind: 'track', user_id: 100 + id, duration: 180000, title: 'Seed ' + id } }));
+    const site = fakeSite(relatedTracks, (name) => (name === 'playHistoryTracks' ? { collection: history } : undefined));
+    window.eval(waveScript());
+    await vi.advanceTimersByTimeAsync(100);
+    document.querySelector<HTMLButtonElement>('#sc-wave .scw-play')!.click();
+    await vi.advanceTimersByTimeAsync(1100);
+    const next = nextButton();
+    const skipped: number[] = [];
+    for (let i = 0; i < 2; i++) {
+        skipped.push(site.player.getCurrentSound()!.id);
+        await skipNow(site, next);
+    }
+    await vi.advanceTimersByTimeAsync(2000);
+    const related = site.api.callEndpoint.mock.calls.filter(([name]) => name === 'relatedSounds').map(([, path]) => (path as { track_id: number }).track_id);
+    expect(new Set(related).size).toBeGreaterThan(3);
+    const failed = new Set(skipped.map((id) => Math.floor(id / 1000)));
+    const ahead = site.player.getQueue().slice(site.player.getQueueState().currentIndex + 1).map((item) => item.sound.id);
+    expect(ahead.length).toBeGreaterThan(0);
+    expect(ahead.some((id) => failed.has(Math.floor(id / 1000)))).toBe(false);
+    next.remove();
+});
+
 it('П7: два ранних пропуска с общим признаком прижимают его до конца волны, плашка его называет, «Отменить» снимает', async () => {
     vi.spyOn(Math, 'random').mockReturnValue(0.5);
     // У каждого зерна первые четыре похожих с русским названием, остальные латиницей
@@ -815,11 +876,12 @@ it('П8: три быстрых пропуска открывают «Куда д
     const named = (track: WaveTrack): WaveTrack => ({ ...track, user: { id: track.user_id, username: 'Artist ' + track.user_id } });
     const site = fakeSite((seed) => relatedTracks(seed).map((track, i) => named(i >= 4 ? { ...track, genre: 'Ambient' } : track)), (name, _path, query) => {
         if (name === 'mixedSelections') return { collection: [{ urn: 'soundcloud:selections:your-moods', items: { collection: [{ kind: 'system-playlist', urn: 'soundcloud:system-playlists:your-moods:77:1', title: 'Your Mix 1', tracks: Array.from({ length: 20 }, (_, i) => ({ id: 8801 + i, kind: 'track' })) }] } }] };
-        if (name === 'trackBatch' && typeof query.ids === 'string') return { collection: query.ids.split(',').map(Number).filter((id) => id >= 8800).map((id) => ({ id, kind: 'track', title: 'Mix ' + id, duration: 200000, user_id: id, user: { id, username: 'U' + id } })) };
+        if (name === 'trackBatch' && typeof query.ids === 'string') return { collection: query.ids.split(',').map(Number).filter((id) => id >= 8800).map((id) => ({ id, kind: 'track', title: 'Mix ' + id, duration: 200000, user_id: id, user: { id, username: 'U' + id }, genre: id % 2 ? 'Ambient' : '' })) };
         return undefined;
     });
-    // Любимые с весом 20: после насыщения частей (28.10.2026) вес 2 даёт аккаунту только 1, и подборка уходит в очередь раньше
-    const favorites = [10, 11, 12, 13, 14, 15, 16, 20, 21, 22, 23, 24, 25, 26].map((id) => [id, 20]);
+    // Любимые с весом 20: после насыщения частей (28.10.2026) вес 2 даёт аккаунту только 1, и подборка уходит в очередь раньше.
+    // Любимые у всех трёх зёрен и у части подборки: два ранних пропуска убирают найденное от пропущенных зёрен
+    const favorites = [10, 11, 12, 13, 14, 15, 16, 20, 21, 22, 23, 24, 25, 26, 30, 31, 32, 33, 34, 35, 36, 8801, 8803, 8805].map((id) => [id, 20]);
     Object.assign(window, { soundcloudAPI: { waveTaste: { load: vi.fn(async () => ({ artists: favorites, tags: [], tracks: [] })) } } });
     window.eval(waveScript());
     await vi.advanceTimersByTimeAsync(100);
@@ -1277,6 +1339,70 @@ it('П6: обычная волна не берёт кириллицу от ар�
     const ids = site.player.getQueue().slice().map((item) => item.sound.id);
     expect(ids.length).toBeGreaterThan(3);
     expect(ids.filter((id) => id % 1000 < 3)).toEqual(ids.includes(1000) ? [1000] : []);
+});
+
+it('версии одной песни (28.10.2026): пришедшая первой slowed уступает оригиналу', async () => {
+    // У каждого зерна slowed первой и оригинал второй: семья одна на всё поколение
+    const site = fakeSite((seed) => relatedTracks(seed).slice(0, 3).map((track, i) => {
+        if (i === 0) return { ...track, title: 'Artist Q - Song X (Slowed)', duration: 230000 };
+        if (i === 1) return { ...track, title: 'Artist Q - Song X' };
+        return track;
+    }));
+    window.eval(waveScript());
+    await vi.advanceTimersByTimeAsync(100);
+    document.querySelector<HTMLButtonElement>('#sc-wave .scw-play')!.click();
+    await vi.advanceTimersByTimeAsync(1100);
+    const titles = site.player.getQueue().slice().map((item) => (item.sound as { attributes?: WaveTrack }).attributes?.title ?? '');
+    expect(titles).toContain('Artist Q - Song X');
+    expect(titles).not.toContain('Artist Q - Song X (Slowed)');
+});
+
+it('П6 (28.10.2026): вкус знает кириллицу, и она проходит у незнакомых артистов тоже', async () => {
+    const site = fakeSite((seed) => relatedTracks(seed).map((track, i) => (i < 3 ? { ...track, title: 'Песня ' + track.id } : track)));
+    const load = vi.fn(async () => ({ artists: [[10, 2]], tags: [], tracks: [], langs: [['cyr', 5], ['lat', 3]] }));
+    Object.assign(window, { soundcloudAPI: { waveTaste: { load } } });
+    window.eval(waveScript());
+    await vi.advanceTimersByTimeAsync(100);
+    document.querySelector<HTMLButtonElement>('#sc-wave .scw-play')!.click();
+    await vi.advanceTimersByTimeAsync(100);
+    const ids = site.player.getQueue().slice().map((item) => item.sound.id);
+    expect(ids.filter((id) => id % 1000 < 3 && id !== 1000).length).toBeGreaterThan(0);
+});
+
+it('отсев поколения уходит в диагностику, когда волна кончилась: сколько отсёк фильтр кириллицы', async () => {
+    vi.spyOn(Math, 'random').mockReturnValue(0.5);
+    const site = fakeSite((seed) => relatedTracks(seed).map((track, i) => (i < 3 ? { ...track, title: 'Песня ' + track.id } : track)));
+    const report = vi.fn();
+    Object.assign(window, { soundcloudAPI: { waveTaste: { load: vi.fn(async () => ({ artists: [[10, 2]], tags: [], tracks: [] })) }, reportWaveFiltered: report } });
+    window.eval(waveScript());
+    await vi.advanceTimersByTimeAsync(100);
+    document.querySelector<HTMLButtonElement>('#sc-wave .scw-play')!.click();
+    await vi.advanceTimersByTimeAsync(1100);
+    expect(report).not.toHaveBeenCalled();
+    // Человек включил своё: волна закончилась, поколение сброшено
+    site.setItems([{ sound: { id: 5, currentTime: () => position, getMediaDuration: () => 200000 }, sourceInfo: { type: 'playlist' } }], 0);
+    await vi.advanceTimersByTimeAsync(5000);
+    expect(report).toHaveBeenCalledOnce();
+    const first = report.mock.calls[0][0] as Record<string, number>;
+    expect(first.seen).toBeGreaterThan(0);
+    expect(first.cyrillic).toBeGreaterThan(0);
+    expect(first.accepted).toBeGreaterThan(0);
+    expect(first.seen).toBeGreaterThanOrEqual(first.accepted + first.cyrillic + first.excluded + first.copies + first.family);
+});
+
+it('отсев недособранного поколения уходит в диагностику и при уходе со страницы', async () => {
+    vi.spyOn(Math, 'random').mockReturnValue(0.5);
+    fakeSite(relatedTracks);
+    const report = vi.fn();
+    Object.assign(window, { soundcloudAPI: { waveTaste: { load: vi.fn(async () => ({ artists: [[10, 2]], tags: [], tracks: [] })) }, reportWaveFiltered: report } });
+    window.eval(waveScript());
+    await vi.advanceTimersByTimeAsync(100);
+    document.querySelector<HTMLButtonElement>('#sc-wave .scw-play')!.click();
+    await vi.advanceTimersByTimeAsync(1100);
+    expect(report).not.toHaveBeenCalled();
+    window.dispatchEvent(new Event('pagehide'));
+    expect(report).toHaveBeenCalledOnce();
+    expect((report.mock.calls[0][0] as Record<string, number>).seen).toBeGreaterThan(0);
 });
 
 it('«Не сейчас» у играющего трека ставит следующий, «Больше такого» уходит в main с артистом и метками', async () => {
@@ -2902,6 +3028,25 @@ it('П2: обычная волна начинает с дослушанного 
     expect(tiles[0]).toBe(4301);
     expect(document.querySelector('#sc-wave .scw-tile[data-track="4301"] .scw-t3')?.textContent).toBe('Sounds like Fresh Art');
     expect(tiles.some((id) => Math.floor(id / 1000) === 4242)).toBe(true);
+});
+
+it('П2 (28.10.2026): трек с пометкой версии на первые места как уверенный не ставится, даже от похожего артиста', async () => {
+    vi.spyOn(Math, 'random').mockReturnValue(0.5);
+    const now = Date.now();
+    const recent = vi.fn(async () => [{ id: 4242, at: now - 60000, artist: 4200, title: 'Fresh', artistName: 'Fresh Art', genre: '', tags: '', path: '/fresh-art/fresh', dur: 200000 }]);
+    fakeSite(relatedTracks, (name, path) => {
+        if (name === 'userRelatedArtists' && path.id === 4200) return { collection: [{ id: 4300, username: 'Neighbor', track_count: 5 }] };
+        if (name === 'userToptracks' && path.id === 4300) return { collection: [{ id: 4301, kind: 'track', title: 'Top (Slowed + Reverb)', duration: 200000, user_id: 4300, user: { id: 4300, username: 'Neighbor' } }] };
+        return undefined;
+    });
+    // Похожий на дослушанный трек любимого аккаунта: уверенный кандидат помимо slowed. Похожий артист любим так же:
+    // без проверки пометки он, найденный раньше, встал бы первым
+    const load = vi.fn(async () => ({ artists: [[42421, 30], [4300, 30]], tags: [], tracks: [] }));
+    Object.assign(window, { soundcloudAPI: { waveLibrary: { ...libraryBridge(), recent }, waveTaste: { load } } });
+    window.eval(waveScript());
+    await vi.advanceTimersByTimeAsync(2000);
+    const tiles = [...document.querySelectorAll<HTMLElement>('#sc-wave .scw-tile[data-track]')].map((tile) => Number(tile.dataset.track));
+    expect(tiles[0]).toBe(4242001);
 });
 
 it('П3: волна от артиста: его лучшее и неслышанное впереди, три к одному, потом похожие артисты', async () => {

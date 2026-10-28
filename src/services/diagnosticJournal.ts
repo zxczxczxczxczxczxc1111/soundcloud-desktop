@@ -3,10 +3,10 @@ import { join, resolve } from 'path';
 import { BACKUP_REASONS } from './backupPolicy';
 import { CROSSFADE_STAGES } from './wave/quiet';
 
-const events = new Set(['session.start', 'session.end', 'performance', 'runtime.error', 'runtime.warn', 'renderer.gone', 'renderer.unresponsive', 'renderer.responsive', 'page.loaded', 'page.load-failed', 'page.soft-navigation', 'system.suspend', 'system.resume', 'gpu.status', 'process.gone', 'wave.empty', 'wave.crossfade', 'site.modules-missing', 'backup.saved', 'backup.failed', 'backup.restored', 'backup.restore-failed']);
+const events = new Set(['session.start', 'session.end', 'performance', 'runtime.error', 'runtime.warn', 'renderer.gone', 'renderer.unresponsive', 'renderer.responsive', 'page.loaded', 'page.load-failed', 'page.soft-navigation', 'system.suspend', 'system.resume', 'gpu.status', 'process.gone', 'wave.empty', 'wave.filtered', 'wave.crossfade', 'site.modules-missing', 'backup.saved', 'backup.failed', 'backup.restored', 'backup.restore-failed']);
 const numbers = new Set([
     'cpuPercent', 'workingSetMiB', 'privateMiB', 'processes', 'loopP95Ms', 'loopMaxMs', 'updates', 'trackChanges', 'sinceUpdateMs', 'sinceProgressMs', 'exitCode', 'errorCode', 'line',
-    'droppedEvents', 'uptimeSeconds', 'waveSeen', 'waveArtistTracks', 'waveMoodTags', 'backupMs', 'backupKiB', 'prepMs', 'leftMs',
+    'droppedEvents', 'uptimeSeconds', 'waveSeen', 'waveArtistTracks', 'waveMoodTags', 'waveExcluded', 'waveCopies', 'waveCyrillic', 'waveFamily', 'waveAccepted', 'waveNeighborAsked', 'waveNeighborFound', 'waveNeighborAccepted', 'waveNeighborFailed', 'backupMs', 'backupKiB', 'prepMs', 'leftMs',
 ]);
 // Шаг плавного перехода: код из списка, без трека
 const crossfadeStages = new Set<string>(CROSSFADE_STAGES);

@@ -49,6 +49,25 @@ export function registerWaveIpc(ipc: IpcRegistry, deps: WaveIpcDeps): void {
         const count = (input: unknown): number => (typeof input === 'number' && Number.isSafeInteger(input) && input >= 0 ? Math.min(input, 10000) : 0);
         diagnostics.record('wave.empty', { waveSeen: count(value.seen), waveArtistTracks: count(value.artistTracks), waveMoodTags: count(value.moodTags) });
     });
+    // Отсев поколения волны: только известные счётчики, целые и обрезанные
+    ipc.removeAllListeners('soundcloud:wave-filtered');
+    ipc.on('soundcloud:wave-filtered', (event, counts: unknown) => {
+        if (!isTrustedSoundCloudSender(event) || !counts || typeof counts !== 'object') return;
+        const value = counts as Record<string, unknown>;
+        const count = (input: unknown): number => (typeof input === 'number' && Number.isSafeInteger(input) && input >= 0 ? Math.min(input, 100000) : 0);
+        diagnostics.record('wave.filtered', {
+            waveSeen: count(value.seen),
+            waveExcluded: count(value.excluded),
+            waveCopies: count(value.copies),
+            waveCyrillic: count(value.cyrillic),
+            waveFamily: count(value.family),
+            waveAccepted: count(value.accepted),
+            waveNeighborAsked: count(value.neighborAsked),
+            waveNeighborFound: count(value.neighborFound),
+            waveNeighborAccepted: count(value.neighborAccepted),
+            waveNeighborFailed: count(value.neighborFailed),
+        });
+    });
     // Плавный переход прошёл или почему трек просто затих: шаг из списка и два времени, без трека и ссылок
     ipc.removeAllListeners('soundcloud:wave-crossfade');
     ipc.on('soundcloud:wave-crossfade', (event, entry: unknown) => {

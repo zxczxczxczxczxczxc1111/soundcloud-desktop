@@ -108,6 +108,15 @@ describe('обработчики волны', () => {
         expect(deps.diagnostics.record).toHaveBeenCalledOnce();
         expect(deps.diagnostics.record).toHaveBeenCalledWith('wave.empty', { waveSeen: 0, waveArtistTracks: 10000, waveMoodTags: 0 });
     });
+    it('отсев поколения волны (28.10.2026): только известные счётчики, мусор нулём, чужой отправитель не пишет', async () => {
+        const { ipc, site, deps } = setup();
+        await ipc.send('soundcloud:wave-filtered', site, { seen: 40, excluded: 12, copies: 3, cyrillic: 2, family: 1, accepted: 22, neighborAsked: 2, neighborFound: 1, neighborAccepted: 1, neighborFailed: -1, title: 'кровью' });
+        await ipc.send('soundcloud:wave-filtered', site, 'много');
+        expect(deps.diagnostics.record).toHaveBeenCalledOnce();
+        expect(deps.diagnostics.record).toHaveBeenCalledWith('wave.filtered', {
+            waveSeen: 40, waveExcluded: 12, waveCopies: 3, waveCyrillic: 2, waveFamily: 1, waveAccepted: 22, waveNeighborAsked: 2, waveNeighborFound: 1, waveNeighborAccepted: 1, waveNeighborFailed: 0,
+        });
+    });
     it('исход плавного перехода: шаг только из списка, времена целые и в пределах', async () => {
         const { ipc, site, deps } = setup();
         await ipc.send('soundcloud:wave-crossfade', site, { stage: 'late', prepMs: 2410.6, leftMs: -5, title: 'кровью' });

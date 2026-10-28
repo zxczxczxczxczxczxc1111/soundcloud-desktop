@@ -177,6 +177,36 @@ export function isNewArtist(track: WaveTrack, knownIds: Set<number>, knownNames:
 
 // Разнести по ключу в порядке списка: следующий берётся первый, чей ключ не встречался среди последних gap,
 // а если такого нет, просто первый. Ничего не выбрасывается
+/** Порядок по долям (разбор 28.10.2026): на каждом месте берётся первый оставшийся из группы, которой больше всего
+ *  недостаёт до своей доли; порядок внутри группы сохраняется. Группа без доли идёт, когда остальные кончились */
+export function balanceShares<T>(list: T[], keyOf: (item: T) => string, target: Map<string, number>): T[] {
+    const groups = new Map<string, T[]>();
+    for (const item of list) {
+        const key = keyOf(item);
+        const group = groups.get(key) ?? [];
+        group.push(item);
+        groups.set(key, group);
+    }
+    const taken = new Map<string, number>();
+    const result: T[] = [];
+    while (result.length < list.length) {
+        let best = '';
+        let gap = -Infinity;
+        for (const [key, group] of groups) {
+            if (!group.length) continue;
+            const lack = (target.get(key) ?? 0) * (result.length + 1) - (taken.get(key) ?? 0);
+            if (lack > gap) {
+                gap = lack;
+                best = key;
+            }
+        }
+        const next = groups.get(best)?.shift();
+        if (next === undefined) break;
+        taken.set(best, (taken.get(best) ?? 0) + 1);
+        result.push(next);
+    }
+    return result;
+}
 export function spreadBy<T>(list: T[], keyOf: (item: T) => string | number, gap: number): T[] {
     const rest = list.slice();
     const result: T[] = [];

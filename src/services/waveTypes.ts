@@ -156,6 +156,10 @@ export interface TasteMaps {
     langs: Map<string, number>;
     /** Поправки артистов и тегов по отрезку суток: ключ slot × 2 + выходной, slot это ночь, утро, день, вечер (П5) */
     contexts: Map<number, { artists: Map<number, number>; tags: Map<string, number> }>;
+    /** Трек дослушан за неделю столько раз (от трёх): усталость, оценка трека ниже (разбор 28.10.2026) */
+    tired: Map<number, number>;
+    /** Самый весомый тег вкуса: от него считается доля тега в оценке. Считается при разборе и сдвиге по времени */
+    tagTop: number;
     /** Источники волны за 14 дней: дослушано и ранних пропусков по исходной причине (П9) */
     sources: Map<string, { done: number; early: number }>;
 }
@@ -251,3 +255,17 @@ export interface Seed {
 export type MarkKind = 'track' | 'artist' | 'later-track' | 'later-artist' | 'more';
 /** Отметка волны из main: «Не нравится», скрытый артист, «Не сейчас» до until */
 export interface Excluded { id: number; title: string; artist: string; url: string; until?: number }
+
+/** Отсев кандидатов поколения по фильтрам и источник «похожий артист любимого» для журнала диагностики */
+export interface WaveFilterStats {
+    seen: number;
+    excluded: number;
+    copies: number;
+    cyrillic: number;
+    family: number;
+    accepted: number;
+    neighborAsked: number;
+    neighborFound: number;
+    neighborAccepted: number;
+    neighborFailed: number;
+}

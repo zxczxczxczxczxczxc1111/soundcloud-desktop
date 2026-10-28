@@ -323,7 +323,7 @@ it('«слышано»: 70% уникального покрытия, у коро
 });
 
 it('план обхода (28.10.2026): подписки, аккаунты исполнителей реестра, поиск аккаунтов раз в месяц, поиск свежего по весомым и безаккаунтным; покрытие без поиска аккаунтов', () => {
-    const profile = { version: 2, artists: [[5, 1.5], [6, 0.1], [9, 2], [12, 0.8]] as Array<[number, number]>, credits: [], families: [], tags: [], markers: [], tracks: [], langs: [], contexts: [], sources: [], counted: 10 };
+    const profile = { version: 2, artists: [[5, 1.5], [6, 0.1], [9, 2], [12, 0.8]] as Array<[number, number]>, credits: [], families: [], tags: [], markers: [], tracks: [], langs: [], contexts: [], sources: [], tired: [], counted: 10 };
     const artist = (key: string, name: string, weight: number, accounts: number[] = []) => ({ key, name, weight, tracks: 3, accounts, followed: false });
     const registry = [artist('alpha', 'Alpha', 5, [7]), artist('beta', 'Beta', 4), artist('gamma', 'Gamma', 3), artist('delta', 'Delta', 2, [9])];
     const resolved = new Map([
@@ -390,7 +390,7 @@ it('подписок больше предела: скрытые место не
     const follows = Array.from({ length: RADAR_PARAMS.follows + 2 }, (_, i) => i + 1);
     const last = follows[follows.length - 1];
     // Вес ниже порога кураторов: в обход аккаунт попадает только как подписка
-    const profile = { version: 2, artists: [[last, 0.2]] as Array<[number, number]>, credits: [], families: [], tags: [], markers: [], tracks: [], langs: [], contexts: [], sources: [], counted: 10 };
+    const profile = { version: 2, artists: [[last, 0.2]] as Array<[number, number]>, credits: [], families: [], tags: [], markers: [], tracks: [], langs: [], contexts: [], sources: [], tired: [], counted: 10 };
     const ids = radarSources(follows, profile, [], new Map(), [], new Set([1]), CUTOFF).map((source) => source.id);
     expect(ids).toHaveLength(RADAR_PARAMS.follows);
     expect(ids).not.toContain(1);

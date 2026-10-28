@@ -4,14 +4,22 @@ import {
     moodTags, normalizeTag, trackPath, parseGenres, pickSpaced, spacingKeys, spacingGap, freshEnough, reasonText, shapeSamples, topGenres, trackMatchesGenre,
     applyTasteReasons, tagKeys, tasteMaps, tasteOrder, tasteReason, tasteScore, type TasteMaps, type WaveCandidate, type WaveFilter, type WaveTrack,
     countText, forgottenPicks, localDay, pickFinds, tasteGroups, capPerArtist, artistNames, isNewArtist, spreadBy, genreCanon, genreParts, genreMain,
-    rememberRecent, retryDelay, genreEnglish, tagShares, performerNames, sharedPerformer,
+    rememberRecent, retryDelay, genreEnglish, tagShares, performerNames, sharedPerformer, balanceShares,
     trackLang, tasteSlot, tasteForTime, sourceBias, trackTraits, seriesTrait,
 } from './wave';
 import { copyKeys, familyKey, versionKey } from './trackIdentity';
 
+it('доли (28.10.2026): на каждом месте группа, которой больше всего недостаёт, порядок внутри группы сохраняется', () => {
+    const list = ['l1', 'l2', 'l3', 'l4', 'c1', 'c2', 'i1'];
+    const key = (item: string): string => item[0];
+    expect(balanceShares(list, key, new Map([['c', 0.5], ['l', 0.5]]))).toEqual(['l1', 'c1', 'l2', 'c2', 'l3', 'l4', 'i1']);
+    expect(balanceShares(list, key, new Map())).toHaveLength(7);
+    expect(balanceShares([], key, new Map([['c', 1]]))).toEqual([]);
+});
+
 describe('вкус волны', () => {
     const taste = (artists: Array<[number, number]>, tags: Array<[string, number]> = [], tracks: Array<[number, number]> = [], extra: object = {}): TasteMaps =>
-        tasteMaps({ artists, tags, tracks, ...extra }) ?? { version: 0, artists: new Map(), credits: new Map(), families: new Map(), tags: new Map(), markers: new Map(), tracks: new Map(), langs: new Map(), contexts: new Map(), sources: new Map() };
+        tasteMaps({ artists, tags, tracks, ...extra }) ?? { version: 0, artists: new Map(), credits: new Map(), families: new Map(), tags: new Map(), markers: new Map(), tracks: new Map(), langs: new Map(), contexts: new Map(), sources: new Map(), tired: new Map(), tagTop: 0 };
     const item = (id: number, artist: number, extra: Partial<WaveTrack> = {}): WaveCandidate => ({
         track: { id, kind: 'track', user_id: artist, duration: 180000, title: 'T' + id, ...extra },
         reason: { kind: 'similar', seed: 'Seed' },
@@ -147,6 +155,15 @@ describe('вкус волны', () => {
         let first = 0;
         for (let run = 0; run < 400; run++) if (tasteOrder(pair, profile, random)[0].track.id === 2) first++;
         expect(first).toBeGreaterThan(220);
+    });
+
+    it('усталость (28.10.2026): дослушанный за неделю больше двух раз трек оценивается ниже, по четверти за раз, не больше единицы', () => {
+        const profile = taste([], [], [[1, 5]], { tired: [[1, 4], [2, 9], [0, 3], [3, 'x']] });
+        expect(profile.tired).toEqual(new Map([[1, 4], [2, 9]]));
+        const fresh = tasteScore(item(1, 10).track, taste([], [], [[1, 5]]));
+        const tired = tasteScore(item(1, 10).track, profile);
+        expect(fresh.score - tired.score).toBeCloseTo(0.5, 6);
+        expect(tasteScore(item(2, 10).track, profile).parts[0]).toBeCloseTo(-1, 6);
     });
 
     it('причина по вкусу достаётся только заметной трети подборки', () => {
@@ -417,9 +434,10 @@ it('П5: вкус на сейчас прибавляет поправки тек
     expect(tasteSlot(night)).toBe(0);
     expect(tasteSlot(weekendDay)).toBe(5);
     const base = tasteMaps({
-        artists: [[1, 2], [2, 1]], tags: [['ambient', 1]],
-        contexts: [{ key: 0, artists: [[1, 0.5], [2, -0.4], [9, 3]], tags: [['ambient', 0.2], ['new', 1]] }, { key: 99, artists: [[1, 5]] }, 'мусор'],
+        artists: [[1, 2], [2, 1]], tags: [['ambient', 1], ['techno', 0.8]],
+        contexts: [{ key: 0, artists: [[1, 0.5], [2, -0.4], [9, 3]], tags: [['ambient', 0.2], ['techno', 0.6], ['new', 1]] }, { key: 99, artists: [[1, 5]] }, 'мусор'],
     }) as TasteMaps;
+    expect(base.tagTop).toBe(1);
     expect([...base.contexts.keys()]).toEqual([0]);
     const now = tasteForTime(base, night);
     expect(now.artists.get(1)).toBeCloseTo(2.5, 6);
@@ -427,6 +445,8 @@ it('П5: вкус на сейчас прибавляет поправки тек
     expect(now.artists.has(9)).toBe(false);
     expect(now.tags.get('ambient')).toBeCloseTo(1.2, 6);
     expect(now.tags.has('new')).toBe(false);
+    // Главный тег сменился сдвигом: доля тегов считается от нового верха
+    expect(now.tagTop).toBeCloseTo(1.4, 6);
     // Базовый вкус не тронут, в отрезке без поправок он и есть вкус на сейчас
     expect(base.artists.get(1)).toBe(2);
     expect(tasteForTime(base, weekendDay)).toBe(base);

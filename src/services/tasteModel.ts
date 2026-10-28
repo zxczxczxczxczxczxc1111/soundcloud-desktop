@@ -56,7 +56,9 @@ export interface TasteProfile {
     langs: Array<[string, number]>;
     /** Поправки к весам артистов и тегов по отрезку суток: slot × 2 + выходной (0-7), slot 0 ночь, 1 утро, 2 день, 3 вечер */
     contexts: Array<{ key: number; artists: Array<[number, number]>; tags: Array<[string, number]> }>;
-    /** Треки волны за sourcesDays по исходной причине: [причина, дослушано, ранних пропусков] */
+    /** Треки, дослушанные за неделю от трёх раз: [id, сколько раз] */
+    tired: Array<[number, number]>;
+    /** Треки волны за sourcesDays по паре «источник|исходная причина»: [пара, дослушано, ранних пропусков] */
     sources: Array<[string, number, number]>;
     counted: number;
 }
@@ -286,6 +288,7 @@ export function buildTaste(
     const stored = new Map((library?.uploads ?? []).map((upload) => [upload.id, upload] as const));
     const cache = new Map<number, Directions>();
     const likedInPlay = new Set<number>();
+    const recentFull = new Map<number, number>();
     const directionsOfPlay = (play: TastePlay): Directions => {
         let item = cache.get(play.id);
         if (!item) {
@@ -365,6 +368,8 @@ export function buildTaste(
         if (play.likedNow) apply(LIKE, play.id, play.artist, item, positive, { ...origin, daily: false });
         if (!play.looped) looping.delete(play.id);
         if (play.heard < COUNTED_MS || play.away) continue;
+        // Усталость: дослушанное не на повторе за неделю, раз в сутки на трек хватает и одного круга
+        if (!play.looped && play.at >= now - P.weekDays * DAY && weights && weights[0] >= 1) recentFull.set(play.id, (recentFull.get(play.id) ?? 0) + 1);
         const previous = lastCounted.get(play.id);
         // Переслушивание плюсует трек; серия кругов повтора подряд даёт один голос, а не голос за круг
         if (previous !== undefined && play.at - previous <= P.replayDays * DAY && !(play.looped && looping.has(play.id))) push('tracks', String(play.id), positive, origin);
@@ -476,7 +481,8 @@ export function buildTaste(
         tracks: numeric(top(total.tracks, LIMITS.tracks, 0.1)),
         langs: top(total.langs, LIMITS.langs, 0.01),
         contexts,
-        sources: sources.filter((slice) => slice.key && slice.key.length <= 40 && slice.done + slice.early > 0).slice(0, 30).map((slice) => [slice.key, slice.done, slice.early]),
+        tired: [...recentFull].filter(([, count]) => count >= 3).sort((a, b) => b[1] - a[1] || a[0] - b[0]).slice(0, 300),
+        sources: sources.filter((slice) => slice.key && !slice.key.endsWith('|') && slice.key.length <= 60 && slice.done + slice.early > 0).slice(0, 120).map((slice) => [slice.key, slice.done, slice.early]),
         counted,
     };
 

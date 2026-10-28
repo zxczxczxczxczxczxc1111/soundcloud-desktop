@@ -307,6 +307,10 @@ contextBridge.exposeInMainWorld('soundcloudAPI', {
     reportWaveEmpty: (counts: unknown) => {
         ipcRenderer.send('soundcloud:wave-empty', counts);
     },
+    // Отсев кандидатов поколения волны по фильтрам: только числа, проверяет main
+    reportWaveFiltered: (counts: unknown) => {
+        ipcRenderer.send('soundcloud:wave-filtered', counts);
+    },
     // Чем кончился плавный переход: шаг и два числа в журнал диагностики, проверяет main
     reportCrossfade: (entry: unknown) => {
         ipcRenderer.send('soundcloud:wave-crossfade', entry);
