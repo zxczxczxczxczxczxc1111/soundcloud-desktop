@@ -806,6 +806,40 @@ export interface RadarBuildOutcome {
     /** Обход не завершён, а публиковать пустоту или неполное до бюджета нельзя */
     waiting: boolean;
     edition: RadarEdition | null;
+    /** Только у записанного выпуска: состав для журнала диагностики */
+    composition?: RadarComposition;
+}
+/** Состав выпуска для журнала диагностики (разбор 28.10.2026, шаг 7): видно, что радар держит своё исполнителей, а не каналы */
+export interface RadarComposition {
+    releases: number;
+    /** Релизы с аккаунтов исполнителей реестра и подписок */
+    own: number;
+    /** Позиции с каналов: остаются только записи любимых исполнителей, остальное уходит на полку */
+    channel: number;
+    /** Новые загрузки чужих аккаунтов, без фанатских работ */
+    uploads: number;
+    fan: number;
+    /** Записи вместе с группами, которые обычное окно выпуска не взяло бы и которые найдены после прошлого: пришли через окно опоздавших */
+    late: number;
+}
+export function radarComposition(edition: RadarEdition, uploads: StoredUpload[], channels: Set<number>, own: Set<number>, window: RadarWindow): RadarComposition {
+    const byKey = new Map(uploads.map((upload) => [upload.key, upload]));
+    const all = [...edition.items, ...edition.uploads];
+    const uploader = (item: RadarItem): number => byKey.get(item.key)?.uploader ?? 0;
+    return {
+        releases: edition.items.length,
+        own: edition.items.filter((item) => own.has(uploader(item))).length,
+        channel: all.filter((item) => channels.has(uploader(item))).length,
+        uploads: edition.uploads.filter((item) => !item.fan).length,
+        fan: edition.uploads.filter((item) => item.fan).length,
+        late: all.flatMap((item) => item.group ?? [item.id]).filter((id) => {
+            const upload = byKey.get('sc:track:' + id);
+            if (!upload || upload.firstSeen <= window.seenAfter) return false;
+            // Свежесть та же, что у отбора: доказанная дата релиза в окне делает запись обычной, а не опоздавшей
+            const { kind } = freshness(upload, false, window.from, edition.cutoff, channels.has(upload.uploader));
+            return kind !== 'release' && kind !== 'upload';
+        }).length,
+    };
 }
 const isId = (value: unknown): value is number => typeof value === 'number' && Number.isSafeInteger(value) && value > 0;
 const memberIds = (keys: Array<{ key: string }>, prefix: string): number[] =>
@@ -860,10 +894,21 @@ export class RadarService {
         const coverage = radarCoverage(this.plan(userId, now), cutoff - RADAR_FRESH_MS);
         if (!coverageComplete(coverage) && force !== true && manual !== true) return { ...idle, waiting: true };
         const { window, history } = this.window(userId, period, cutoff);
-        const edition = buildRadar({ ...this.inputs(userId, window.lateFrom, cutoff, now), period, cutoff, window, history, coverage });
+        const inputs = this.inputs(userId, window.lateFrom, cutoff, now);
+        const edition = buildRadar({ ...inputs, period, cutoff, window, history, coverage });
         if (!edition) return { ...idle, waiting: true };
         const saved = this.store.saveEdition(userId, edition, manual === true);
-        return { published: saved !== null, waiting: false, edition: saved };
+        if (!saved) return idle;
+        // Выпуск уже записан: сбой подсчёта для журнала не должен превращать его в ошибку сборки
+        try {
+            // Реестр уже собран планом выше и лежит в кэше
+            const hidden = new Set(this.exclusions(userId).artists.map((entry) => entry.id));
+            const own = new Set([...this.registry(userId, hidden, now).flatMap((artist) => artist.accounts), ...inputs.follows]);
+            return { published: true, waiting: false, edition: saved, composition: radarComposition(saved, inputs.uploads, inputs.channels, own, window) };
+        } catch (error) {
+            console.warn('Радар: состав выпуска для журнала не посчитан', error);
+            return { published: true, waiting: false, edition: saved };
+        }
     }
     /** Выпуск для страницы: последний или выбранный из архива с отметками «Уже слышал» на сейчас, и список архива */
     public view(userId: unknown, period?: unknown, revision?: unknown, now = Date.now()): RadarView {

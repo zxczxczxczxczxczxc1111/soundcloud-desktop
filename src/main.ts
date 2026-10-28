@@ -990,9 +990,9 @@ async function init() {
     radarScheduler?.stop();
     const radarPage = async (script: string): Promise<unknown> =>
         contentView && !contentView.webContents.isDestroyed() ? contentView.webContents.executeJavaScript(script) as Promise<unknown> : null;
-    radarScheduler = createRadarScheduler({ store, library, online: () => net.isOnline(), page: radarPage });
+    radarScheduler = createRadarScheduler({ store, library, diagnostics, online: () => net.isOnline(), page: radarPage });
     radarScheduler.start();
-    registerRadarIpc(ipcMain, { trustedSite: isTrustedSoundCloudSender, store, library, scheduler: () => radarScheduler });
+    registerRadarIpc(ipcMain, { trustedSite: isTrustedSoundCloudSender, store, library, diagnostics, scheduler: () => radarScheduler });
     registerLibraryIpc(ipcMain, { trustedSite: isTrustedSoundCloudSender, library });
     historyManager = new HistoryManager(mainWindow, library, {
         site: () => (contentView.webContents.isDestroyed() ? null : contentView.webContents),

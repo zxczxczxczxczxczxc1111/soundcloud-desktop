@@ -5,6 +5,7 @@ import { createRadarScheduler, registerRadarIpc, type RadarIpcDeps } from './rad
 
 const schedule = { radarDay: 5, radarTime: '09:00', radarZone: 'Europe/Moscow' } as Record<string, unknown>;
 const store = { get: (key: string) => schedule[key], set: vi.fn(), delete: vi.fn() };
+const diagnostics = { record: vi.fn() };
 
 function library(responses: Record<string, unknown> = {}) {
     const request = vi.fn(async (method: string) => responses[method] ?? null);
@@ -15,7 +16,7 @@ function setup(responses: Record<string, unknown> = {}, state: RadarState | null
     const ipc = new FakeIpc();
     const site = fakeEvent();
     const { request, library: lib } = library(responses);
-    registerRadarIpc(ipc, { trustedSite: trusting(site), store, library: lib, scheduler: () => (state ? { getState: () => state } : null) });
+    registerRadarIpc(ipc, { trustedSite: trusting(site), store, library: lib, diagnostics, scheduler: () => (state ? { getState: () => state } : null) });
     return { ipc, site, request };
 }
 
@@ -41,12 +42,27 @@ describe('обработчики радара', () => {
     });
     it('пересборка: при готовом выпуске новая ревизия, без него сборка сейчас', async () => {
         const period = radarPeriod(Date.now(), { day: 5, time: '09:00', zone: 'Europe/Moscow' });
-        const published = setup({ radarStatus: { published: true, started: 1 } });
+        const published = setup({ radarStatus: { published: true, started: 1 }, radarBuild: { published: false, waiting: true, edition: null } });
         await published.ipc.invoke('soundcloud:radar:rebuild', published.site, 11);
         expect(published.request).toHaveBeenLastCalledWith('radarBuild', 11, period.key, period.at, true, true);
-        const fresh = setup({ radarStatus: { published: false, started: 0 } });
+        const fresh = setup({ radarStatus: { published: false, started: 0 }, radarBuild: { published: false, waiting: true, edition: null } });
         await fresh.ipc.invoke('soundcloud:radar:rebuild', fresh.site, 11);
         expect(fresh.request).toHaveBeenLastCalledWith('radarBuild', 11, period.key, period.at, true, false);
+    });
+    it('состав записанного выпуска уходит в журнал диагностики числами, неудачная сборка не пишется', async () => {
+        const edition = { status: 'partial', coverage: { accounts: 40, checked: 38, failed: 1, searches: 20, searchesDone: 20 } };
+        const composition = { releases: 30, own: 24, channel: 1, uploads: 8, fan: 3, late: 2 };
+        diagnostics.record.mockClear();
+        const built = setup({ radarStatus: { published: true, started: 1 }, radarBuild: { published: true, waiting: false, edition, composition } });
+        await built.ipc.invoke('soundcloud:radar:rebuild', built.site, 11);
+        expect(diagnostics.record).toHaveBeenCalledOnce();
+        expect(diagnostics.record).toHaveBeenCalledWith('radar.built', {
+            manual: true, partial: true, radarReleases: 30, radarOwn: 24, radarChannel: 1, radarUploads: 8, radarFan: 3, radarLate: 2,
+            radarAccounts: 40, radarChecked: 38, radarFailed: 1,
+        });
+        const waiting = setup({ radarStatus: { published: false, started: 0 }, radarBuild: { published: false, waiting: true, edition: null } });
+        await waiting.ipc.invoke('soundcloud:radar:rebuild', waiting.site, 11);
+        expect(diagnostics.record).toHaveBeenCalledOnce();
     });
     it('состояние сбора берётся у планировщика, до его запуска пусто', async () => {
         const running = setup();
@@ -60,7 +76,7 @@ describe('планировщик радара в main', () => {
     it('ответ страницы «кто вошёл» недоверенный: не число значит нет входа', async () => {
         const { request, library: lib } = library();
         const page = vi.fn(async () => 'admin');
-        const scheduler = createRadarScheduler({ store, library: lib, online: () => true, page });
+        const scheduler = createRadarScheduler({ store, library: lib, diagnostics, online: () => true, page });
         await scheduler.tick();
         expect(scheduler.getState().phase).toBe('no-session');
         expect(page).toHaveBeenCalledWith('window.__scWhoAmI ? window.__scWhoAmI() : 0');
@@ -75,7 +91,7 @@ describe('планировщик радара в main', () => {
             if (script.startsWith('window.__scRadarCollect')) return { user: 11, checked: 'много', remaining: 0, stopped: 'взлом' };
             return null;
         });
-        const scheduler = createRadarScheduler({ store, library: lib, online: () => true, page });
+        const scheduler = createRadarScheduler({ store, library: lib, diagnostics, online: () => true, page });
         await scheduler.tick();
         expect(scheduler.getState().phase).toBe('published');
         expect(request).toHaveBeenCalledWith('radarStatus', 11, expect.any(String), expect.any(Number));
@@ -83,10 +99,25 @@ describe('планировщик радара в main', () => {
         // Страница узнаёт о новом состоянии
         expect(scripts.some((script) => script.startsWith('window.__scRadarChanged?.({"phase":"published"'))).toBe(true);
     });
+    it('плановая сборка пишет состав выпуска в журнал', async () => {
+        const edition = { status: 'complete', coverage: { accounts: 5, checked: 5, failed: 0, searches: 0, searchesDone: 0 } };
+        const composition = { releases: 4, own: 4, channel: 0, uploads: 1, fan: 0, late: 0 };
+        const { library: lib } = library({ radarStatus: { published: false, started: 0 }, radarTask: { started: Date.now() }, radarBuild: { published: true, waiting: false, edition, composition } });
+        const page = vi.fn(async (script: string) => {
+            if (script.startsWith('window.__scWhoAmI')) return 11;
+            if (script.startsWith('window.__scRadarCollect')) return { user: 11, checked: 5, remaining: 0 };
+            return null;
+        });
+        diagnostics.record.mockClear();
+        const scheduler = createRadarScheduler({ store, library: lib, diagnostics, online: () => true, page });
+        await scheduler.tick();
+        expect(scheduler.getState().phase).toBe('published');
+        expect(diagnostics.record).toHaveBeenCalledWith('radar.built', expect.objectContaining({ manual: false, partial: false, radarReleases: 4, radarOwn: 4 }));
+    });
     it('без сети проход не трогает ни страницу, ни хранилище', async () => {
         const { request, library: lib } = library();
         const page = vi.fn<(script: string) => Promise<unknown>>(async () => 11);
-        const scheduler = createRadarScheduler({ store, library: lib, online: () => false, page });
+        const scheduler = createRadarScheduler({ store, library: lib, diagnostics, online: () => false, page });
         await scheduler.tick();
         expect(scheduler.getState().phase).toBe('offline');
         expect(request).not.toHaveBeenCalled();

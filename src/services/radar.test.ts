@@ -1,10 +1,10 @@
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { afterEach, expect, it } from 'vitest';
+import { afterEach, expect, it, vi } from 'vitest';
 import {
     RADAR_PARAMS, RadarService, buildRadar, cleanRadarItem, coverageComplete, exclusionFilter, freshness, heardIds, heardLast, radarCoverage, radarSources, radarWindow,
-    scoreUpload, selectEdition, selectRadar, fanWork, archiveTitle, archiveLast, uploadTrack, channelPicks, channelSet, provenDate, radarCandidates, reversedTitle, type RadarCandidate, type RadarCoverage, type RadarInput,
+    scoreUpload, selectEdition, selectRadar, fanWork, archiveTitle, archiveLast, uploadTrack, channelPicks, channelSet, provenDate, radarCandidates, radarComposition, reversedTitle, type RadarCandidate, type RadarEdition, type RadarItem, type RadarCoverage, type RadarInput,
 } from './radar';
 import { tasteMaps } from './wave';
 import { RecommendStore, type StoredUpload } from './recommendStore';
@@ -519,6 +519,26 @@ it('каналы (28.10.2026): аккаунт с чужими исполните
     expect(channelPicks({ ...input(uploads, { profile, channels, heard: new Set([90]) }) }, FROM, CUTOFF)).toEqual([]);
 });
 
+it('состав выпуска (28.10.2026): свои релизы по аккаунтам реестра, позиции каналов, чужое и фанатское, опоздавшие с группами', () => {
+    const item = (id: number, extra: Partial<RadarItem> = {}): RadarItem => ({
+        key: 'sc:track:' + id, id, title: 'T' + id, artist: 'A', kind: 'release', at: CUTOFF - DAY, heard: false, score: 1, base: 1, bonus: 0, penalty: 0,
+        direction: 'phonk', reason: { kind: 'taste' }, ...extra,
+    });
+    const edition: RadarEdition = {
+        period: '2026-09-25', revision: 1, created: CUTOFF, cutoff: CUTOFF, status: 'complete', coverage: FULL, algorithm: 1, taste: 1,
+        items: [item(1), item(2, { group: [2, 3] }), item(4), item(7)],
+        uploads: [item(5, { kind: 'upload' }), item(6, { kind: 'upload', fan: true })],
+    };
+    const late = { firstSeen: CUTOFF - DAY, createdAt: FROM - DAY };
+    const uploads = [upload(1, 'One', 10, 'Own'), upload(2, 'Two', 20, 'Label'), upload(3, 'Two (Remix)', 20, 'Label', late), upload(4, 'Four', 30, 'Other', late), upload(5, 'Five', 20, 'Label'), upload(6, 'Six', 40, 'Fan'),
+        // Опубликован давно, но дата релиза с ISRC в окне: обычная позиция выпуска, а не опоздавшая
+        upload(7, 'Seven', 50, 'Label Two', { ...late, createdAt: FROM - 30 * DAY, isrc: 'XX0000000001', releaseDay: new Date(CUTOFF - 2 * DAY).toISOString().slice(0, 10) })];
+    const window = radarWindow(CUTOFF, [{ cutoff: FROM, created: FROM + 1000, ids: [], directions: [] }]);
+    expect(radarComposition(edition, uploads, new Set([20]), new Set([10]), window)).toEqual({ releases: 4, own: 1, channel: 2, uploads: 1, fan: 1, late: 2 });
+    // Без прошлого выпуска опоздавших нет
+    expect(radarComposition(edition, uploads, new Set(), new Set(), radarWindow(CUTOFF, [])).late).toBe(0);
+});
+
 const folders: string[] = [];
 afterEach(() => {
     for (const created of folders.splice(0)) rmSync(created, { recursive: true, force: true });
@@ -555,9 +575,46 @@ it('сборка в worker: до конца обхода ждёт, после п
         expect(outcome).toMatchObject({ published: true, edition: { status: 'complete', revision: 1, coverage: { accounts: 1, checked: 1 } } });
         expect(outcome.edition?.items.map((item) => [item.id, item.reason.kind])).toEqual([[51, 'follow']]);
         expect(outcome.edition?.uploads.map((item) => item.id)).toEqual([52]);
+        // Состав для журнала: релиз с аккаунта подписки, перезалив в новых загрузках, каналов и опоздавших нет
+        expect(outcome.composition).toEqual({ releases: 1, own: 1, channel: 0, uploads: 1, fan: 0, late: 0 });
         expect(radar.build(77, '2026-09-25', cutoff, true, false, now)).toEqual({ published: false, waiting: false, edition: null });
         expect(store.editions(77)).toHaveLength(1);
     } finally {
+        index.close();
+        store.close();
+    }
+});
+
+it('сборка в worker (28.10.2026): сбой подсчёта состава для журнала не превращает записанный выпуск в ошибку', () => {
+    const directory = mkdtempSync(join(tmpdir(), 'sc-radar-test-'));
+    folders.push(directory);
+    const store = new RecommendStore(directory);
+    const index = new HistoryIndex(directory, new WaveSignals(directory));
+    const taste = new TasteService(directory, index, () => [], (user, played) => store.tasteLibrary(user, played));
+    const empty: WaveExclusionList = { tracks: [], artists: [], laterTracks: [], laterArtists: [], more: [], families: [] };
+    const radar = new RadarService(store, index, taste, () => empty);
+    const now = Date.now();
+    const cutoff = now - 3600000;
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+    try {
+        store.syncStart(77, 'followings', false, now);
+        store.syncPage(77, 'followings', 1, [{ key: 'sc:user:5' }], null, now);
+        store.syncFinish(77, 'followings', 1, 'complete', '', now);
+        store.recordUploads(77, [{ id: 51, kind: 'track', title: 'Fresh', user_id: 5, user: { id: 5, username: 'Five' }, duration: 200000, created_at: new Date(cutoff - 2 * DAY).toISOString() }], now);
+        store.catalogChecked(77, 'user:5', 'Five', 'ok', '', 1, now - 60000);
+        store.catalogChecked(77, 'search:five', 'Five', 'ok', '', 0, now - 60000);
+        // План берёт реестр как обычно, подсчёт состава после записи падает
+        const registry = radar.registry.bind(radar);
+        vi.spyOn(radar, 'registry').mockImplementationOnce(registry).mockImplementation(() => {
+            throw new Error('реестр недоступен');
+        });
+        const outcome = radar.build(77, '2026-09-25', cutoff, false, false, now);
+        expect(outcome).toMatchObject({ published: true, waiting: false, edition: { revision: 1 } });
+        expect(outcome.composition).toBeUndefined();
+        expect(store.editions(77)).toHaveLength(1);
+        expect(warn).toHaveBeenCalledWith('Радар: состав выпуска для журнала не посчитан', expect.any(Error));
+    } finally {
+        warn.mockRestore();
         index.close();
         store.close();
     }
@@ -593,6 +650,7 @@ it('сборка в worker (28.10.2026): релиз, увиденный толь
         const outcome = radar.build(77, '2026-09-25', second, false, false, now);
         expect(outcome.published).toBe(true);
         expect(outcome.edition?.items.flatMap((item) => item.group ?? [item.id]).sort()).toEqual([52, 53]);
+        expect(outcome.composition?.late).toBe(1);
         expect(store.radarPrevious(77, '2026-09-25')).toEqual([{ cutoff: first, created: first + 1000, ids: [51], directions: [expect.any(String)] }]);
     } finally {
         index.close();

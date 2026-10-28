@@ -1,18 +1,35 @@
 // Пятничный радар: планировщик в main (расписание здесь, сбор каталога на странице сайта, выпуск считает и пишет
 // worker) и запросы страницы: выпуск с архивом, «Все найденные», пересборка и состояние сбора
+import type { DiagnosticJournal } from '../services/diagnosticJournal';
 import type { LibraryService } from '../services/libraryService';
+import type { RadarBuildOutcome } from '../services/radar';
 import { RadarScheduler, cleanCollectResult, cleanSchedule, radarPeriod } from '../services/radarSchedule';
 import type { IpcRegistry, SenderCheck, Settings } from './ipcTypes';
+
+type Diagnostics = Pick<DiagnosticJournal, 'record'>;
+
+// Состав записанного выпуска в журнал диагностики (разбор 28.10.2026, шаг 7): только числа, без названий и аккаунтов
+function recordBuilt(diagnostics: Diagnostics, outcome: RadarBuildOutcome, manual: boolean): void {
+    const edition = outcome.edition;
+    const parts = outcome.composition;
+    if (!outcome.published || !edition || !parts) return;
+    diagnostics.record('radar.built', {
+        manual, partial: edition.status === 'partial',
+        radarReleases: parts.releases, radarOwn: parts.own, radarChannel: parts.channel, radarUploads: parts.uploads, radarFan: parts.fan, radarLate: parts.late,
+        radarAccounts: edition.coverage.accounts, radarChecked: edition.coverage.checked, radarFailed: edition.coverage.failed,
+    });
+}
 
 export interface RadarWiring {
     store: Settings;
     library: Pick<LibraryService, 'request'>;
+    diagnostics: Diagnostics;
     online(): boolean;
     /** Скрипт на странице сайта; null, если страницы нет */
     page(script: string): Promise<unknown>;
 }
 
-export function createRadarScheduler({ store, library, online, page: radarPage }: RadarWiring): RadarScheduler {
+export function createRadarScheduler({ store, library, diagnostics, online, page: radarPage }: RadarWiring): RadarScheduler {
     return new RadarScheduler({
         now: () => Date.now(),
         schedule: () => cleanSchedule(store.get('radarDay'), store.get('radarTime'), store.get('radarZone')),
@@ -32,6 +49,7 @@ export function createRadarScheduler({ store, library, online, page: radarPage }
         )),
         build: async (user, period, at, force) => {
             const outcome = await library.request('radarBuild', user, period, at, force, false);
+            recordBuilt(diagnostics, outcome, false);
             return { published: outcome.published, waiting: outcome.waiting };
         },
         changed: (state) => {
@@ -46,11 +64,12 @@ export interface RadarIpcDeps {
     trustedSite: SenderCheck;
     store: Settings;
     library: Pick<LibraryService, 'request'>;
+    diagnostics: Diagnostics;
     scheduler(): Pick<RadarScheduler, 'getState'> | null;
 }
 
 export function registerRadarIpc(ipc: IpcRegistry, deps: RadarIpcDeps): void {
-    const { trustedSite: isTrustedSoundCloudSender, store, library } = deps;
+    const { trustedSite: isTrustedSoundCloudSender, store, library, diagnostics } = deps;
     const radarUser = (event: Parameters<SenderCheck>[0], userId: unknown): number => {
         if (!isTrustedSoundCloudSender(event)) throw new Error('Недопустимый отправитель радара');
         if (typeof userId !== 'number' || !Number.isSafeInteger(userId) || userId <= 0) throw new Error('Пользователь не определён');
@@ -66,7 +85,9 @@ export function registerRadarIpc(ipc: IpcRegistry, deps: RadarIpcDeps): void {
         const period = radarPeriod(Date.now(), cleanSchedule(store.get('radarDay'), store.get('radarTime'), store.get('radarZone')));
         // Недели ещё нет: это просто сборка сейчас, а не ревизия; иначе новая ревизия, прежняя остаётся в архиве
         const manual = (await library.request('radarStatus', user, period.key, period.at)).published;
-        return library.request('radarBuild', user, period.key, period.at, true, manual);
+        const outcome = await library.request('radarBuild', user, period.key, period.at, true, manual);
+        recordBuilt(diagnostics, outcome, true);
+        return outcome;
     });
     ipc.handle('soundcloud:radar:state', (event) => {
         if (!isTrustedSoundCloudSender(event)) throw new Error('Недопустимый отправитель радара');
