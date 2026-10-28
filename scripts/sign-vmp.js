@@ -12,7 +12,8 @@ function signPackage(directory) {
     for (const command of ['sign-pkg', 'verify-pkg']) {
         const result = spawnSync(process.env.EVS_PYTHON || 'python',
             ['-m', 'castlabs_evs.vmp', '--no-ask', command, packageDir],
-            { stdio: 'inherit', windowsHide: true, timeout: 120000 });
+            // Подпись загружает exe на сервер EVS целиком (230 МБ на Electron 43), две минуты на это мало
+            { stdio: 'inherit', windowsHide: true, timeout: 900000 });
         if (result.error) throw result.error;
         if (result.status !== 0) throw new Error(`EVS ${command}: код ${result.status}`);
     }
