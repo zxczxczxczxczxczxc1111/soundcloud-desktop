@@ -1,7 +1,7 @@
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { afterEach, expect, it } from 'vitest';
+import { afterEach, expect, it, vi } from 'vitest';
 import {
     RADAR_PARAMS, RadarService, buildRadar, cleanRadarItem, coverageComplete, exclusionFilter, freshness, heardIds, heardLast, radarCoverage, radarSources, radarWindow,
     scoreUpload, selectEdition, selectRadar, fanWork, archiveTitle, archiveLast, uploadTrack, channelPicks, channelSet, provenDate, radarCandidates, radarComposition, reversedTitle, type RadarCandidate, type RadarEdition, type RadarItem, type RadarCoverage, type RadarInput,
@@ -653,6 +653,35 @@ it('сборка в worker (28.10.2026): релиз, увиденный толь
         expect(outcome.edition?.items.flatMap((item) => item.group ?? [item.id]).sort()).toEqual([52, 53]);
         expect(outcome.composition?.late).toBe(1);
         expect(store.radarPrevious(77, '2026-09-25')).toEqual([{ cutoff: first, created: first + 1000, ids: [51], directions: [expect.any(String)] }]);
+    } finally {
+        index.close();
+        store.close();
+    }
+});
+
+it('каналы (28.10.2026): признак канала читается пачками не больше 5000 аккаунтов и держится 6 часов', () => {
+    const directory = mkdtempSync(join(tmpdir(), 'sc-radar-test-'));
+    folders.push(directory);
+    const store = new RecommendStore(directory);
+    const index = new HistoryIndex(directory, new WaveSignals(directory));
+    const taste = new TasteService(directory, index, () => [], (user, played) => store.tasteLibrary(user, played));
+    const empty: WaveExclusionList = { tracks: [], artists: [], laterTracks: [], laterArtists: [], more: [], families: [] };
+    const radar = new RadarService(store, index, taste, () => empty);
+    const now = Date.now();
+    // Хранилище само режет список до 5000: аккаунт сверх них без пачек остался бы непроверенным
+    const uploaders = Array.from({ length: 6001 }, (_, i) => 10000 + i);
+    vi.spyOn(store, 'radarUploads').mockReturnValue({ uploads: uploaders.map((id) => upload(id, 'T' + id, id, 'U' + id, { createdAt: now - DAY })), reuploads: [] });
+    const works = vi.spyOn(store, 'recentWorks').mockReturnValue([]);
+    try {
+        radar.channels(77, now);
+        const asked = works.mock.calls.map(([, ids]) => ids as number[]);
+        expect(asked.every((ids) => ids.length <= 5000)).toBe(true);
+        expect(new Set(asked.flat())).toEqual(new Set(uploaders));
+        // Через час из кэша, через семь часов читается заново
+        radar.channels(77, now + 3600000);
+        expect(works).toHaveBeenCalledTimes(asked.length);
+        radar.channels(77, now + 7 * 3600000);
+        expect(works.mock.calls.length).toBeGreaterThan(asked.length);
     } finally {
         index.close();
         store.close();

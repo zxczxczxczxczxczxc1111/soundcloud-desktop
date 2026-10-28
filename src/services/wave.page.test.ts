@@ -798,6 +798,121 @@ it('пропуск после 30 секунд до 80% трека (28.10.2026) �
 it('пропуск с 80% трека это его конец, сессию не трогает', async () => {
     expect(await skipAt(170000)).toBe(false);
 });
+it('поздний пропуск (28.10.2026) зерно не топит: найденное от того же зерна остаётся в начале очереди', async () => {
+    vi.spyOn(Math, 'random').mockReturnValue(0.5);
+    const site = fakeSite(relatedTracks);
+    window.eval(waveScript());
+    await vi.advanceTimersByTimeAsync(100);
+    document.querySelector<HTMLButtonElement>('#sc-wave .scw-play')!.click();
+    await vi.advanceTimersByTimeAsync(1100);
+    const queued = site.player.replaceQueue.mock.calls[0][0] as FakeItem[];
+    // Похожие у зерна N имеют номера N000-N007: зерно трека видно по номеру
+    const seedOf = (item: FakeItem): number => Math.floor(item.sound.id / 1000);
+    const at = queued.findIndex((item) => seedOf(item) > 0);
+    expect(at).toBeGreaterThanOrEqual(0);
+    site.setItems(queued, at);
+    position = 60000;
+    await vi.advanceTimersByTimeAsync(1100);
+    const next = nextButton();
+    await skipNow(site, next);
+    position = 0;
+    next.remove();
+    // Минус зерна опустил бы всё найденное от него в конец; поздний пропуск трогает только аккаунт и теги трека
+    const ahead = site.player.getQueue().slice(site.player.getQueueState().currentIndex + 1, site.player.getQueueState().currentIndex + 5);
+    expect(ahead).toHaveLength(4);
+    expect(ahead.some((item) => seedOf(item) === seedOf(queued[at]))).toBe(true);
+});
+
+it('смена курса (28.10.2026): второй ранний пропуск и третий во время идущего подбора пересобирают очередь сразу, не дожидаясь новых зёрен', async () => {
+    vi.spyOn(Math, 'random').mockReturnValue(0.5);
+    const history = [1, 2, 3, 4, 5, 6].map((id) => ({ track: { id, kind: 'track', user_id: 100 + id, duration: 180000, title: 'Seed ' + id } }));
+    // После запуска похожие отвечают через 5 секунд: подбор новых зёрен идёт всё время пропусков
+    let slow = false;
+    const site = fakeSite(relatedTracks, (name, path) => {
+        if (name === 'playHistoryTracks') return { collection: history };
+        if (name === 'relatedSounds' && slow) return new Promise((resolve) => setTimeout(() => resolve({ collection: relatedTracks(Number(path.track_id)) }), 5000));
+        return undefined;
+    });
+    window.eval(waveScript());
+    await vi.advanceTimersByTimeAsync(100);
+    document.querySelector<HTMLButtonElement>('#sc-wave .scw-play')!.click();
+    await vi.advanceTimersByTimeAsync(1100);
+    slow = true;
+    const next = nextButton();
+    const rebuilt: boolean[] = [];
+    for (let i = 0; i < 3; i++) {
+        const before = site.player.getQueue().slice(site.player.getQueueState().currentIndex + 2);
+        // Шестая секунда: ранний пропуск, но не быстрый, развилка не открывается
+        position = 6000;
+        await vi.advanceTimersByTimeAsync(1100);
+        await skipNow(site, next);
+        position = 0;
+        const after = site.player.getQueue().slice(site.player.getQueueState().currentIndex + 1);
+        rebuilt.push(after.some((item) => !before.includes(item)));
+    }
+    next.remove();
+    expect(document.querySelectorAll('#sc-wave .scw-tile[data-fork]')).toHaveLength(0);
+    expect(rebuilt).toEqual([true, true, true]);
+});
+
+it('версия в резерве настроения (28.10.2026) лучшей версией не заменяется: в волне играет одна', async () => {
+    localStorage.setItem('scDesktopWave', JSON.stringify({ preset: 'sad' }));
+    vi.spyOn(Math, 'random').mockReturnValue(0.5);
+    const tune = (id: number, title: string, user: number): WaveTrack => ({ id, kind: 'track', title, user_id: user, user: { id: user, username: 'Up ' + user }, duration: 200000, genre: 'Techno' });
+    // Sped up у первого зерна не подходит грустному пресету и ждёт в добивке; оригинал приходит позже, из похожих на лайкнутый
+    const mixed = (seed: number): WaveTrack[] => [
+        ...Array.from({ length: 8 }, (_, i) => ({ id: seed * 1000 + i, kind: 'track', user_id: seed * 10 + i, duration: 200000, title: 'Rel ' + seed + '-' + i, genre: i < 6 ? 'Emo' : 'Techno' })),
+        ...(seed === 1 ? [tune(1500, 'Singer - Tune (Sped Up)', 501)] : seed >= 1000 ? [tune(seed * 1000 + 500, 'Singer - Tune', 502)] : []),
+    ];
+    const site = fakeSite(mixed);
+    const controls = document.createElement('div');
+    controls.className = 'playControls';
+    const siteLike = document.createElement('button');
+    siteLike.className = 'playbackSoundBadge__like';
+    siteLike.addEventListener('click', () => siteLike.classList.toggle('sc-button-selected'));
+    controls.append(siteLike);
+    document.body.append(controls);
+    window.eval(waveScript());
+    await vi.advanceTimersByTimeAsync(100);
+    document.querySelector<HTMLButtonElement>('#sc-wave .scw-play')!.click();
+    await vi.advanceTimersByTimeAsync(1100);
+    siteLike.click();
+    await vi.advanceTimersByTimeAsync(1100);
+    // Очередь доходит до добивки
+    for (let i = 0; i < 8; i++) {
+        const items = site.player.getQueue().slice();
+        site.setItems(items, items.length - 2);
+        await vi.advanceTimersByTimeAsync(1100);
+    }
+    const titles = site.player.getQueue().slice().map((item) => (item.sound as unknown as { attributes: WaveTrack }).attributes.title ?? '');
+    expect(titles.filter((title) => title.startsWith('Singer - Tune'))).toEqual(['Singer - Tune (Sped Up)']);
+});
+
+it('счётчики похожего артиста любимого (28.10.2026): отказ прошлого поколения в новое не идёт', async () => {
+    vi.spyOn(Math, 'random').mockReturnValue(0.5);
+    const history = [1, 2, 3, 4].map((id) => ({ track: { id, kind: 'track', user_id: 100 + id, duration: 180000, title: 'Seed ' + id, user: { id: 100 + id, username: 'Fav ' + id } } }));
+    // Первый запрос похожих артистов отвечает отказом через 3 секунды, остальные пусто
+    let asked = 0;
+    fakeSite(relatedTracks, (name) => {
+        if (name === 'playHistoryTracks') return { collection: history };
+        if (name === 'userRelatedArtists' && asked++ === 0) return new Promise((_, reject) => setTimeout(() => reject(new Error('нет ответа')), 3000));
+        return undefined;
+    });
+    const report = vi.fn();
+    // Четыре любимых: новое поколение спрашивает про трёх других и до зависшего запроса не доходит
+    Object.assign(window, { soundcloudAPI: { waveTaste: { load: vi.fn(async () => ({ artists: [[101, 5], [102, 5], [103, 5], [104, 5]], tags: [], tracks: [] })) }, reportWaveFiltered: report } });
+    window.eval(waveScript());
+    await vi.advanceTimersByTimeAsync(500);
+    // Смена режима, пока запрос прошлого поколения висит
+    document.querySelector<HTMLButtonElement>('#sc-wave [data-mode="fresh"]')!.click();
+    await vi.advanceTimersByTimeAsync(4000);
+    window.dispatchEvent(new Event('pagehide'));
+    expect(asked).toBeGreaterThan(1);
+    const stats = report.mock.calls.map(([value]) => value as Record<string, number>);
+    expect(stats).toHaveLength(2);
+    expect(stats[1].neighborAsked).toBe(1);
+    expect(stats[1].neighborFailed).toBe(0);
+});
 
 it('В2.14: три ранних пропуска подряд берут новые зёрна, найденное от зёрен с пропусками уходит из очереди впереди', async () => {
     vi.spyOn(Math, 'random').mockReturnValue(0.5);

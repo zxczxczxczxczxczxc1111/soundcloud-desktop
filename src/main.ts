@@ -17,6 +17,7 @@ import { pageMotionScript } from './services/pageMotion';
 import { playerAreaScript } from './services/playerArea';
 import { searchLinkScript } from './services/searchLink';
 import { WaveJournal } from './services/waveJournal';
+import { flushOnSessionEnd } from './services/sessionEnd';
 import { WaveExclusions } from './services/waveExclusions';
 import { WaveShelf } from './services/waveShelf';
 import { WaveSignals } from './services/waveSignals';
@@ -757,12 +758,7 @@ async function init() {
 
     windowState.manage(mainWindow);
     mainWindow.on('focus', focusTopView);
-    // Выключение, перезагрузка и выход из системы: before-quit и will-quit на Windows не приходят, буферы ложатся сейчас
-    mainWindow.on('session-end', () => {
-        waveJournal?.flush();
-        waveSignals?.flush();
-        diagnostics.flush();
-    });
+    flushOnSessionEnd(mainWindow, () => [waveJournal, waveSignals, diagnostics]);
 
     // handle window close event for minimize to tray
     mainWindow.on('close', (event) => {
