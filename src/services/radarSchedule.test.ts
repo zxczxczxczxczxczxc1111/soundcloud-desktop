@@ -34,7 +34,7 @@ it('настройки расписания проверяются, неверн
     expect(isRadarTime('09:00')).toBe(true);
     expect(isRadarTime('24:00')).toBe(false);
     expect(isRadarTime('9:00')).toBe(false);
-    expect(cleanSchedule(7, '25:00', 'x')).toEqual(MSK);
+    expect(cleanSchedule(7, '25:00', 'x')).toEqual({ day: 6, time: '03:00', zone: 'Europe/Moscow' });
     expect(cleanSchedule(1, '18:30', 'Asia/Tokyo')).toEqual({ day: 1, time: '18:30', zone: 'Asia/Tokyo' });
     expect(cleanCollectResult({ user: 77, checked: 2, remaining: -1, stopped: 'evil' })).toEqual({ user: 77, checked: 2, remaining: 0, stopped: '' });
     expect(cleanCollectResult(null)).toBeNull();
@@ -72,7 +72,8 @@ it('A17: сбор в слот ограничен бюджетом от стар�
     const env = scheduler(slot + 60000);
     const first = new RadarScheduler(env.deps);
     await first.tick();
-    expect(env.deps.collect).toHaveBeenLastCalledWith(77, RADAR_BUDGET_MS, slot - 24 * 3600000);
+    // Сначала несвежее больше суток, затем перепроверка всего, что смотрели раньше трёх часов до слота
+    expect(env.deps.collect).toHaveBeenLastCalledWith(77, RADAR_BUDGET_MS, slot - 3 * 3600000, slot - 24 * 3600000);
     // Обход не завершён, бюджет не вышел: неполное не публикуется
     expect(env.deps.build).toHaveBeenLastCalledWith(77, '2026-09-25', slot, false);
     expect(first.getState()).toMatchObject({ phase: 'collecting', period: '2026-09-25' });
@@ -80,7 +81,7 @@ it('A17: сбор в слот ограничен бюджетом от стар�
     env.advance(60000);
     const second = new RadarScheduler(env.deps);
     await second.tick();
-    expect(env.deps.collect).toHaveBeenLastCalledWith(77, RADAR_BUDGET_MS - 60000, slot - 24 * 3600000);
+    expect(env.deps.collect).toHaveBeenLastCalledWith(77, RADAR_BUDGET_MS - 60000, slot - 3 * 3600000, slot - 24 * 3600000);
     // Бюджет вышел: публикуется то, что есть
     env.advance(RADAR_BUDGET_MS);
     await second.tick();
@@ -91,7 +92,7 @@ it('A17: сбор в слот ограничен бюджетом от стар�
     const builds = vi.mocked(env.deps.build).mock.calls.length;
     await second.tick();
     expect(vi.mocked(env.deps.build).mock.calls.length).toBe(builds);
-    expect(env.deps.collect).toHaveBeenLastCalledWith(77, 20000, env.deps.now() - 20 * 3600000);
+    expect(env.deps.collect).toHaveBeenLastCalledWith(77, 20000, env.deps.now() - 20 * 3600000, env.deps.now() - 20 * 3600000);
     expect(env.tasks.size).toBe(1);
 });
 

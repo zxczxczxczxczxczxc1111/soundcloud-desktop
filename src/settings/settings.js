@@ -277,7 +277,7 @@ async function initializeSettings() {
     const radarDay = document.getElementById('radarDay');
     const radarTime = document.getElementById('radarTime');
     const radarZone = document.getElementById('radarZone');
-    radarDay.value = String(initial.radarDay ?? 5);
+    radarDay.value = String(initial.radarDay ?? 6);
     const zones = typeof Intl.supportedValuesOf === 'function' ? Intl.supportedValuesOf('timeZone') : [];
     for (const zone of new Set([initial.radarZone, ...zones].filter((item) => typeof item === 'string' && item))) {
         const option = document.createElement('option');

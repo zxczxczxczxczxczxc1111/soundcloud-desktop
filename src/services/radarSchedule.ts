@@ -1,4 +1,4 @@
-// Расписание пятничного радара: период выпуска в часовом поясе пользователя и планировщик в main.
+// Расписание радара: период выпуска в часовом поясе пользователя и планировщик в main.
 // Время, сеть, страница и хранилище приходят зависимостями: так планировщик проверяется без Electron
 import { withTimeout } from '../utils/withTimeout';
 
@@ -7,18 +7,25 @@ const MINUTE = 60000;
 const PAGE_ANSWER_MS = 15000;
 
 export interface RadarSchedule {
-    /** День недели 0-6, воскресенье 0; пятница 5 */
+    /** День недели 0-6, воскресенье 0; суббота 6 */
     day: number;
     /** Время «ЧЧ:ММ» */
     time: string;
     /** IANA-зона, например Europe/Moscow */
     zone: string;
 }
-export const DEFAULT_RADAR_SCHEDULE: RadarSchedule = { day: 5, time: '09:00', zone: 'Europe/Moscow' };
-/** Бюджет сбора перед публикацией от старта задачи периода (раздел 8 плана) */
-export const RADAR_BUDGET_MS = 180000;
+/** Суббота ночью (решение владельца 28.10.2026): к этому часу пятничные релизы уже загружены */
+export const DEFAULT_RADAR_SCHEDULE: RadarSchedule = { day: 6, time: '03:00', zone: 'Europe/Moscow' };
+/** Бюджет сбора перед публикацией от старта задачи периода. Сбор ночью, ждать некому: хватает на перепроверку
+ *  нескольких сотен источников при шаге запросов в секунду */
+export const RADAR_BUDGET_MS = 300000;
 /** Источник считается проверенным для выпуска, если его проверили не раньше чем за сутки до слота */
 export const RADAR_FRESH_MS = 24 * 3600000;
+/** Перед сборкой перепроверяется всё, что смотрели раньше чем за столько до слота: релиз, вышедший вечером
+ *  накануне, иначе ждал бы следующей проверки уже после выпуска */
+export const RADAR_RECHECK_MS = 3 * 3600000;
+/** Между выпусками источник подновляется, если его не смотрели столько */
+export const RADAR_BACKGROUND_MS = 20 * 3600000;
 
 export function isTimeZone(value: unknown): value is string {
     if (typeof value !== 'string' || !value || value.length > 64) return false;
@@ -141,8 +148,9 @@ export interface RadarSchedulerDeps {
     status(user: number, period: string, at: number): Promise<RadarStatus>;
     /** Задача периода: создаётся один раз, после перезапуска возвращается та же с прежним стартом */
     task(user: number, period: string, at: number, zone: string): Promise<{ started: number }>;
-    /** Сбор несвежих источников страницей в пределах бюджета; null, если страница не ответила */
-    collect(user: number, budgetMs: number, staleBefore: number): Promise<RadarCollectResult | null>;
+    /** Сбор страницей в пределах бюджета: источники, проверенные раньше staleBefore. Проверенные раньше urgentBefore
+     *  идут первыми по давности, остальные по весу. null, если страница не ответила */
+    collect(user: number, budgetMs: number, staleBefore: number, urgentBefore: number): Promise<RadarCollectResult | null>;
     build(user: number, period: string, at: number, force: boolean): Promise<RadarBuildResult>;
     changed(state: RadarState): void;
 }
@@ -217,10 +225,10 @@ export class RadarScheduler {
         const user = await withTimeout(this.deps.user(), PAGE_ANSWER_MS, 'радар: вход');
         if (!user) return this.set('no-session', period.key);
         const status = await this.deps.status(user, period.key, period.at);
-        const staleBefore = period.at - RADAR_FRESH_MS;
         if (status.published) {
             // Между слотами каталог подновляется понемногу, чтобы к следующему выпуску почти всё было свежим
-            const result = await withTimeout(this.deps.collect(user, this.backgroundBudget, this.deps.now() - 20 * 3600000), this.backgroundBudget + MINUTE, 'радар: сбор');
+            const stale = this.deps.now() - RADAR_BACKGROUND_MS;
+            const result = await withTimeout(this.deps.collect(user, this.backgroundBudget, stale, stale), this.backgroundBudget + MINUTE, 'радар: сбор');
             if (result?.stopped === 'auth') return this.set('no-session', period.key);
             this.quiet = !!result && !result.stopped && result.remaining === 0;
             return this.set('published', period.key);
@@ -229,7 +237,10 @@ export class RadarScheduler {
         const deadline = task.started + RADAR_BUDGET_MS;
         this.set('collecting', period.key);
         const budget = Math.max(deadline - this.deps.now(), 30000);
-        const collected = await withTimeout(this.deps.collect(user, budget, staleBefore), budget + MINUTE, 'радар: сбор');
+        // Сначала то, без чего выпуск неполный (старше суток до слота), затем перепроверка остального по весу
+        const collected = await withTimeout(
+            this.deps.collect(user, budget, period.at - RADAR_RECHECK_MS, period.at - RADAR_FRESH_MS), budget + MINUTE, 'радар: сбор',
+        );
         if (!collected) return this.set('collecting', period.key, 'page');
         if (collected.stopped === 'auth' || collected.stopped === 'no-api') return this.set('no-session', period.key);
         if (collected.stopped === 'account-changed' || collected.user !== user) return this.set('collecting', period.key, 'account-changed');

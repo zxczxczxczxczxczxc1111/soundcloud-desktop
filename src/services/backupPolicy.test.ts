@@ -14,7 +14,7 @@ it('настройки копии: только свои ключи с пров�
     expect(cleanBackupSettings(null)).toEqual({});
     expect(cleanBackupSettings(['adBlocker'])).toEqual({});
     for (const key of ['proxyPassword', 'webhookUrl', 'accounts', 'currentAccountId', 'gpuCompatibilityMode', 'theme']) expect(BACKUP_SETTING_KEYS).not.toContain(key);
-    expect(BACKUP_MIGRATION_MARKS).toEqual(['adBlockerDefaultApplied', 'homeLayoutApplied']);
+    expect(BACKUP_MIGRATION_MARKS).toEqual(['adBlockerDefaultApplied', 'homeLayoutApplied', 'radarSaturdayApplied']);
 });
 
 it('папка данных клиента и всё внутри неё не годятся для копии, соседняя папка с похожим именем годится', () => {

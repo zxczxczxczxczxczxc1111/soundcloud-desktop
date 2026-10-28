@@ -8,7 +8,7 @@ import * as waveLinks from '../waveLinks';
 import * as wavePicks from '../wavePicks';
 import * as waveTexts from '../waveTexts';
 import type { RadarReason } from '../radar';
-import type { RadarState } from '../radarSchedule';
+import type { RadarCollectResult, RadarState } from '../radarSchedule';
 import type { Profile, Seed, WaveTexts, WaveTrack } from '../waveTypes';
 import type { SitePlayer, WaveWindow } from '../wave';
 
@@ -52,6 +52,8 @@ export interface RadarCore {
     ensureProfile(): Promise<Profile>;
     ensureExclusions(): Promise<void>;
     ensureUser(): Promise<number>;
+    /** Сбор источников радара до пересборки: несвежие раньше staleBefore, срочные (раньше urgentBefore) первыми */
+    collect(budgetMs: number, staleBefore: number, urgentBefore: number): Promise<RadarCollectResult>;
     call(name: string, path: object, query: object): Promise<unknown>;
     render(): void;
     showToast(text: string): void;
@@ -430,7 +432,9 @@ export function installRadar(core: RadarCore): RadarSection {
         radarPinned = latest && latest.period === period && String(latest.revision) === revision ? null : { period, revision: Number(revision) };
         loadRadar();
     }
-    // Ручная пересборка: новая ревизия того же периода, прежняя остаётся в архиве и в играющей очереди
+    // Ручная пересборка: новая ревизия того же периода, прежняя остаётся в архиве и в играющей очереди.
+    // Сначала минута на перепроверку источников, которые не смотрели три часа: иначе пересборка повторила бы
+    // прежний выпуск. Сбор не удался: выпуск собирается из того, что уже есть
     async function rebuildRadar(): Promise<void> {
         const bridge = host.soundcloudAPI?.radar;
         if (!bridge || radarBusy) return;
@@ -439,6 +443,10 @@ export function installRadar(core: RadarCore): RadarSection {
         try {
             const id = await ensureUser();
             if (!id) throw new Error('Пользователь не определён');
+            const now = Date.now();
+            const collected = await core.collect(60000, now - 3 * 3600000, now - 24 * 3600000)
+                .catch((error: unknown) => { console.warn('Радар: сбор перед пересборкой не удался', error); return null; });
+            if (collected?.stopped) console.warn('Радар: сбор перед пересборкой остановлен: ' + collected.stopped);
             const outcome = (await bridge.rebuild(id)) as { published?: unknown; edition?: { revision?: unknown } | null } | null;
             if (outcome?.published === true) {
                 radarPinned = null;
@@ -506,7 +514,7 @@ export function installRadar(core: RadarCore): RadarSection {
         const parts = [countText(edition.items.length, T.tracksCount, T.lang)];
         parts.push(edition.status === 'complete' ? T.radarComplete : fillText(T.radarCoverage, { checked: String(edition.checked), total: String(edition.total) }));
         if (edition.revision > 1) parts.push(fillText(T.radarRevision, { n: String(edition.revision) }));
-        if (radarState?.phase === 'collecting' && radarState.period !== edition.period) parts.push(T.radarCollecting);
+        if (radarBusy || (radarState?.phase === 'collecting' && radarState.period !== edition.period)) parts.push(T.radarCollecting);
         return parts.join(' · ');
     }
     // Волна от выпуска: позиции по порядку впереди похожего; запреты и доступность проверяются перед запуском

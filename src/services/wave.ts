@@ -600,6 +600,7 @@ export function installWave(config: WaveConfig, createPlayback: typeof installPl
         ensureProfile,
         ensureExclusions,
         ensureUser,
+        collect: (budgetMs, staleBefore, urgentBefore) => collectRadarNow(budgetMs, staleBefore, urgentBefore),
         call,
         render: () => render(),
         showToast,
@@ -1141,12 +1142,21 @@ export function installWave(config: WaveConfig, createPlayback: typeof installPl
     // решает worker (подписки, кураторы и любимые участники из вкуса); страница только ходит на сайт фоном через
     // диспетчер и пишет найденное. Отказ источника отмечается отказом, а не пустым каталогом
     let radarCollect: Promise<RadarCollectResult> | null = null;
-    host.__scRadarCollect = (budgetMs: unknown, staleBefore: unknown): Promise<RadarCollectResult> => {
-        radarCollect ??= collectRadar(typeof budgetMs === 'number' ? budgetMs : 0, typeof staleBefore === 'number' ? staleBefore : 0)
-            .finally(() => { radarCollect = null; });
+    // Один сбор за раз: повторный вызов во время идущего получает его же
+    function startRadarCollect(budgetMs: number, staleBefore: number, urgentBefore: number): Promise<RadarCollectResult> {
+        radarCollect ??= collectRadar(budgetMs, staleBefore, urgentBefore).finally(() => { radarCollect = null; });
         return radarCollect;
+    }
+    host.__scRadarCollect = (budgetMs: unknown, staleBefore: unknown, urgentBefore: unknown): Promise<RadarCollectResult> => {
+        const stale = typeof staleBefore === 'number' ? staleBefore : 0;
+        return startRadarCollect(typeof budgetMs === 'number' ? budgetMs : 0, stale, typeof urgentBefore === 'number' ? urgentBefore : stale);
     };
-    async function collectRadar(budgetMs: number, staleBefore: number): Promise<RadarCollectResult> {
+    // Сбор перед ручной пересборкой со своими порогами: идущий сбор по расписанию сначала доходит до конца
+    async function collectRadarNow(budgetMs: number, staleBefore: number, urgentBefore: number): Promise<RadarCollectResult> {
+        if (radarCollect) await radarCollect.catch((error: unknown) => console.warn('Радар: сбор по расписанию не удался', error));
+        return startRadarCollect(budgetMs, staleBefore, urgentBefore);
+    }
+    async function collectRadar(budgetMs: number, staleBefore: number, urgentBefore: number): Promise<RadarCollectResult> {
         const bridge = host.soundcloudAPI?.recommend;
         const result: RadarCollectResult = { user: 0, checked: 0, remaining: 0, stopped: '' };
         if (!api || !bridge?.radarPlan || !bridge.catalogChecked || !bridge.recordUploads) return { ...result, stopped: 'no-api' };
@@ -1173,10 +1183,14 @@ export function installWave(config: WaveConfig, createPlayback: typeof installPl
                 checked: typeof item.checked === 'number' ? item.checked : 0, weight: typeof item.weight === 'number' ? item.weight : 0,
             }];
         });
-        // Несвежие первыми самые давние; источник с отказом повторяется не чаще раза в 10 минут
+        // Срочные (старше urgentBefore и отказы) первыми самые давние, остальные несвежие по весу: перед выпуском
+        // сначала любимые. Источник с отказом повторяется не чаще раза в 10 минут
         const retryBefore = Date.now() - 10 * 60000;
-        const due = plan.filter((source) => source.checked < staleBefore || (source.status === 'failed' && source.checked < retryBefore))
-            .sort((a, b) => a.checked - b.checked || b.weight - a.weight);
+        const urgent = (source: { checked: number; status: unknown }): boolean =>
+            source.checked < urgentBefore || (source.status === 'failed' && source.checked < retryBefore);
+        const due = plan.filter((source) => source.checked < staleBefore || urgent(source))
+            .sort((a, b) => Number(urgent(b)) - Number(urgent(a))
+                || (urgent(a) ? a.checked - b.checked || b.weight - a.weight : b.weight - a.weight || a.checked - b.checked));
         result.remaining = due.length;
         if (!due.length) return result;
         // Сайт мог сменить вход без перезагрузки: чужой каталог в хранилище этого аккаунта не пишется

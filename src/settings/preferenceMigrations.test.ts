@@ -29,6 +29,17 @@ it('зону радара записывает один раз из систем
     applyPreferenceMigrations(store);
     expect(store.values.radarZone).toBe('Asia/Tokyo');
 });
+it('радар переезжает с пятницы на субботу 03:00 один раз; другой день и выбор после переезда не трогает', () => {
+    const friday = memoryStore({ radarDay: 5, radarTime: '01:00' });
+    applyPreferenceMigrations(friday);
+    expect(friday.values).toMatchObject({ radarDay: 6, radarTime: '03:00', radarSaturdayApplied: true });
+    friday.set('radarDay', 5);
+    applyPreferenceMigrations(friday);
+    expect(friday.values.radarDay).toBe(5);
+    const sunday = memoryStore({ radarDay: 0, radarTime: '20:00' });
+    applyPreferenceMigrations(sunday);
+    expect(sunday.values).toMatchObject({ radarDay: 0, radarTime: '20:00', radarSaturdayApplied: true });
+});
 it('включает блокировку рекламы один раз, а выключенную после этого не трогает', () => {
     const store = memoryStore({ adBlocker: false });
     applyPreferenceMigrations(store);

@@ -5,7 +5,7 @@ import type { CatalogCheck, CatalogStatus, EditionSummary, RecommendStore, Store
 import type { HistoryIndex, TastePlay } from './historyIndex';
 import type { TasteProfile, TasteService } from './tasteModel';
 import type { ExclusionEntry, WaveExclusionList } from './waveExclusions';
-import { confirmedCopies, confirmedGroups, copyKeys, familyKey, nameKey, performerKey, trackCredits, versionKey, type TrackCredit } from './trackIdentity';
+import { confirmedCopies, confirmedGroups, copyKey, copyKeys, familyKey, nameKey, performerKey, trackCredits, versionKey, type TrackCredit } from './trackIdentity';
 import { tagShares, tasteMaps, tasteScore, type TasteMaps, type WaveTrack } from './wave';
 import { RADAR_FRESH_MS } from './radarSchedule';
 
@@ -14,11 +14,19 @@ const DAY = 86400000;
 /** Параметры радара; version растёт при каждом изменении их смысла и попадает в выпуск.
  *  4: потолок аккаунта и в «Новых загрузках» (26.09.2026).
  *  5: прибавка свежести только последним трём дням окна, недобор открытий отдаётся связанным (28.09.2026).
- *  6: фанатские работы отдельной карточкой, архивные записи вниз своего списка (02.10.2026) */
+ *  6: фанатские работы отдельной карточкой, архивные записи вниз своего списка (02.10.2026).
+ *  7: окно от отсечки прошлого выпуска, опоздавшие к нему записи и без повторов показанного (28.10.2026) */
 export const RADAR_PARAMS = {
-    version: 6,
-    /** Окно свежести версии, дни до отсечки. Неделя между выпусками (решение владельца 25.09.2026, было 28) */
+    version: 7,
+    /** Окно свежести версии у первого выпуска, дни до отсечки; дальше окно начинается с отсечки прошлого выпуска */
     windowDays: 7,
+    /** Окно не длиннее: после пропущенных недель выпуск не тянет давнее */
+    maxWindowDays: 14,
+    /** Опоздавшая запись (опубликована до окна, но впервые увидена после сборки прошлого выпуска) входит в выпуск,
+     *  если вышла не раньше стольких дней до отсечки: так релиз за час до прошлой сборки не теряется навсегда */
+    lateDays: 14,
+    /** Сколько прошлых выпусков смотреть, чтобы показанное не повторялось */
+    shownEditions: 4,
     /** Последние дни окна получают небольшую прибавку. Меньше окна: при равных днях она доставалась всем */
     recentDays: 3,
     recentBonus: 0.05,
@@ -461,10 +469,48 @@ export function cleanRadarItem(value: unknown): RadarItem | null {
     };
 }
 
+/** Прошлый выпуск: отсечка, время сборки, показанные записи вместе с группами и направления основного списка */
+export interface PreviousEdition {
+    cutoff: number;
+    created: number;
+    ids: number[];
+    directions: string[];
+}
+/** Окно отбора выпуска */
+export interface RadarWindow {
+    /** Начало окна публикации: отсечка прошлого выпуска, но не дальше maxWindowDays до отсечки */
+    from: number;
+    /** Начало окна для опоздавших */
+    lateFrom: number;
+    /** Впервые увиденное позже этого опоздало к прошлому выпуску; без прошлого выпуска опоздавших нет */
+    seenAfter: number;
+    /** Показанное в прошлых выпусках: не повторяется */
+    shown: Set<number>;
+    /** Ключи вероятных копий показанного (copyKey): тот же трек с другого аккаунта тоже не повторяется */
+    shownCopies: Set<string>;
+}
+/** Выпуск с отсечкой ближе этого та же неделя (после смены дня или зоны), а не прошлая: так же считает хранилище */
+const SAME_WEEK = 3 * DAY;
+/** Окно выпуска с отсечкой cutoff; previous: прошлые выпуски новые сверху (последняя ревизия каждого периода).
+ *  Выпуск той же недели окно не сдвигает и показанным не считается: пересборка после смены дня собирает ту же неделю */
+export function radarWindow(cutoff: number, previous: PreviousEdition[]): RadarWindow {
+    const P = RADAR_PARAMS;
+    const earlier = previous.filter((edition) => edition.cutoff <= cutoff - SAME_WEEK);
+    const last = earlier[0];
+    return {
+        from: last ? Math.max(cutoff - P.maxWindowDays * DAY, last.cutoff) : cutoff - P.windowDays * DAY,
+        lateFrom: cutoff - P.lateDays * DAY,
+        seenAfter: last ? last.created : Infinity,
+        shown: new Set(earlier.flatMap((edition) => edition.ids)),
+        shownCopies: new Set(),
+    };
+}
+
 export interface RadarInput {
     period: string;
     now: number;
     cutoff: number;
+    window: RadarWindow;
     uploads: StoredUpload[];
     /** Ключи загрузок, у которых есть копия той же версии раньше хотя бы на сутки */
     reuploads: Set<string>;
@@ -488,11 +534,14 @@ const asItem = (pick: RadarPick, upload: StoredUpload, group: RadarCandidate[] =
     ...(group.length > 1 ? { group: group.map((member) => member.id) } : {}),
 });
 
-/** Кандидаты окна [from, to] после запретов и склейки копий: и для выпуска, и для «Всех найденных» */
-export function radarCandidates(input: RadarInput, from: number, to: number): RadarCandidate[] {
+/** Кандидаты окна выпуска до to после запретов, показанного раньше и склейки копий: и для выпуска, и для «Всех найденных» */
+export function radarCandidates(input: RadarInput, to: number): RadarCandidate[] {
     const maps = tasteMaps(input.profile) ?? tasteMaps({});
     if (!maps) return [];
     const follows = new Set(input.follows);
+    const { window } = input;
+    // Показанное раньше не повторяется ни подтверждённой, ни вероятной копией
+    const shown = confirmedCopies(window.shown, input.groups);
     // Вероятные и подтверждённые копии одной версии в выпуске одной строкой: остаётся релиз раньше перезалива,
     // затем лучшая оценка, при равенстве меньший id. Порядок входа не решает, какая копия остаётся
     // Запись отмечается ключом подтверждённой группы и серединой ключей вероятной копии; новая ищет свои ключи
@@ -502,13 +551,15 @@ export function radarCandidates(input: RadarInput, from: number, to: number): Ra
     const better = (a: RadarCandidate, b: RadarCandidate): boolean =>
         a.kind !== b.kind ? a.kind === 'release' : a.base !== b.base ? a.base > b.base : a.id < b.id;
     for (const upload of input.uploads.slice().sort((a, b) => a.id - b.id)) {
-        if (input.excluded(upload)) continue;
+        if (input.excluded(upload) || shown.has(upload.id)) continue;
+        const from = upload.firstSeen > window.seenAfter ? window.lateFrom : window.from;
         const { kind, at } = freshness(upload, input.reuploads.has(upload.key), from, to);
         if (kind !== 'release' && kind !== 'upload') continue;
+        const copies = copyKeys(uploadTrack(upload));
+        if (copies.some((key) => window.shownCopies.has(key))) continue;
         const candidate = scoreUpload(upload, kind, at, maps, follows, input.heard.has(upload.id), to);
         if (!candidate) continue;
         const root = input.groups.get(upload.key);
-        const copies = copyKeys(uploadTrack(upload));
         const lookups = root ? ['g:' + root, ...copies] : copies;
         const entry: Entry = { candidate, centers: [...(root ? ['g:' + root] : []), copies.length === 3 ? copies[1] : copies[0]] };
         const rivals = new Set<Entry>();
@@ -560,7 +611,7 @@ export function buildRadar(input: RadarInput): RadarEdition | null {
     const releases: RadarCandidate[] = [];
     const fresh: RadarCandidate[] = [];
     const fans: RadarCandidate[] = [];
-    for (const candidate of radarCandidates(input, input.cutoff - P.windowDays * DAY, input.cutoff)) (candidate.fan ? fans : candidate.kind === 'release' ? releases : fresh).push(candidate);
+    for (const candidate of radarCandidates(input, input.cutoff)) (candidate.fan ? fans : candidate.kind === 'release' ? releases : fresh).push(candidate);
     const complete = coverageComplete(input.coverage);
     if (!releases.length && !complete) return null;
     // Отбор идёт по ведущим групп: потолок аккаунта считает группы, остальные записи исполнителя едут в group
@@ -633,7 +684,8 @@ export class RadarService {
         if (manual !== true && this.store.radarStatus(userId, period, cutoff).published) return idle;
         const coverage = radarCoverage(this.plan(userId, now), cutoff - RADAR_FRESH_MS);
         if (!coverageComplete(coverage) && force !== true && manual !== true) return { ...idle, waiting: true };
-        const edition = buildRadar({ ...this.inputs(userId, cutoff - RADAR_PARAMS.windowDays * DAY, cutoff, now), period, cutoff, history: this.store.radarDirections(userId, period), coverage });
+        const { window, history } = this.window(userId, period, cutoff);
+        const edition = buildRadar({ ...this.inputs(userId, window.lateFrom, cutoff, now), period, cutoff, window, history, coverage });
         if (!edition) return { ...idle, waiting: true };
         const saved = this.store.saveEdition(userId, edition, manual === true);
         return { published: saved !== null, waiting: false, edition: saved };
@@ -647,7 +699,7 @@ export class RadarService {
         if (!edition) return { edition: null, editions };
         // Отметка ставится по прослушиваниям и лайкам после выпуска тоже; сама позиция из выпуска не уходит,
         // а опускается в конец своего списка
-        const heard = this.inputs(userId, edition.cutoff - RADAR_PARAMS.windowDays * DAY, now, now, false).heard;
+        const heard = this.inputs(userId, edition.cutoff - RADAR_PARAMS.lateDays * DAY, now, now, false).heard;
         const mark = (item: RadarItem): RadarItem => ({ ...item, heard: item.heard || heard.has(item.id) });
         return { edition: { ...edition, items: heardLast(edition.items.map(mark)), uploads: heardLast(edition.uploads.map(mark)) }, editions };
     }
@@ -656,12 +708,11 @@ export class RadarService {
         if (!isId(userId)) return [];
         const edition = this.store.edition(userId, period, revision);
         if (!edition) return [];
-        const from = edition.cutoff - RADAR_PARAMS.windowDays * DAY;
-        const input = { ...this.inputs(userId, from, now, now), period: edition.period, cutoff: now, history: [], coverage: edition.coverage };
-        // Показанное в выпуске вместе с группами не повторяется; остальное тоже группами исполнителей
-        const shown = new Set([...edition.items, ...edition.uploads].flatMap((item) => [item.id, ...(item.group ?? [])]));
+        // Окно то же, что у выпуска; показанное в нём и в прошлых выпусках вместе с группами не повторяется
+        const { window } = this.window(userId, edition.period, edition.cutoff, [...edition.items, ...edition.uploads].flatMap((item) => [item.id, ...(item.group ?? [])]));
+        const input = { ...this.inputs(userId, window.lateFrom, now, now), period: edition.period, cutoff: now, window, history: [], coverage: edition.coverage };
         const byKey = new Map(input.uploads.map((upload) => [upload.key, upload]));
-        return performerGroups(radarCandidates(input, from, now).filter((candidate) => !shown.has(candidate.id)))
+        return performerGroups(radarCandidates(input, now))
             .sort((a, b) => b.lead.base - a.lead.base || a.lead.id - b.lead.id)
             .slice(0, RADAR_PARAMS.foundSize)
             .flatMap(({ lead, group }) => {
@@ -671,8 +722,17 @@ export class RadarService {
                 return [lead.at > edition.cutoff || upload.firstSeen > edition.created ? { ...item, after: true } : item];
             });
     }
+    // Окно выпуска периода по прошлым выпускам и их направления для разнообразия; also: что ещё считать показанным (сам выпуск
+    // для «Всех найденных»). Ключи вероятных копий берутся из сохранённых загрузок показанного
+    private window(userId: number, period: string, cutoff: number, also: number[] = []): { window: RadarWindow; history: string[][] } {
+        const previous = this.store.radarPrevious(userId, period, RADAR_PARAMS.shownEditions);
+        const window = radarWindow(cutoff, previous);
+        for (const id of also) window.shown.add(id);
+        for (const upload of this.store.uploads(userId, [...window.shown].map((id) => 'sc:track:' + id))) window.shownCopies.add(copyKey(uploadTrack(upload)));
+        return { window, history: previous.map((edition) => edition.directions) };
+    }
     // Всё, что нужно отбору, кроме истории выпусков и покрытия: окно загрузок, вкус, подписки, «Уже слышал», запреты
-    private inputs(userId: number, from: number, to: number, now: number, withUploads = true): Omit<RadarInput, 'period' | 'cutoff' | 'history' | 'coverage'> {
+    private inputs(userId: number, from: number, to: number, now: number, withUploads = true): Omit<RadarInput, 'period' | 'cutoff' | 'window' | 'history' | 'coverage'> {
         try {
             this.index.sync(userId);
         } catch (error) {

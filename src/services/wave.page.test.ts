@@ -3131,7 +3131,7 @@ it('П1: волна от трека не уезжает по названию: �
     expect(queued).toContain(6004);
 });
 
-type RadarCollect = (budgetMs: number, staleBefore: number) => Promise<unknown>;
+type RadarCollect = (budgetMs: number, staleBefore: number, urgentBefore?: number) => Promise<unknown>;
 const radarBridge = (plan: object[]) => ({
     syncState: vi.fn(async () => []),
     syncStart: vi.fn(async () => null),
@@ -3184,6 +3184,27 @@ it('P6: сбор радара обходит несвежие источники
     expect(recommend.catalogChecked.mock.calls).toEqual([
         [77, 'user:5', 'Five', 'ok', '', 3], [77, 'search:artistname', 'Artist Name', 'ok', '', 2], [77, 'user:7', 'Seven', 'gone', 'missing', 0],
     ]);
+});
+
+it('сбор перед выпуском (28.10.2026): сначала несвежее больше суток по давности, затем перепроверка по весу', async () => {
+    const now = Date.now();
+    const recommend = radarBridge([
+        { key: 'user:5', kind: 'user', id: 5, q: '', label: '', checked: now - 5 * 3600000, status: 'ok', weight: 0.4 },
+        { key: 'user:6', kind: 'user', id: 6, q: '', label: '', checked: now - 4 * 3600000, status: 'ok', weight: 2 },
+        { key: 'user:7', kind: 'user', id: 7, q: '', label: '', checked: now - 30 * 3600000, status: 'ok', weight: 0.1 },
+        { key: 'user:8', kind: 'user', id: 8, q: '', label: '', checked: now - 3600000, status: 'ok', weight: 5 },
+        { key: 'user:9', kind: 'user', id: 9, q: '', label: '', checked: now - 40 * 3600000, status: 'ok', weight: 0.2 },
+    ]);
+    Object.assign(window, { soundcloudAPI: { recommend } });
+    const site = fakeSite(relatedTracks, (name) => (name === 'userTracks' ? { collection: [] } : undefined));
+    window.eval(waveScript());
+    await vi.advanceTimersByTimeAsync(100);
+    const collect = (window as unknown as { __scRadarCollect: RadarCollect }).__scRadarCollect;
+    const pending = collect(60000, now - 3 * 3600000, now - 24 * 3600000);
+    await vi.advanceTimersByTimeAsync(20000);
+    expect(await pending).toMatchObject({ checked: 4, remaining: 0 });
+    // Проверенный час назад не перепроверяется
+    expect(site.api.callEndpoint.mock.calls.filter(([name]) => name === 'userTracks').map(([, path]) => (path as { id: number }).id)).toEqual([9, 7, 6, 5]);
 });
 
 it('P6: сбор радара сначала догоняет обход подписок, даже если волна ещё не загружала профиль', async () => {
@@ -3331,6 +3352,40 @@ it('P7: радар первым на полке, список с «Already heard
     expect(section.querySelector('.scw-mix-title b')?.textContent).toBe('Release Radar, ' + radarDay(radarCutoff - 7 * 86400000));
     // Архивный выпуск не пересобирается
     expect(section.querySelector('[data-act="radar-rebuild"]')).toBeNull();
+});
+
+it('пересборка (28.10.2026): сначала перепроверка источников, потом сборка; отказ сбора пересборку не срывает', async () => {
+    const order: string[] = [];
+    const recommend = radarBridge([{ key: 'user:5', kind: 'user', id: 5, q: '', label: '', checked: Date.now() - 5 * 3600000, status: 'ok', weight: 1 }]);
+    const radar = {
+        view: vi.fn(async () => ({ edition: radarEditionOf('2026-09-25', 1, radarCutoff), editions: radarEditions })),
+        found: vi.fn(async () => []),
+        rebuild: vi.fn(async () => {
+            order.push('rebuild');
+            return { published: true, waiting: false, edition: { revision: 2 } };
+        }),
+        state: vi.fn(async () => ({ phase: 'published', period: '2026-09-25', error: '', updated: 1 })),
+    };
+    Object.assign(window, { soundcloudAPI: { radar, recommend } });
+    fakeSite(relatedTracks, (name, _path, query) => {
+        if (name === 'userTracks') {
+            order.push('userTracks');
+            return { collection: [] };
+        }
+        return name === 'trackBatch' ? batchOf(radarTracks)(query) : undefined;
+    });
+    window.eval(waveScript());
+    await vi.advanceTimersByTimeAsync(100);
+    const section = document.getElementById('sc-wave')!;
+    section.querySelector<HTMLButtonElement>('[data-act="shelf-open"][data-card="-10"]')!.click();
+    await vi.advanceTimersByTimeAsync(100);
+    section.querySelector<HTMLButtonElement>('[data-act="radar-rebuild"]')!.click();
+    await vi.advanceTimersByTimeAsync(40000);
+    expect(order).toEqual(['userTracks', 'rebuild']);
+    recommend.radarPlan.mockRejectedValueOnce(new Error('worker'));
+    section.querySelector<HTMLButtonElement>('[data-act="radar-rebuild"]')!.click();
+    await vi.advanceTimersByTimeAsync(40000);
+    expect(order).toEqual(['userTracks', 'rebuild', 'rebuild']);
 });
 
 it('П10: фанатские работы выпуска отдельной карточкой «Remixes & edits» со своей подсказкой и волной', async () => {

@@ -27,8 +27,9 @@ export function createRadarScheduler({ store, library, online, page: radarPage }
             if (!task) throw new Error('Задача радара не создана');
             return task;
         },
-        collect: async (_user, budgetMs, staleBefore) =>
-            cleanCollectResult(await radarPage('window.__scRadarCollect ? window.__scRadarCollect(' + Math.round(budgetMs) + ', ' + Math.round(staleBefore) + ') : null')),
+        collect: async (_user, budgetMs, staleBefore, urgentBefore) => cleanCollectResult(await radarPage(
+            'window.__scRadarCollect ? window.__scRadarCollect(' + Math.round(budgetMs) + ', ' + Math.round(staleBefore) + ', ' + Math.round(urgentBefore) + ') : null',
+        )),
         build: async (user, period, at, force) => {
             const outcome = await library.request('radarBuild', user, period, at, force, false);
             return { published: outcome.published, waiting: outcome.waiting };

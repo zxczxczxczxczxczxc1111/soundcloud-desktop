@@ -3,15 +3,15 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, expect, it } from 'vitest';
 import {
-    RADAR_PARAMS, RadarService, buildRadar, cleanRadarItem, coverageComplete, creditNames, exclusionFilter, freshness, heardIds, heardLast, radarCoverage, radarSources,
-    scoreUpload, selectEdition, selectRadar, fanWork, archiveTitle, archiveLast, type RadarCandidate, type RadarCoverage, type RadarInput,
+    RADAR_PARAMS, RadarService, buildRadar, cleanRadarItem, coverageComplete, creditNames, exclusionFilter, freshness, heardIds, heardLast, radarCoverage, radarSources, radarWindow,
+    scoreUpload, selectEdition, selectRadar, fanWork, archiveTitle, archiveLast, uploadTrack, type RadarCandidate, type RadarCoverage, type RadarInput,
 } from './radar';
 import { tasteMaps } from './wave';
 import { RecommendStore, type StoredUpload } from './recommendStore';
 import { HistoryIndex } from './historyIndex';
 import { WaveSignals } from './waveSignals';
 import { TasteService } from './tasteModel';
-import { confirmedGroups, familyKey, parseTrackTitle, trackCredits, versionKey } from './trackIdentity';
+import { confirmedGroups, copyKey, familyKey, parseTrackTitle, trackCredits, versionKey } from './trackIdentity';
 import type { WaveExclusionList } from './waveExclusions';
 
 const DAY = 86400000;
@@ -30,7 +30,7 @@ function upload(id: number, title: string, uploader: number, uploaderName: strin
     };
 }
 const input = (uploads: StoredUpload[], extra: Partial<RadarInput> = {}): RadarInput => ({
-    period: '2026-09-25', now: CUTOFF + 1000, cutoff: CUTOFF, uploads, reuploads: new Set(), tasteVersion: 2, follows: [], heard: new Set(), excluded: () => false,
+    period: '2026-09-25', now: CUTOFF + 1000, cutoff: CUTOFF, window: radarWindow(CUTOFF, []), uploads, reuploads: new Set(), tasteVersion: 2, follows: [], heard: new Set(), excluded: () => false,
     groups: new Map(), history: [], coverage: FULL,
     profile: { artists: [[1, 3], [3, 2]], credits: [['artist', 2]], tags: [['phonk', 1], ['jazz', 0.6]], families: [], markers: [], tracks: [] },
     ...extra,
@@ -274,7 +274,7 @@ it('П10: фанатские работы отдельно от релизов �
     expect(edition.items.find((item) => item.group?.includes(67))?.id).not.toBe(67);
     expect(edition.items.map((item) => item.id).slice(-1)).toEqual([69]);
     expect(edition.items.length).toBeGreaterThan(1);
-    expect(edition.algorithm).toBe(6);
+    expect(edition.algorithm).toBe(RADAR_PARAMS.version);
     // Пометка переживает чтение выпуска из файла
     const stored = edition.uploads.find((item) => item.fan);
     expect(cleanRadarItem(JSON.parse(JSON.stringify(stored)))).toMatchObject({ fan: true });
@@ -361,6 +361,38 @@ it('позиция выпуска из файла проверяется: чуж
     expect(cleanRadarItem('x')).toBeNull();
 });
 
+it('окно выпуска (28.10.2026): от отсечки прошлого выпуска, не длиннее двух недель; у первого выпуска неделя', () => {
+    expect(radarWindow(CUTOFF, [])).toMatchObject({ from: CUTOFF - 7 * DAY, lateFrom: CUTOFF - 14 * DAY, seenAfter: Infinity });
+    const previous = { cutoff: CUTOFF - 8 * DAY, created: CUTOFF - 8 * DAY + 3600000, ids: [5, 6], directions: [] };
+    expect(radarWindow(CUTOFF, [previous, { cutoff: CUTOFF - 15 * DAY, created: 1, ids: [7], directions: [] }]))
+        .toEqual({ from: CUTOFF - 8 * DAY, lateFrom: CUTOFF - 14 * DAY, seenAfter: previous.created, shown: new Set([5, 6, 7]), shownCopies: new Set() });
+    // Пропущенные недели: окно не тянется дальше двух недель
+    expect(radarWindow(CUTOFF, [{ cutoff: CUTOFF - 30 * DAY, created: 1, ids: [], directions: [] }]).from).toBe(CUTOFF - 14 * DAY);
+    // Выпуск той же недели после смены дня (пятница перед субботой) окно не сдвигает и показанным не считается
+    const friday = { cutoff: CUTOFF - 26 * 3600000, created: CUTOFF - 25 * 3600000, ids: [8], directions: [] };
+    expect(radarWindow(CUTOFF, [friday, previous])).toMatchObject({ from: previous.cutoff, seenAfter: previous.created, shown: new Set([5, 6]) });
+});
+
+it('опоздавшие (28.10.2026): релиз за час до прошлой сборки, увиденный после неё, входит в выпуск; показанное раньше не повторяется', () => {
+    const previous = CUTOFF - 7 * DAY;
+    const window = radarWindow(CUTOFF, [{ cutoff: previous, created: previous + 3600000, ids: [3, 9], directions: [] }]);
+    // Показанный трек 9 лежит у второго аккаунта; его вероятная копия (та же версия, длительность рядом) не повторяется
+    window.shownCopies.add(copyKey(uploadTrack(upload(9, 'Artist - Twin', 2, 'Artist Label'))));
+    const edition = buildRadar(input([
+        upload(1, 'Late Song', 1, 'Artist', { createdAt: previous - 3600000, firstSeen: previous + 10 * 3600000 }),
+        // Вышел тогда же, но к прошлой сборке уже был виден: его место было в прошлом выпуске
+        upload(2, 'Seen Song', 1, 'Artist', { createdAt: previous - 3600000, firstSeen: previous - 1800000 }),
+        // Показан в прошлом выпуске; его подтверждённая копия тоже не повторяется
+        upload(3, 'Shown', 3, 'Other', { createdAt: CUTOFF - DAY }),
+        upload(4, 'Shown (copy)', 1, 'Artist', { createdAt: CUTOFF - DAY }),
+        // Опоздавший, но старше двух недель
+        upload(5, 'Ancient', 1, 'Artist', { createdAt: CUTOFF - 15 * DAY, firstSeen: CUTOFF - DAY }),
+        upload(6, 'Artist - Twin', 1, 'Artist', { createdAt: CUTOFF - DAY, duration: 181000 }),
+    ], { window, groups: confirmedGroups([{ a: 'sc:track:3', b: 'sc:track:4', same: true, source: 'user', at: 1 }]) }))!;
+    expect([...edition.items, ...edition.uploads].flatMap((item) => item.group ?? [item.id])).toEqual([1]);
+    expect(edition.items[0]).toMatchObject({ id: 1, kind: 'release' });
+});
+
 const folders: string[] = [];
 afterEach(() => {
     for (const created of folders.splice(0)) rmSync(created, { recursive: true, force: true });
@@ -395,6 +427,41 @@ it('сборка в worker: до конца обхода ждёт, после п
         expect(outcome.edition?.uploads.map((item) => item.id)).toEqual([52]);
         expect(radar.build(77, '2026-09-25', cutoff, true, false, now)).toEqual({ published: false, waiting: false, edition: null });
         expect(store.editions(77)).toHaveLength(1);
+    } finally {
+        index.close();
+        store.close();
+    }
+});
+
+it('сборка в worker (28.10.2026): релиз, увиденный только после прошлого выпуска, входит в следующий', () => {
+    const directory = mkdtempSync(join(tmpdir(), 'sc-radar-test-'));
+    folders.push(directory);
+    const store = new RecommendStore(directory);
+    const index = new HistoryIndex(directory, new WaveSignals(directory));
+    const taste = new TasteService(directory, index, () => [], (user, played) => store.tasteLibrary(user, played));
+    const empty: WaveExclusionList = { tracks: [], artists: [], laterTracks: [], laterArtists: [], more: [], families: [] };
+    const radar = new RadarService(store, index, taste, () => empty);
+    const now = Date.now();
+    const first = now - 7 * DAY - 3600000;
+    const second = now - 3600000;
+    const track = (id: number, title: string, created: number): object => ({
+        id, kind: 'track', title, user_id: 5, user: { id: 5, username: 'Five' }, duration: 200000, created_at: new Date(created).toISOString(),
+    });
+    try {
+        store.syncStart(77, 'followings', false, first - DAY);
+        store.syncPage(77, 'followings', 1, [{ key: 'sc:user:5' }], null, first - DAY);
+        store.syncFinish(77, 'followings', 1, 'complete', '', first - DAY);
+        store.recordUploads(77, [track(51, 'Fresh', first - 2 * DAY)], first - DAY);
+        store.catalogChecked(77, 'user:5', 'Five', 'ok', '', 1, first - 60000);
+        expect(radar.build(77, '2026-09-18', first, false, false, first + 1000).edition?.items.map((item) => item.id)).toEqual([51]);
+        // Вышел за час до прошлой отсечки, найден через десять часов после сборки; второй вышел уже в новом окне
+        store.recordUploads(77, [track(52, 'Late', first - 3600000)], first + 10 * 3600000);
+        store.recordUploads(77, [track(53, 'Next', second - DAY)], second - 2 * 3600000);
+        store.catalogChecked(77, 'user:5', 'Five', 'ok', '', 3, second - 60000);
+        const outcome = radar.build(77, '2026-09-25', second, false, false, now);
+        expect(outcome.published).toBe(true);
+        expect(outcome.edition?.items.flatMap((item) => item.group ?? [item.id]).sort()).toEqual([52, 53]);
+        expect(store.radarPrevious(77, '2026-09-25')).toEqual([{ cutoff: first, created: first + 1000, ids: [51], directions: [expect.any(String)] }]);
     } finally {
         index.close();
         store.close();

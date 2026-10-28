@@ -286,7 +286,7 @@ it('A17: задача периода одна и переживает перез
         ['2026-10-02', 1, false, 1], ['2026-09-25', 2, true, 1], ['2026-09-25', 1, false, 1],
     ]);
     // Направления прошлых выпусков: последняя ревизия каждого периода
-    expect(reopened.radarDirections(77, '2026-10-09')).toEqual([['rock'], ['jazz']]);
+    expect(reopened.radarPrevious(77, '2026-10-09').map((entry) => entry.directions)).toEqual([['rock'], ['jazz']]);
     expect(reopened.edition(78, '2026-09-25')).toBeNull();
     expect(reopened.radarTask(77, '../x', cutoff, 'Europe/Moscow')).toBeNull();
 });

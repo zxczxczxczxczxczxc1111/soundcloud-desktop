@@ -18,7 +18,7 @@ export const BACKUP_SETTING_KEYS: readonly string[] = [
     'hidePromotions', 'hideEventsNearYou', 'hideArtistUpsells', 'hideHeaderExtras', ...HOME_BLOCK_KEYS, 'radarDay', 'radarTime', 'radarZone', 'myMusic',
 ];
 /** Отметки переноса настроек: без них перенос при следующем запуске затёр бы восстановленное */
-export const BACKUP_MIGRATION_MARKS: readonly string[] = ['adBlockerDefaultApplied', 'homeLayoutApplied'];
+export const BACKUP_MIGRATION_MARKS: readonly string[] = ['adBlockerDefaultApplied', 'homeLayoutApplied', 'radarSaturdayApplied'];
 
 /** Настройки из копии недоверенные: остаются только ключи из списка, прошедшие ту же проверку, что и смена в F1 */
 export function cleanBackupSettings(input: unknown): Record<string, unknown> {

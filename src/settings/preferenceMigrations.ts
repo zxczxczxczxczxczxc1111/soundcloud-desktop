@@ -1,6 +1,6 @@
 import { HOME_BLOCK_KEYS, homeBlockDefaults } from '../services/homeBlocks';
 import { isGpuCompatibilityMode } from '../services/gpuProcessMode';
-import { isTimeZone, systemTimeZone } from '../services/radarSchedule';
+import { DEFAULT_RADAR_SCHEDULE, isTimeZone, systemTimeZone } from '../services/radarSchedule';
 
 interface PreferenceStore {
     get(key: string): unknown;
@@ -23,6 +23,15 @@ export function applyPreferenceMigrations(store: PreferenceStore): void {
         for (const key of HOME_BLOCK_KEYS) store.set(key, homeBlockDefaults[key]);
         store.set('homeLayoutApplied', true);
     }
-    // Радар живёт по сохранённой зоне: смена системной зоны в поездке не сдвигает пятницу сама собой
+    // Радар живёт по сохранённой зоне: смена системной зоны в поездке не сдвигает день выпуска сам собой
     if (!isTimeZone(store.get('radarZone'))) store.set('radarZone', systemTimeZone());
+    // Радар выходит в субботу ночью (решение владельца 28.10.2026): пятничный выпуск прежних версий переезжает один раз,
+    // другой выбранный день и всё, что выбрано после переезда, не трогается
+    if (store.get('radarSaturdayApplied') !== true) {
+        if (store.get('radarDay') === 5) {
+            store.set('radarDay', DEFAULT_RADAR_SCHEDULE.day);
+            store.set('radarTime', DEFAULT_RADAR_SCHEDULE.time);
+        }
+        store.set('radarSaturdayApplied', true);
+    }
 }

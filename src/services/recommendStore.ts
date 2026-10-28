@@ -8,7 +8,7 @@ import {
     IDENTITY_VERSION, confirmedGroups, familyKey, isrcOf, matchLevel, parseTrackTitle, trackCredits, trackDuration, uploadKey, uploaderId, versionKey,
     type RecordingLink, type TrackCredit,
 } from './trackIdentity';
-import { cleanCoverage, cleanRadarItem, type RadarEdition, type RadarItem } from './radar';
+import { cleanCoverage, cleanRadarItem, type PreviousEdition, type RadarEdition, type RadarItem } from './radar';
 
 // Хранилище рекомендаций: загрузки с разобранными версиями, связи записей и состояние обхода источников,
 // файл recommend-<userId>.sqlite на аккаунт. В отличие от индекса истории его не пересобрать из журнала:
@@ -603,7 +603,8 @@ export class RecommendStore {
         });
     }
     /**
-     * Загрузки окна радара: публикация в [from, to] или заявленный день релиза рядом с окном (точную проверку делает радар).
+     * Загрузки окна радара: публикация в [from, to] или заявленный день релиза рядом с окном (точную проверку делает радар,
+     * from здесь это начало окна опоздавших).
      * reuploads: ключи загрузок, у которых есть копия той же версии, опубликованная раньше хотя бы на сутки:
      * вероятная по разбору и длительности или подтверждённая пользователем либо каталогом
      */
@@ -708,14 +709,23 @@ export class RecommendStore {
             return row ? toEdition(row) : null;
         });
     }
-    /** Направления последних count выпусков до периода (последняя ревизия каждого): для мягкой поддержки редких вкусов */
-    public radarDirections(userId: unknown, before: unknown, count = 4): string[][] {
+    /** Прошлые выпуски до периода для окна радара, новые сверху, последняя ревизия каждого: отсечка, время сборки,
+     *  показанные записи вместе с группами исполнителей и направления основного списка (мягкая поддержка редких вкусов) */
+    public radarPrevious(userId: unknown, before: unknown, count = 4): PreviousEdition[] {
         if (!isId(userId) || !isPeriod(before)) return [];
+        const list = (value: unknown): RadarItem[] => {
+            const items = parseJson(str(value));
+            return Array.isArray(items) ? items.map(cleanRadarItem).filter((item): item is RadarItem => item !== null) : [];
+        };
         return this.guarded(userId, (db) => (db.prepare(
-            'select e.items from editions e where e.period < ? and e.revision = (select max(revision) from editions where period = e.period) order by e.period desc limit ?',
-        ).all(before, count) as Values[]).map((row) => {
-            const items = parseJson(str(row.items));
-            return Array.isArray(items) ? items.map(cleanRadarItem).filter((item): item is RadarItem => item !== null).map((item) => item.direction) : [];
+            'select e.cutoff, e.created, e.items, e.uploads from editions e where e.period < ? and e.revision = (select max(revision) from editions where period = e.period) ' +
+                'order by e.period desc limit ?',
+        ).all(before, Math.max(1, Math.min(count, 20))) as Values[]).map((row) => {
+            const items = list(row.items);
+            return {
+                cutoff: num(row.cutoff), created: num(row.created),
+                ids: [...items, ...list(row.uploads)].flatMap((item) => [item.id, ...(item.group ?? [])]), directions: items.map((item) => item.direction),
+            };
         }));
     }
     /** Есть ли у аккаунта файл хранилища: копия и её проверка не создают пустой */

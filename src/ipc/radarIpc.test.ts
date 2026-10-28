@@ -77,7 +77,7 @@ describe('планировщик радара в main', () => {
         await scheduler.tick();
         expect(scheduler.getState().phase).toBe('published');
         expect(request).toHaveBeenCalledWith('radarStatus', 11, expect.any(String), expect.any(Number));
-        expect(scripts.some((script) => /^window\.__scRadarCollect \? window\.__scRadarCollect\(20000, \d+\) : null$/.test(script))).toBe(true);
+        expect(scripts.some((script) => /^window\.__scRadarCollect \? window\.__scRadarCollect\(20000, (\d+), \1\) : null$/.test(script))).toBe(true);
         // Страница узнаёт о новом состоянии
         expect(scripts.some((script) => script.startsWith('window.__scRadarChanged?.({"phase":"published"'))).toBe(true);
     });
