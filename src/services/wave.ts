@@ -1548,6 +1548,7 @@ export function installWave(config: WaveConfig, createPlayback: typeof installPl
             if (!candidate.trace) continue;
             const score = tasteScore(candidate.track, current);
             candidate.trace.score = Math.round(score.score * 100) / 100;
+            candidate.trace.parts = score.parts;
             candidate.trace.known = score.known;
             if (current.version) candidate.trace.tv = current.version;
         }
@@ -1737,8 +1738,9 @@ export function installWave(config: WaveConfig, createPlayback: typeof installPl
         if (moodReserve.length > 300) moodReserve = moodReserve.slice(0, 300);
         return matched;
     }
-    // Ранний пропуск (sign -1) или лайк и «Больше такого» (sign 1): аккаунт на единицу, теги на половину доли, зерно на половину
-    function adjustSession(candidate: WaveCandidate, sign: 1 | -1): void {
+    // Ранний пропуск (sign -1) или лайк и «Больше такого» (sign 1): аккаунт на единицу, теги на половину доли, зерно на половину.
+    // Пропуск после 30 секунд, до половины трека, идёт половинной силой (sign -0.5, разбор 28.10.2026)
+    function adjustSession(candidate: WaveCandidate, sign: 1 | -1 | -0.5): void {
         const track = candidate.track;
         const add = <K>(map: Map<K, number>, key: K, value: number): void => { map.set(key, (map.get(key) ?? 0) + sign * value); };
         const artist = trackArtist(track);
@@ -2752,6 +2754,7 @@ export function installWave(config: WaveConfig, createPlayback: typeof installPl
         if (trace?.preset) fields.preset = trace.preset;
         if (candidate.trace && candidate.trace.score !== null) Object.assign(fields, { score: candidate.trace.score, known: candidate.trace.known });
         if (candidate.trace?.tv) fields.tv = candidate.trace.tv;
+        if (candidate.trace?.parts && candidate.trace.score !== null) fields.parts = candidate.trace.parts;
         return fields;
     }
     function beginPlay(sound: SiteSound, picked = false): void {
@@ -2889,6 +2892,7 @@ export function installWave(config: WaveConfig, createPlayback: typeof installPl
             // Смена самим сайтом (ошибка, конец очереди) пропуском не считается. Зерно выбрано руками, его пропуск ничего не убирает.
             // Пропуск ещё снижает аккаунт, теги и зерно трека до конца волны, и очередь впереди берётся заново (В2.2)
             const early = !!previous && active && byUser && previous.reason.kind !== 'seedTrack' && !jumped && currentPosition < 30000 && currentDuration - currentPosition > 10000;
+            let late = false;
             if (early && previous) {
                 for (const key of copyKeys(previous.track)) skipped.add(key);
                 const kept = (item: WaveCandidate): boolean => item.track.id === previous.track.id || !skipped.has(copyKey(item.track));
@@ -2900,6 +2904,10 @@ export function installWave(config: WaveConfig, createPlayback: typeof installPl
                 skipSeries.push(previous.track);
                 fastRun = currentPosition < 5000 ? fastRun + 1 : 0;
             } else if (previous && currentPosition >= 30000) {
+                // Ушёл после 30 секунд, но до половины: сессия реагирует вполсилы, копии не убираются, серия ранних пропусков
+                // обрывается. Раньше сессия видела только пропуски до 30 секунд
+                late = active && byUser && previous.reason.kind !== 'seedTrack' && !jumped && currentDuration > 0 && currentPosition < currentDuration / 2;
+                if (late) adjustSession(previous, -0.5);
                 skipRun = 0;
                 skipSeries = [];
                 fastRun = 0;
@@ -2922,7 +2930,7 @@ export function installWave(config: WaveConfig, createPlayback: typeof installPl
                 fastRun = 0;
                 if (scanning && openFork()) rebuildAhead();
                 else void changeCourse();
-            } else if (early) rebuildAhead();
+            } else if (early || late) rebuildAhead();
             render();
         } else if (sound) {
             currentPosition = positionOf(sound);

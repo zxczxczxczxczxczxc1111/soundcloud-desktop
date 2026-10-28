@@ -74,6 +74,8 @@ export interface WaveTrace {
     known: boolean;
     /** Версия модели вкуса, которой посчитана оценка */
     tv?: number;
+    /** Насыщенные части оценки (TasteScore.parts) */
+    parts?: number[];
 }
 export interface WaveCandidate {
     track: WaveTrack;
@@ -167,7 +169,11 @@ export interface SeriesTrait {
 }
 
 export interface TasteScore {
+    /** Сумма насыщенных частей */
     score: number;
+    /** Насыщенные части для журнала: трек, аккаунт, участники, семья, пометки, теги, язык */
+    parts: number[];
+    /** Дальше сырые веса частей */
     track: number;
     /** Вес загрузившего аккаунта как куратора */
     artist: number;
@@ -180,7 +186,7 @@ export interface TasteScore {
     family: number;
     /** Средний вес известных пометок версии (slowed, remix, live) */
     marker: number;
-    /** Вклад тегов: сумма весов долями (жанр 1, метки вместе 0.5), плюс насыщен до 1 */
+    /** Вклад тегов: сумма весов долями (жанр 1, метки вместе 0.5), плюс как доля от самого любимого тега, до 1 */
     tag: number;
     /** Язык трека против самого любимого языка: от -1 до 0 */
     lang: number;

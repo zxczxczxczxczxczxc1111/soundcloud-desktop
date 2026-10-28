@@ -958,7 +958,7 @@ async function init() {
     waveJournal = new WaveJournal(path.join(app.getPath('userData'), 'wave'));
     // Журнал сигналов: как слушается каждый трек, из него потом учится подбор
     waveSignals?.flush();
-    waveSignals = new WaveSignals(path.join(app.getPath('userData'), 'wave'), 3000, (from, to) => awayTracker.away(from, to));
+    waveSignals = new WaveSignals(path.join(app.getPath('userData'), 'wave'), 3000, (from, to) => awayTracker.away(from, to), () => powerMonitor.getSystemIdleTime() * 1000);
     // Отметки волны («Не нравится», скрытые артисты, «Не сейчас», «Больше такого»): ставит страница, снимает и F1
     const exclusions = new WaveExclusions(path.join(app.getPath('userData'), 'wave'));
     waveExclusions = exclusions;

@@ -51,6 +51,9 @@ function waveTrace(value: Partial<Record<keyof PlaySignal, unknown>>, now: numbe
     if (/^[a-zA-Z]{1,20}$/.test(origin)) trace.origin = origin;
     if (seed === 0 || isId(seed)) trace.seed = seed;
     if (typeof score === 'number' && Number.isFinite(score) && Math.abs(score) <= 100) trace.score = Math.round(score * 100) / 100;
+    const parts = value.parts;
+    if (Array.isArray(parts) && parts.length === 7 && parts.every((part) => typeof part === 'number' && Number.isFinite(part) && Math.abs(part) <= 10))
+        trace.parts = parts.map((part: number) => Math.round(part * 100) / 100);
     if (typeof value.known === 'boolean') trace.known = value.known;
     if (value.mode === 'similar' || value.mode === 'fresh') trace.mode = value.mode;
     const waveGenre = text(value.waveGenre, 200);
@@ -127,8 +130,19 @@ export class WaveSignals {
     private timer: ReturnType<typeof setTimeout> | undefined;
     private paused = false;
 
-    /** isAway: был ли пользователь не у компьютера большую часть окна [from, to]; страница этого не знает */
-    constructor(private directory: string, private delay = 3000, private isAway?: (from: number, to: number) => boolean) {}
+    /**
+     * isAway: был ли пользователь не у компьютера большую часть окна [from, to]; страница этого не знает.
+     * idleMs: простой системы сейчас. С ним метка решается не в конце трека, а когда ясно (разбор 28.10.2026): после
+     * ввода позже конца трека или через settleMs. Иначе треки первых десяти минут простоя оставались без метки
+     */
+    constructor(
+        private directory: string,
+        private delay = 3000,
+        private isAway?: (from: number, to: number) => boolean,
+        private idleMs?: () => number,
+        private settleMs = 11 * 60000,
+        private now: () => number = Date.now,
+    ) {}
 
     private file(userId: number, at: number): string {
         return join(this.directory, 'signals-' + userId + '-' + signalMonth(at) + '.jsonl');
@@ -140,17 +154,62 @@ export class WaveSignals {
         for (const item of input.slice(0, 1000)) {
             const signal = validateSignal(item);
             if (!signal) continue;
-            signal.away = this.isAway?.(signal.at, signal.at + Math.max(signal.heard, 1000)) ?? false;
+            // Метку ставит запись в файл (decide), до неё признак со страницы не принимается
+            signal.away = false;
             list.push(signal);
             added++;
         }
         if (!added) return 0;
         this.pending.set(userId, list);
-        if (this.timer === undefined) {
-            this.timer = setTimeout(() => this.flush(), this.delay);
-            this.timer.unref?.();
-        }
+        this.schedule(this.delay);
         return added;
+    }
+    private schedule(delay: number): void {
+        if (this.timer !== undefined) return;
+        this.timer = setTimeout(() => this.settle(), delay);
+        this.timer.unref?.();
+    }
+    private decide(signal: PlaySignal): void {
+        signal.away = this.isAway?.(signal.at, signal.at + Math.max(signal.heard, 1000)) ?? false;
+    }
+    // Метка ясна: ввод был после конца трека (простой короче времени с конца), с конца прошло settleMs или простой
+    // уже покрывает окно. Простой не прочитан: решать сразу, как раньше
+    private settled(signal: PlaySignal, now: number, idle: number | null): boolean {
+        const end = signal.at + Math.max(signal.heard, 1000);
+        const since = now - end;
+        return idle === null || since >= this.settleMs || idle < since || (this.isAway?.(signal.at, end) ?? false);
+    }
+    /** По таймеру: пишутся события с ясной меткой, остальные ждут следующей минуты */
+    private settle(): void {
+        this.timer = undefined;
+        if (this.paused || !this.pending.size) return;
+        if (!this.idleMs) {
+            this.flush();
+            return;
+        }
+        let idle: number | null;
+        try {
+            idle = this.idleMs();
+            if (!Number.isFinite(idle)) idle = null;
+        } catch (error) {
+            console.warn('Простой системы не прочитан, метка простоя решается сразу:', error);
+            idle = null;
+        }
+        const now = this.now();
+        const waiting = new Map<number, PlaySignal[]>();
+        for (const [userId, list] of this.pending) {
+            const later = list.filter((signal) => !this.settled(signal, now, idle));
+            if (later.length) waiting.set(userId, later);
+        }
+        for (const [userId, later] of waiting) {
+            const rest = (this.pending.get(userId) ?? []).filter((signal) => !later.includes(signal));
+            if (rest.length) this.pending.set(userId, rest);
+            else this.pending.delete(userId);
+        }
+        this.flush();
+        // Записанное ушло из pending; ждущие возвращаются в начало, перед пришедшими позже
+        for (const [userId, later] of waiting) this.pending.set(userId, [...later, ...(this.pending.get(userId) ?? [])]);
+        if (waiting.size) this.schedule(60000);
     }
     /** Восстановление копии переписывает файлы журнала: на это время события копятся в памяти */
     public pause(): void {
@@ -173,6 +232,7 @@ export class WaveSignals {
         for (const [userId, list] of [...this.pending]) {
             const byFile = new Map<string, string[]>();
             for (const signal of list) {
+                this.decide(signal);
                 const target = this.file(userId, signal.at);
                 const lines = byFile.get(target) ?? [];
                 lines.push(JSON.stringify(signal));

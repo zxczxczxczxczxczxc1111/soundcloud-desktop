@@ -179,9 +179,12 @@ export function tasteScore(track: WaveTrack, taste: TasteMaps): TasteScore {
     const credit = creditBest + creditWorst;
     const family = Math.max(0, taste.families.get(familyKey(track, parsed)) ?? 0);
     const marker = average([...new Set(parsed.version.map((item) => item.split(':')[0]))], taste.markers).value;
-    // Плюс тегов насыщается до единицы: любимый жанр копит во вкусе десятки, и без насыщения он ставил больше половины
-    // выдачи на потолок оценки, где порядок уже случаен. Минус нелюбимого жанра действует полностью (В2.8)
-    const tag = tags.value > 0 ? tags.value / (1 + tags.value) : tags.value;
+    // Плюс тегов против самого любимого тега вкуса (разбор 28.10.2026): x/(1+x) давал рэпу с весом 57 и техно с весом 11
+    // почти одинаковые 0.98 и 0.92. Доля от главного насыщается мягко: главный жанр 1, жанр в пять раз слабее около 0.55.
+    // Минус нелюбимого жанра действует полностью (В2.8)
+    const topTag = Math.max(0, ...taste.tags.values());
+    const share = topTag > 0 ? tags.value / topTag : 0;
+    const tag = tags.value > 0 ? Math.min(1, (1.25 * share) / (share + 0.25)) : tags.value;
     // Язык против самого любимого языка, насыщенно и половинной долей (П6): любимый даёт 0, нелюбимый до -1.
     // Сравнение, а не сам вес: за год оба привычных языка копят десятки, и разницу даёт только соотношение
     let lang = 0;
@@ -190,8 +193,14 @@ export function tasteScore(track: WaveTrack, taste: TasteMaps): TasteScore {
         const best = Math.max(0, ...taste.langs.values());
         lang = 0.5 * (saturate(taste.langs.get(trackLang(track)) ?? 0) - saturate(best));
     }
+    // Каждая часть насыщается сама (разбор 28.10.2026): сырые веса трека и аккаунта копят десятки, сумма упиралась
+    // в срез ±3 у 63% кандидатов, и порядок среди них был случайным, а поправки сессии любимое не сдвигали.
+    // Предел части k, около нуля часть почти линейна
+    const soft = (value: number, k: number): number => (k * value) / (k + Math.abs(value));
+    const parts = [soft(own, 2), soft(artist, 2), soft(credit, 1), soft(family, 1), soft(marker, 0.5), tag, lang];
     return {
-        score: own + artist + credit + family + marker + tag + lang,
+        score: parts.reduce((sum, value) => sum + value, 0),
+        parts: parts.map((value) => Math.round(value * 100) / 100),
         track: own,
         artist,
         credit,
@@ -218,7 +227,8 @@ export function tasteOrder<T extends { track: WaveTrack }>(list: T[], taste: Tas
         if (score.track <= -1) continue;
         const likes = item.track.likes_count;
         const popular = typeof likes === 'number' && likes > 0 ? 0.05 * Math.log10(1 + likes) : 0;
-        const weight = Math.exp(Math.max(-3, Math.min(3, score.score + popular + (adjust ? adjust(item) : 0))));
+        // Без среза: части уже насыщены, и разница среди любимого остаётся в порядке
+        const weight = Math.exp(score.score + popular + (adjust ? adjust(item) : 0));
         keyed.push({ item, known: score.known, key: Math.log(Math.max(random(), 1e-12)) / weight });
     }
     keyed.sort((a, b) => b.key - a.key);

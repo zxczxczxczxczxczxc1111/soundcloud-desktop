@@ -27,8 +27,10 @@ const HOUR_AGE = 1 / 24;
 
 it('исход прослушивания: минус только за уход по воле человека', () => {
     expect(playWeights({ heard: 10000, dur: 200000, end: 'skip', likedNow: false })).toEqual([-1, -0.3, -0.1]);
-    expect(playWeights({ heard: 60000, dur: 200000, end: 'skip', likedNow: false })).toEqual([-0.2, 0, 0]);
-    expect(playWeights({ heard: 120000, dur: 200000, end: 'skip', likedNow: false })).toEqual([0.5, 0.2, 0.1]);
+    // Пропуск после 30 секунд (28.10.2026): минус треку и вполсилы раннего артисту и тегам, и после половины тоже; с 80% это конец трека
+    expect(playWeights({ heard: 60000, dur: 200000, end: 'skip', likedNow: false })).toEqual([-0.2, -0.15, -0.05]);
+    expect(playWeights({ heard: 120000, dur: 200000, end: 'skip', likedNow: false })).toEqual([-0.2, -0.15, -0.05]);
+    expect(playWeights({ heard: 170000, dur: 200000, end: 'skip', likedNow: false })).toEqual([0.5, 0.2, 0.1]);
     expect(playWeights({ heard: 190000, dur: 200000, end: 'done', likedNow: false })).toEqual([1, 0.4, 0.2]);
     // Перемотка в конец: done, но звука меньше 80% или меньше половины. Перемотка не дизлайк
     expect(playWeights({ heard: 120000, dur: 200000, end: 'done', likedNow: false })).toEqual([0.5, 0.2, 0.1]);
@@ -53,7 +55,7 @@ it('A21: ошибка и конец очереди не дизлайк, кусо
     expect(playWeights({ heard: 190000, covered: 40000, dur: 200000, end: 'done', likedNow: false })).toBeNull();
     expect(playWeights({ heard: 190000, covered: 40000, dur: 200000, end: 'skip', likedNow: false, endedBy: 'user' })).toBeNull();
     // Перемотка вперёд: покрыто меньше слышанного не бывает, берётся меньшее
-    expect(playWeights({ heard: 60000, covered: 60000, dur: 200000, end: 'skip', likedNow: false, endedBy: 'user' })).toEqual([-0.2, 0, 0]);
+    expect(playWeights({ heard: 60000, covered: 60000, dur: 200000, end: 'skip', likedNow: false, endedBy: 'user' })).toEqual([-0.2, -0.15, -0.05]);
     expect(playWeights({ heard: 170000, covered: 120000, dur: 200000, end: 'done', likedNow: false })).toEqual([0.5, 0.2, 0.1]);
 });
 
@@ -131,6 +133,33 @@ it('волна ослабляет плюсы, но не минусы; без у�
     expect(weightOf(unsure.tracks, 1)).toBeCloseTo(blended(0.5, HOUR_AGE), 2);
     expect(site.counted).toBe(201);
     expect(site.version).toBe(TASTE_PARAMS.version);
+});
+
+it('фон (28.10.2026): автоплей сайта как волна, без касаний за 20 минут вполсилы, у событий до v3 и в «Моей музыке» без скидки', () => {
+    const weight = (plays: TastePlay[], marks: TasteMark[] = []): number | undefined => weightOf(buildTaste([...confident, ...plays], marks, empty, NOW).profile.tracks, 1);
+    const at = NOW - 3600000;
+    expect(weight([play({ id: 1, at, source: 'site:recommender' })])).toBeCloseTo(blended(0.7, HOUR_AGE), 2);
+    // v3 без касаний: вполсилы; рядом выбор кликом другого трека: в полную силу
+    expect(weight([play({ id: 1, at, endedBy: 'auto' })])).toBeCloseTo(blended(0.5, HOUR_AGE), 2);
+    expect(weight([play({ id: 1, at, endedBy: 'auto' }), play({ id: 2, at: at - 10 * 60000, endedBy: 'auto', picked: true })])).toBeCloseTo(blended(1, HOUR_AGE), 2);
+    expect(weight([play({ id: 1, at, endedBy: 'auto' }), play({ id: 2, at: at - 30 * 60000, endedBy: 'auto', picked: true })])).toBeCloseTo(blended(0.5, HOUR_AGE), 2);
+    // Отметка тоже касание
+    expect(weight([play({ id: 1, at, endedBy: 'auto' })], [{ id: 3, at: at + 60000, artist: 30, genre: '', tags: '' }])).toBeCloseTo(blended(1, HOUR_AGE), 2);
+    // Автоплей сайта без касаний: обе скидки
+    expect(weight([play({ id: 1, at, endedBy: 'auto', source: 'site:recommender' })])).toBeCloseTo(blended(0.35, HOUR_AGE), 2);
+    expect(weight([play({ id: 1, at, endedBy: 'auto', source: 'wave:artistAll' })])).toBeCloseTo(blended(1, HOUR_AGE), 2);
+});
+
+it('канал перезаливов (28.10.2026): за чужое веса куратора не получает, своё у обычного аккаунта считается', () => {
+    const titles = ['Alpha - One', 'Beta - Two', 'Gamma - Three', 'Delta - Four', 'Own Song'];
+    const channel = titles.map((title, i) => play({ id: 100 + i, artist: 50, artistName: 'Vibes', title }));
+    const profile = buildTaste([...confident, ...channel], [], empty, NOW).profile;
+    // Четыре чужих из пяти: за них куратору ничего, за своё полный вес (одна запись, без недельной части)
+    expect(weightOf(profile.artists, 50)).toBeCloseTo(blended(0.4, HOUR_AGE, false), 2);
+    expect(weightOf(profile.credits, 'alpha')).toBeGreaterThan(0);
+    // Обычный аккаунт с одним чужим треком остаётся куратором вполовину
+    const single = buildTaste([...confident, play({ id: 200, artist: 60, artistName: 'Label', title: 'Alpha - One' })], [], empty, NOW).profile;
+    expect(weightOf(single.artists, 60)).toBeCloseTo(blended(0.4 * TASTE_PARAMS.curatorShare, HOUR_AGE, false), 2);
 });
 
 it('старое живёт в устойчивой части, переслушивание за 14 дней добавляет треку', () => {

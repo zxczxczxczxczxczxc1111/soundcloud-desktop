@@ -138,6 +138,10 @@ it('запись v4: разбор выдачи волны принимается
     // Поля v4 у записи v3 не принимаются
     const v3 = validateSignal(signal({ at: now, v: 3, ...trace }), now);
     for (const field of Object.keys(trace)) expect(v3).not.toHaveProperty(field);
+    // Части оценки (28.10.2026): ровно семь конечных чисел до 10 по модулю, два знака
+    expect(validateSignal(signal({ at: now, v: 4, parts: [0.123, 1.5, 0, 0, -0.25, 0.9, -0.1] }), now)?.parts).toEqual([0.12, 1.5, 0, 0, -0.25, 0.9, -0.1]);
+    for (const parts of [[1, 2], [0, 0, 0, 0, 0, 0, Infinity], [0, 0, 0, 0, 0, 0, 11], [0, 0, 0, 0, 0, 0, '1'], 'x'])
+        expect(validateSignal({ ...signal({ at: now, v: 4 }), parts }, now)).not.toHaveProperty('parts');
 });
 
 it('«не у компьютера» решает main, признак со страницы не принимается', () => {
@@ -149,4 +153,73 @@ it('«не у компьютера» решает main, признак со ст
     const loaded = new WaveSignals(directory).load(42);
     expect(loaded.map((item) => [item.id, item.away])).toEqual([[11, true], [12, false]]);
     expect(away).toHaveBeenCalledWith(Date.UTC(2026, 7, 20, 10), Date.UTC(2026, 7, 20, 10) + 185000);
+});
+
+it('метка простоя решается, когда ясна (28.10.2026): после ввода позже конца трека или через 11 минут, flush пишет всё сразу', () => {
+    vi.useFakeTimers();
+    try {
+        const directory = dir();
+        const start = Date.UTC(2026, 7, 20, 10);
+        let clock = start + 185000 + 1000;
+        let idle = 200000;
+        // Простой с начала трека и дальше: окно «не у компьютера», если к моменту решения простой продлился
+        const away = vi.fn(() => idle >= 10 * 60000);
+        const journal = new WaveSignals(directory, 3000, away, () => idle, 11 * 60000, () => clock);
+        const read = (): number[] => new WaveSignals(directory).load(42).map((item) => item.id);
+        journal.add(42, [signal({ id: 11, at: start })]);
+        vi.advanceTimersByTime(3000);
+        // Ввода после трека не было, простой ещё меньше десяти минут: событие ждёт
+        expect(read()).toEqual([]);
+        clock += 5 * 60000;
+        idle += 5 * 60000;
+        vi.advanceTimersByTime(60000);
+        expect(read()).toEqual([]);
+        // Простой дорос до десяти минут: метка ясна
+        clock += 6 * 60000;
+        idle += 6 * 60000;
+        vi.advanceTimersByTime(60000);
+        const loaded = new WaveSignals(directory).load(42);
+        expect(loaded.map((item) => [item.id, item.away])).toEqual([[11, true]]);
+        // Ввод сразу после трека: решается первым же таймером, без метки
+        idle = 500;
+        journal.add(42, [signal({ id: 12, at: clock - 186000 })]);
+        vi.advanceTimersByTime(3000);
+        expect(read()).toEqual([11, 12]);
+        // Принудительный сброс (выход, копия) пишет и ждущее
+        idle = 10 * 60000;
+        journal.add(42, [signal({ id: 13, at: clock - 186000 })]);
+        journal.flush();
+        expect(read()).toEqual([11, 12, 13]);
+        // Ни ввода, ни отрезка простоя: решается через 11 минут после конца трека
+        away.mockReturnValue(false);
+        journal.add(42, [signal({ id: 14, at: clock - 186000 })]);
+        vi.advanceTimersByTime(3000);
+        expect(read()).toEqual([11, 12, 13]);
+        clock += 11 * 60000;
+        vi.advanceTimersByTime(60000);
+        expect(read()).toEqual([11, 12, 13, 14]);
+    } finally {
+        vi.useRealTimers();
+    }
+});
+
+it('простой не прочитан: метка решается сразу, событие не зависает', () => {
+    vi.useFakeTimers();
+    vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+    try {
+        const directory = dir();
+        const start = Date.UTC(2026, 7, 20, 10);
+        const idle = vi.fn((): number => { throw new Error('нет powerMonitor'); });
+        const journal = new WaveSignals(directory, 3000, () => false, idle, 11 * 60000, () => start + 190000);
+        journal.add(42, [signal({ id: 11, at: start })]);
+        vi.advanceTimersByTime(3000);
+        expect(idle).toHaveBeenCalled();
+        expect(new WaveSignals(directory).load(42).map((item) => item.id)).toEqual([11]);
+        idle.mockReturnValue(Number.NaN);
+        journal.add(42, [signal({ id: 12, at: start })]);
+        vi.advanceTimersByTime(3000);
+        expect(new WaveSignals(directory).load(42).map((item) => item.id)).toEqual([11, 12]);
+    } finally {
+        vi.useRealTimers();
+    }
 });

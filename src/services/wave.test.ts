@@ -54,9 +54,9 @@ describe('вкус волны', () => {
         // Минус участника и плюс другого складываются
         const mixed = item(3, 98, { title: 'Artist X, Bad - Thing', user: { id: 98, username: 'Hub' } });
         expect(tasteScore(mixed.track, profile).credit).toBeCloseTo(1, 6);
-        // Безымянный ремикс без участников оценивается остальным и не выпадает: жанр с весом 1 после насыщения даёт 0.5
+        // Безымянный ремикс без участников оценивается остальным и не выпадает: главный жанр вкуса даёт 1
         const anon = item(4, 97, { title: 'Nightcall (Remix)', genre: 'phonk', user: { id: 97, username: 'anon' } });
-        expect(tasteScore(anon.track, taste([], [['phonk', 1]])).score).toBeCloseTo(0.5, 6);
+        expect(tasteScore(anon.track, taste([], [['phonk', 1]])).score).toBeCloseTo(1, 6);
     });
 
     it('сильный минус отсеивается, любимое чаще встаёт вперёд, треть мест у новых артистов', () => {
@@ -100,9 +100,10 @@ describe('вкус волны', () => {
         const byGenre = item(1, 10, { genre: 'Dark' });
         const byTag = item(2, 20, { genre: 'Pop', tag_list: 'dark sad love night slow' });
         const nick = item(3, 30, { genre: 'Pop', tag_list: 'ivoxygen', user: { id: 30, username: 'IVOXYGEN' } });
-        // Сырые 2 и 0.2 после насыщения x / (1 + x)
-        expect(tasteScore(byGenre.track, profile).tag).toBeCloseTo(2 / 3, 6);
-        expect(tasteScore(byTag.track, profile).tag).toBeCloseTo(0.2 / 1.2, 6);
+        // Сырые 2 и 0.2 долей от главного тега 3: 1.25 r / (r + 0.25)
+        const relative = (r: number): number => (1.25 * r) / (r + 0.25);
+        expect(tasteScore(byGenre.track, profile).tag).toBeCloseTo(relative(2 / 3), 6);
+        expect(tasteScore(byTag.track, profile).tag).toBeCloseTo(relative(0.2 / 3), 6);
         expect(tasteReason(byGenre, profile)).toEqual({ kind: 'tasteTag', genre: 'dark' });
         expect(tasteReason(byTag, profile)).toBeNull();
         expect(tasteScore(nick.track, profile).tag).toBe(0);
@@ -113,12 +114,39 @@ describe('вкус волны', () => {
         const favourite = item(1, 10, { genre: 'Hip Hop', user: { id: 10, username: 'Favourite' } });
         const stranger = item(2, 20, { genre: 'Hip Hop', user: { id: 20, username: 'Stranger' } });
         const disliked = item(3, 30, { genre: 'Dark Pop' });
-        expect(tasteScore(stranger.track, profile).score).toBeCloseTo(72 / 73, 6);
-        expect(tasteScore(favourite.track, profile).score).toBeCloseTo(2 + 72 / 73, 6);
+        expect(tasteScore(stranger.track, profile).score).toBeCloseTo(1, 6);
+        // Вес аккаунта 2 насыщается с пределом 2
+        expect(tasteScore(favourite.track, profile).score).toBeCloseTo(1 + 1, 6);
         // Минус нелюбимого жанра не насыщается
         expect(tasteScore(disliked.track, profile).score).toBeCloseTo(-3, 6);
         expect(tasteReason(favourite, profile)).toEqual({ kind: 'tasteArtist', artist: 'Favourite' });
         expect(tasteReason(stranger, profile)).toEqual({ kind: 'tasteTag', genre: 'hip hop' });
+    });
+
+    it('разбор 28.10.2026: каждая часть насыщается сама, второй жанр не равен главному, порядок без среза различает любимое', () => {
+        // Фонк 57 и техно 11: раньше 0.98 и 0.92, теперь главный 1, второй около половины
+        const profile = taste([[10, 40], [20, 8]], [['phonk', 57], ['techno', 11]], [[1, 30]]);
+        const rap = tasteScore(item(5, 30, { genre: 'Phonk' }).track, profile);
+        const techno = tasteScore(item(6, 30, { genre: 'Techno' }).track, profile);
+        expect(rap.tag).toBeCloseTo(1, 6);
+        expect(techno.tag).toBeGreaterThan(0.5);
+        expect(techno.tag).toBeLessThan(0.6);
+        // Аккаунт 40 и трек 30 не уходят за предел части
+        const loved = tasteScore(item(1, 10).track, profile);
+        expect(loved.parts).toHaveLength(7);
+        expect(loved.parts[0]).toBeLessThan(2);
+        expect(loved.parts[1]).toBeLessThan(2);
+        expect(loved.score).toBeCloseTo(loved.parts.reduce((sum, part) => sum + part, 0), 1);
+        // Аккаунт с весом 40 впереди аккаунта с весом 8 почти всегда: при срезе ±3 оба стояли на потолке поровну
+        let seed = 7;
+        const random = (): number => {
+            seed = (seed * 16807) % 2147483647;
+            return seed / 2147483647;
+        };
+        const pair = [item(2, 10, { genre: 'Phonk' }), item(3, 20, { genre: 'Phonk' })];
+        let first = 0;
+        for (let run = 0; run < 400; run++) if (tasteOrder(pair, profile, random)[0].track.id === 2) first++;
+        expect(first).toBeGreaterThan(220);
     });
 
     it('причина по вкусу достаётся только заметной трети подборки', () => {

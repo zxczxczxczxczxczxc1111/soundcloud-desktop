@@ -22,7 +22,8 @@ export { TASTE_PARAMS } from './tasteParams';
 
 type Weights = [track: number, artist: number, tag: number];
 const EARLY_SKIP: Weights = [-1, -0.3, -0.1];
-const PARTIAL: Weights = [-0.2, 0, 0];
+/** Пропуск человеком после 30 секунд, но до 80%: минус треку, артисту и тегам вполсилы раннего (разбор 28.10.2026) */
+const LATE_SKIP: Weights = [-0.2, -0.15, -0.05];
 const MOST: Weights = [0.5, 0.2, 0.1];
 const FULL: Weights = [1, 0.4, 0.2];
 const LIKE: Weights = [2, 0.8, 0.3];
@@ -83,8 +84,11 @@ export function playWeights(play: Pick<TastePlay, 'heard' | 'dur' | 'end' | 'lik
     if (play.heard < HEARD_MIN_MS) base = null;
     else if (play.heard < COUNTED_MS) base = chosen ? EARLY_SKIP : null;
     else if (full && !chosen) base = FULL;
-    else if (most) base = MOST;
-    else base = chosen && !looped ? PARTIAL : null;
+    // Пропуск после половины раньше считался почти дослушанным плюсом: так уходили 162 из 643 ручных пропусков.
+    // Пропуск с 80% и дальше это конец трека, он остаётся плюсом
+    else if (most && (!chosen || full)) base = MOST;
+    else if (chosen && !looped) base = LATE_SKIP;
+    else base = null;
     if (!play.likedNow) return base;
     const sum = base ?? [0, 0, 0];
     return [sum[0] + LIKE[0], sum[1] + LIKE[1], sum[2] + LIKE[2]];
@@ -107,6 +111,8 @@ function tagLabels(genre: string, tags: string, into: Map<string, string>): void
 /** Направления трека: доля куратора, участники с долями, семья, пометки версии, теги и ключ независимой записи */
 interface Directions {
     curator: number;
+    /** В названии другой исполнитель: аккаунт выложил чужое */
+    foreign: boolean;
     credits: Array<[string, number]>;
     family: string;
     markers: string[];
@@ -145,6 +151,7 @@ function directionsOf(item: Heard): Directions {
     if (!foreign && uploader && uploader.length <= 60 && !shares.has(uploader)) shares.set(uploader, TASTE_PARAMS.roles.artist);
     return {
         curator: foreign ? TASTE_PARAMS.curatorShare : 1,
+        foreign,
         credits: [...shares],
         family: item.title ? familyKey(track, parsed) : '',
         markers: [...new Set(parsed.version.map((entry) => entry.split(':')[0]))].filter(Boolean),
@@ -238,11 +245,13 @@ export function buildTaste(
         (target.days ??= new Set()).add(origin.day);
         target.manual ||= origin.manual;
     };
+    // Канал перезаливов за чужое веса куратора не получает: вес идёт исполнителям в участниках (разбор 28.10.2026)
+    const curatorOf = (uploader: number, item: Directions): number => (item.foreign && channels.has(uploader) ? 0 : item.curator);
     const apply = (weights: Weights, id: number, uploader: number, item: Directions, positive: number, origin: Origin): void => {
         // Плюсы ослабляются поправками, минусы действуют полностью
         const scale = (value: number): number => value * (value > 0 ? positive : 1);
         push('tracks', String(id), scale(weights[0]), origin);
-        if (uploader > 0) push('artists', String(uploader), scale(weights[1]) * item.curator, origin);
+        if (uploader > 0) push('artists', String(uploader), scale(weights[1]) * curatorOf(uploader, item), origin);
         for (const [key, share] of item.credits) push('credits', key, scale(weights[1]) * share, origin);
         if (item.family && weights[0] > 0) push('families', item.family, scale(weights[0]) * P.familyShare, origin);
         for (const [key, share] of item.tags) push('tags', key, scale(weights[2]) * share, origin);
@@ -267,7 +276,7 @@ export function buildTaste(
         const scale = (value: number): number => value * (value > 0 ? positive : 1) * decay;
         for (const target of [overall, slices[slot], slices[4 + slot * 2 + weekend]]) {
             target.plays += decay;
-            if (uploader > 0) add(target.artists, String(uploader), scale(weights[1]) * item.curator);
+            if (uploader > 0) add(target.artists, String(uploader), scale(weights[1]) * curatorOf(uploader, item));
             for (const [key, share] of item.tags) add(target.tags, key, scale(weights[2]) * share);
         }
         if (uploader > 0) add(keyPlays.artists, String(uploader), decay);
@@ -277,9 +286,7 @@ export function buildTaste(
     const stored = new Map((library?.uploads ?? []).map((upload) => [upload.id, upload] as const));
     const cache = new Map<number, Directions>();
     const likedInPlay = new Set<number>();
-    for (const play of plays) {
-        if (play.artist > 0 && play.artistName) names.set(play.artist, { name: play.artistName, artwork: play.artwork, path: play.path });
-        tagLabels(play.genre, play.tags, labels);
+    const directionsOfPlay = (play: TastePlay): Directions => {
         let item = cache.get(play.id);
         if (!item) {
             const upload = stored.get(play.id);
@@ -289,10 +296,64 @@ export function buildTaste(
             });
             cache.set(play.id, item);
         }
+        return item;
+    };
+    // Разбор загрузки лайка или плейлиста один на сборку: он нужен и каналам, и самим лайкам
+    const uploadDirections = new Map<TasteUpload, Directions>();
+    const directionsOfUpload = (upload: TasteUpload): Directions => {
+        let item = uploadDirections.get(upload);
+        if (!item) {
+            item = directionsOf(fromUpload(upload));
+            uploadDirections.set(upload, item);
+        }
+        return item;
+    };
+    // Каналы по трекам во вкусе: прослушанное, лайки и плейлисты, каждый трек один раз
+    const works = new Map<number, Map<number, boolean>>();
+    const work = (uploader: number, id: number, foreign: boolean): void => {
+        if (uploader <= 0) return;
+        const list = works.get(uploader) ?? new Map<number, boolean>();
+        list.set(id, foreign);
+        works.set(uploader, list);
+    };
+    for (const play of plays) work(play.artist, play.id, directionsOfPlay(play).foreign);
+    for (const track of [...(library?.likes ?? []), ...(library?.playlists ?? [])])
+        if (track.upload) work(track.upload.uploader, track.id, directionsOfUpload(track.upload).foreign);
+    const channels = new Set<number>();
+    for (const [uploader, list] of works) {
+        const foreign = [...list.values()].filter(Boolean).length;
+        if (list.size >= P.channelMin && foreign >= list.size * P.channelShare) channels.add(uploader);
+    }
+    // Касания по времени: выбор кликом, ручной пропуск, лайк во время трека, отметки. Прослушивание без касаний
+    // за untouchedMinutes вокруг играло фоном
+    const touches = [
+        ...plays.filter((play) => play.picked || play.likedNow || (play.end === 'skip' && play.endedBy === 'user')).map((play) => play.at),
+        ...marks.map((mark) => mark.at),
+    ].sort((a, b) => a - b);
+    const touched = (from: number, to: number): boolean => {
+        let low = 0;
+        let high = touches.length;
+        while (low < high) {
+            const middle = (low + high) >> 1;
+            if (touches[middle] < from) low = middle + 1;
+            else high = middle;
+        }
+        return low < touches.length && touches[low] <= to;
+    };
+    const around = P.untouchedMinutes * 60000;
+    for (const play of plays) {
+        if (play.artist > 0 && play.artistName) names.set(play.artist, { name: play.artistName, artwork: play.artwork, path: play.path });
+        tagLabels(play.genre, play.tags, labels);
+        const item = directionsOfPlay(play);
         if (play.likedNow) likedInPlay.add(play.id);
         // Трек, поданный волной, весит в плюс меньше выбранного руками. Простой системы (away) не штрафуется и плюсом
         // не считается: музыка играла сама. «Моя музыка» играет собранное самим человеком, это выбор без скидки (Э7), как и все треки выбранного артиста (Ф1)
-        const positive = play.source.startsWith('wave:') && play.source !== 'wave:library' && play.source !== 'wave:artistAll' && !play.picked ? P.wavePositive : 1;
+        // Автоплей сайта (site:recommender) так же подан без выбора, как волна (разбор 28.10.2026)
+        const chosenSource = play.source === 'wave:library' || play.source === 'wave:artistAll';
+        const served = (play.source.startsWith('wave:') || play.source === 'site:recommender') && !chosenSource && !play.picked;
+        // У событий до v3 (endedBy пуст) касания не записывались: по ним фон не определить
+        const background = !chosenSource && play.endedBy !== '' && !touched(play.at - around, play.at + Math.max(play.heard, 0) + around);
+        const positive = (served ? P.wavePositive : 1) * (background ? P.untouched : 1);
         const origin = originOf(play.at, item.record, play.likedNow || play.picked, true);
         // Само прослушивание насыщается по суткам, лайк во время него явное действие и идёт целиком.
         // Круг повтора не прослушивание заново: артист и теги за него ничего не получают
@@ -330,7 +391,7 @@ export function buildTaste(
         if (likedInPlay.has(like.id) || marked.has(like.id)) continue;
         const upload = like.upload;
         if (upload) tagLabels(upload.genre, upload.tags, labels);
-        const item = upload ? directionsOf(fromUpload(upload)) : directionsOf({ id: like.id, uploader: 0, uploaderName: '', title: '', duration: 0, genre: '', tags: '', credits: null });
+        const item = upload ? directionsOfUpload(upload) : directionsOf({ id: like.id, uploader: 0, uploaderName: '', title: '', duration: 0, genre: '', tags: '', credits: null });
         apply(LIKE, like.id, upload?.uploader ?? 0, item, 1, originOf(like.added || now, item.record, true, false, !like.added));
     }
     // Треки плейлистов: даты добавления у сайта нет, поэтому как лайк без даты, с долей своего или сохранённого плейлиста.
@@ -340,7 +401,7 @@ export function buildTaste(
         if (likedIds.has(track.id) || likedInPlay.has(track.id) || marked.has(track.id)) continue;
         const upload = track.upload;
         if (upload) tagLabels(upload.genre, upload.tags, labels);
-        const item = upload ? directionsOf(fromUpload(upload)) : directionsOf({ id: track.id, uploader: 0, uploaderName: '', title: '', duration: 0, genre: '', tags: '', credits: null });
+        const item = upload ? directionsOfUpload(upload) : directionsOf({ id: track.id, uploader: 0, uploaderName: '', title: '', duration: 0, genre: '', tags: '', credits: null });
         apply(LIKE, track.id, upload?.uploader ?? 0, item, track.own ? P.playlistOwn : P.playlistSaved, originOf(now, item.record, false, false, true));
     }
     for (const id of library?.follows ?? []) entry('artists', String(id)).long += P.follow;

@@ -734,6 +734,33 @@ it('В2.2: ранний пропуск топит аккаунт до конца
     next.remove();
 });
 
+// Пропуск на позиции at мс: пересобрана ли очередь впереди (новые элементы вместо прежних)
+async function skipAt(at: number): Promise<boolean> {
+    vi.spyOn(Math, 'random').mockReturnValue(0.5);
+    const site = fakeSite(relatedTracks);
+    window.eval(waveScript());
+    await vi.advanceTimersByTimeAsync(100);
+    document.querySelector<HTMLButtonElement>('#sc-wave .scw-play')!.click();
+    await vi.advanceTimersByTimeAsync(1100);
+    const queued = site.player.replaceQueue.mock.calls[0][0] as FakeItem[];
+    site.setItems(queued, 0);
+    position = at;
+    await vi.advanceTimersByTimeAsync(1100);
+    const before = site.player.getQueue().slice(2);
+    const next = nextButton();
+    await skipNow(site, next);
+    next.remove();
+    position = 0;
+    const after = site.player.getQueue().slice(site.player.getQueueState().currentIndex + 1);
+    return after.some((item) => !before.includes(item));
+}
+it('пропуск после 30 секунд до половины трека (28.10.2026) поправляет сессию и пересобирает очередь впереди', async () => {
+    expect(await skipAt(60000)).toBe(true);
+});
+it('пропуск после половины трека сессию не трогает', async () => {
+    expect(await skipAt(120000)).toBe(false);
+});
+
 it('В2.14: три ранних пропуска подряд берут новые зёрна, найденное от зёрен с пропусками уходит из очереди впереди', async () => {
     vi.spyOn(Math, 'random').mockReturnValue(0.5);
     const history = [1, 2, 3, 4, 5, 6].map((id) => ({ track: { id, kind: 'track', user_id: 100 + id, duration: 180000, title: 'Seed ' + id } }));
@@ -791,7 +818,8 @@ it('П8: три быстрых пропуска открывают «Куда д
         if (name === 'trackBatch' && typeof query.ids === 'string') return { collection: query.ids.split(',').map(Number).filter((id) => id >= 8800).map((id) => ({ id, kind: 'track', title: 'Mix ' + id, duration: 200000, user_id: id, user: { id, username: 'U' + id } })) };
         return undefined;
     });
-    const favorites = [10, 11, 12, 13, 14, 15, 16, 20, 21, 22, 23, 24, 25, 26].map((id) => [id, 2]);
+    // Любимые с весом 20: после насыщения частей (28.10.2026) вес 2 даёт аккаунту только 1, и подборка уходит в очередь раньше
+    const favorites = [10, 11, 12, 13, 14, 15, 16, 20, 21, 22, 23, 24, 25, 26].map((id) => [id, 20]);
     Object.assign(window, { soundcloudAPI: { waveTaste: { load: vi.fn(async () => ({ artists: favorites, tags: [], tracks: [] })) } } });
     window.eval(waveScript());
     await vi.advanceTimersByTimeAsync(100);
