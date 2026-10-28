@@ -757,6 +757,12 @@ async function init() {
 
     windowState.manage(mainWindow);
     mainWindow.on('focus', focusTopView);
+    // Выключение, перезагрузка и выход из системы: before-quit и will-quit на Windows не приходят, буферы ложатся сейчас
+    mainWindow.on('session-end', () => {
+        waveJournal?.flush();
+        waveSignals?.flush();
+        diagnostics.flush();
+    });
 
     // handle window close event for minimize to tray
     mainWindow.on('close', (event) => {
@@ -964,9 +970,10 @@ async function init() {
     waveExclusions = exclusions;
     // История прослушиваний: индекс поверх журнала сигналов, страница поверх сайта до его плеера
     historyManager?.dispose();
-    // Перед чтением журнала и копией профиля буферы главного процесса ложатся на диск
+    // Перед чтением журнала и копией профиля буферы главного процесса ложатся на диск. Сигналы, ждущие метки простоя,
+    // остаются в памяти до своей минуты и попадут в следующее чтение
     const library = new LibraryService(path.join(app.getPath('userData'), 'wave'), () => {
-        waveSignals?.flush();
+        waveSignals?.writeSettled();
         waveJournal?.flush();
     });
     listeningLibrary = library;

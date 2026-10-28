@@ -140,7 +140,9 @@ it('запись v4: разбор выдачи волны принимается
     for (const field of Object.keys(trace)) expect(v3).not.toHaveProperty(field);
     // Части оценки (28.10.2026): ровно семь конечных чисел до 10 по модулю, два знака
     expect(validateSignal(signal({ at: now, v: 4, parts: [0.123, 1.5, 0, 0, -0.25, 0.9, -0.1] }), now)?.parts).toEqual([0.12, 1.5, 0, 0, -0.25, 0.9, -0.1]);
-    for (const parts of [[1, 2], [0, 0, 0, 0, 0, 0, Infinity], [0, 0, 0, 0, 0, 0, 11], [0, 0, 0, 0, 0, 0, '1'], 'x'])
+    // Минус нелюбимого тега не насыщается и бывает больше десяти: части всё равно в журнале
+    expect(validateSignal(signal({ at: now, v: 4, parts: [0, 0, 0, 0, 0, -12.5, 0] }), now)?.parts).toEqual([0, 0, 0, 0, 0, -12.5, 0]);
+    for (const parts of [[1, 2], [0, 0, 0, 0, 0, 0, Infinity], [0, 0, 0, 0, 0, 0, 101], [0, 0, 0, 0, 0, 0, '1'], 'x'])
         expect(validateSignal({ ...signal({ at: now, v: 4 }), parts }, now)).not.toHaveProperty('parts');
 });
 
@@ -155,7 +157,7 @@ it('«не у компьютера» решает main, признак со ст
     expect(away).toHaveBeenCalledWith(Date.UTC(2026, 7, 20, 10), Date.UTC(2026, 7, 20, 10) + 185000);
 });
 
-it('метка простоя решается, когда ясна (28.10.2026): после ввода позже конца трека или через 11 минут, flush пишет всё сразу', () => {
+it('метка простоя решается, когда ясна (28.10.2026): после ввода позже конца трека или через 11 минут, сброс перед чтением ждущее не трогает, выход пишет всё', () => {
     vi.useFakeTimers();
     try {
         const directory = dir();
@@ -185,9 +187,16 @@ it('метка простоя решается, когда ясна (28.10.2026)
         journal.add(42, [signal({ id: 12, at: clock - 186000 })]);
         vi.advanceTimersByTime(3000);
         expect(read()).toEqual([11, 12]);
-        // Принудительный сброс (выход, копия) пишет и ждущее
-        idle = 10 * 60000;
+        // Сброс перед чтением журнала (профиль, радар, копия) ждущее не решает, пишет только ясное
+        idle = 5 * 60000;
         journal.add(42, [signal({ id: 13, at: clock - 186000 })]);
+        journal.writeSettled();
+        expect(read()).toEqual([11, 12]);
+        // Восстановление копии тоже
+        journal.pause();
+        journal.resume();
+        expect(read()).toEqual([11, 12]);
+        // Выход пишет и ждущее
         journal.flush();
         expect(read()).toEqual([11, 12, 13]);
         // Ни ввода, ни отрезка простоя: решается через 11 минут после конца трека

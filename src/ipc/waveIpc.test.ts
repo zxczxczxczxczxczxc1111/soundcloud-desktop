@@ -58,6 +58,7 @@ describe('обработчики волны', () => {
         await ipc.send('soundcloud:wave-signals:add', stranger, 11, [{}]);
         await ipc.send('soundcloud:wave-empty', stranger, { seen: 1 });
         await ipc.send('soundcloud:wave-crossfade', stranger, { stage: 'done', prepMs: 1, leftMs: 1 });
+        await ipc.send('soundcloud:wave-filtered', stranger, { seen: 40, accepted: 22 });
         await expect(ipc.invoke('soundcloud:wave-exclusions:load', stranger, 11)).resolves.toBeNull();
         await expect(ipc.invoke('soundcloud:wave-exclusions:set', stranger, 11, 'track', { id: 1 }, true)).resolves.toBe(false);
         await expect(ipc.invoke('soundcloud:wave-taste', stranger, 11)).resolves.toBeNull();

@@ -329,8 +329,12 @@ export function buildTaste(
     }
     // Касания по времени: выбор кликом, ручной пропуск, лайк во время трека, отметки. Прослушивание без касаний
     // за untouchedMinutes вокруг играло фоном
+    // Выбор в начале трека, ручной пропуск в конце услышанного, лайк где-то внутри, поэтому оба края: у часового микса
+    // пропуск на 50-й минуте иначе стоял бы за 50 минут до себя и следующие треки выходили фоном
     const touches = [
-        ...plays.filter((play) => play.picked || play.likedNow || (play.end === 'skip' && play.endedBy === 'user')).map((play) => play.at),
+        ...plays.filter((play) => play.picked).map((play) => play.at),
+        ...plays.filter((play) => play.end === 'skip' && play.endedBy === 'user').map((play) => play.at + Math.max(play.heard, 0)),
+        ...plays.filter((play) => play.likedNow).flatMap((play) => [play.at, play.at + Math.max(play.heard, 0)]),
         ...marks.map((mark) => mark.at),
     ].sort((a, b) => a - b);
     const touched = (from: number, to: number): boolean => {
@@ -368,7 +372,7 @@ export function buildTaste(
         if (play.likedNow) apply(LIKE, play.id, play.artist, item, positive, { ...origin, daily: false });
         if (!play.looped) looping.delete(play.id);
         if (play.heard < COUNTED_MS || play.away) continue;
-        // Усталость: дослушанное не на повторе за неделю, раз в сутки на трек хватает и одного круга
+        // Усталость: каждое дослушивание не на повторе за неделю, серия кругов повтора в счёт не идёт
         if (!play.looped && play.at >= now - P.weekDays * DAY && weights && weights[0] >= 1) recentFull.set(play.id, (recentFull.get(play.id) ?? 0) + 1);
         const previous = lastCounted.get(play.id);
         // Переслушивание плюсует трек; серия кругов повтора подряд даёт один голос, а не голос за круг

@@ -1,7 +1,7 @@
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { afterEach, expect, it, vi } from 'vitest';
+import { afterEach, expect, it } from 'vitest';
 import {
     RADAR_PARAMS, RadarService, buildRadar, cleanRadarItem, coverageComplete, exclusionFilter, freshness, heardIds, heardLast, radarCoverage, radarSources, radarWindow,
     scoreUpload, selectEdition, selectRadar, fanWork, archiveTitle, archiveLast, uploadTrack, channelPicks, channelSet, provenDate, radarCandidates, radarComposition, reversedTitle, type RadarCandidate, type RadarEdition, type RadarItem, type RadarCoverage, type RadarInput,
@@ -31,7 +31,7 @@ function upload(id: number, title: string, uploader: number, uploaderName: strin
 }
 const input = (uploads: StoredUpload[], extra: Partial<RadarInput> = {}): RadarInput => ({
     period: '2026-09-25', now: CUTOFF + 1000, cutoff: CUTOFF, window: radarWindow(CUTOFF, []), uploads, reuploads: new Set(), tasteVersion: 2, follows: [], heard: new Set(), excluded: () => false,
-    groups: new Map(), channels: new Set(), history: [], coverage: FULL,
+    groups: new Map(), channels: new Set(), accounts: new Map(), history: [], coverage: FULL,
     profile: { artists: [[1, 3], [3, 2]], credits: [['artist', 2]], tags: [['phonk', 1], ['jazz', 0.6]], families: [], markers: [], tracks: [] },
     ...extra,
 });
@@ -327,7 +327,8 @@ it('план обхода (28.10.2026): подписки, аккаунты ис�
     const artist = (key: string, name: string, weight: number, accounts: number[] = []) => ({ key, name, weight, tracks: 3, accounts, followed: false });
     const registry = [artist('alpha', 'Alpha', 5, [7]), artist('beta', 'Beta', 4), artist('gamma', 'Gamma', 3), artist('delta', 'Delta', 2, [9])];
     const resolved = new Map([
-        ['alpha', { name: 'Alpha', accounts: [{ id: 8, name: 'Alpha Official' }], resolved: CUTOFF - 5 * DAY }],
+        // Свой аккаунт 7 нашёлся и поиском: он остаётся своим и выпуск держит
+        ['alpha', { name: 'Alpha', accounts: [{ id: 8, name: 'Alpha Official' }, { id: 7, name: 'Alpha' }], resolved: CUTOFF - 5 * DAY }],
         ['beta', { name: 'Beta', accounts: [], resolved: CUTOFF - 5 * DAY }],
         ['gamma', { name: 'Gamma', accounts: [{ id: 11, name: 'Gamma' }], resolved: CUTOFF - 40 * DAY }],
     ]);
@@ -345,7 +346,11 @@ it('план обхода (28.10.2026): подписки, аккаунты ис�
         // Поиск свежего по верху реестра
         ['search:alpha', 'Alpha', 5], ['search:beta', 'Beta', 4], ['search:gamma', 'Gamma', 3], ['search:delta', 'Delta', 2],
     ]);
-    expect(radarCoverage(sources, since)).toEqual({ accounts: 6, checked: 1, failed: 1, searches: 4, searchesDone: 0 });
+    // Аккаунты только из поиска по имени (8 и 11) помечены и до первой проверки выпуск не держат; свой 7 держит
+    expect(sources.filter((source) => source.found).map((source) => source.key)).toEqual(['user:8', 'user:11']);
+    expect(radarCoverage(sources, since)).toEqual({ accounts: 4, checked: 1, failed: 1, searches: 4, searchesDone: 0 });
+    expect(radarCoverage(sources.map((source) => (source.key === 'user:8' ? { ...source, checked: since + 1, status: 'ok' as const } : source)), since))
+        .toMatchObject({ accounts: 5, checked: 2 });
     // Отказ поиска аккаунтов повторяется только через сутки
     const failed = (checked: number) => radarSources([], null, [artist('delta', 'Delta', 2)], new Map(), [
         { key: 'artist:delta', label: 'Delta', checked, status: 'failed', error: 'missing', found: 0 },
@@ -490,12 +495,34 @@ it('одна песня одной строкой (28.10.2026): «ROMEO» у д�
     expect(rows).toEqual([71, 72, 73, 74]);
 });
 
+it('аккаунт исполнителя реестра (28.10.2026): второй аккаунт, найденный по имени, связан со вкусом весом исполнителя', () => {
+    const maps = tasteMaps({ artists: [[1, 3]], credits: [['alpha', 3]], tags: [['phonk', 1]], families: [], markers: [], tracks: [] })!;
+    const other = upload(500, 'Other Song', 8, 'Alpha', { genre: 'jazz' });
+    // Без аккаунта реестра у второго аккаунта нет ни веса, ни связи
+    expect(scoreUpload(other, 'release', CUTOFF - DAY, maps, new Set(), false, CUTOFF)).toBeNull();
+    const linked = scoreUpload(other, 'release', CUTOFF - DAY, maps, new Set(), false, CUTOFF, false, { weight: 3, name: 'Alpha' });
+    expect(linked).toMatchObject({ linked: true, reason: { kind: 'artist', name: 'Alpha' }, fan: false });
+    // Аккаунт, который вкус не любит, весом исполнителя не спасается
+    const disliked = tasteMaps({ artists: [[8, -2]], credits: [['alpha', 3]], tags: [['phonk', 1]], families: [], markers: [], tracks: [] })!;
+    expect(scoreUpload(other, 'release', CUTOFF - DAY, disliked, new Set(), false, CUTOFF, false, { weight: 3, name: 'Alpha' })).toBeNull();
+    // Канал аккаунтом исполнителя не становится
+    expect(scoreUpload(other, 'release', CUTOFF - DAY, maps, new Set(), false, CUTOFF, true, { weight: 3, name: 'Alpha' })).toBeNull();
+    // И в отборе выпуска: запись с найденного аккаунта входит в основной список как связанная
+    const candidates = radarCandidates(input([other], { accounts: new Map([[8, { weight: 3, name: 'Alpha' }]]) }), CUTOFF);
+    expect(candidates.map((candidate) => [candidate.id, candidate.linked])).toEqual([[500, true]]);
+    // Без аккаунта реестра та же запись была бы лишь открытием по жанру
+    expect(radarCandidates(input([other]), CUTOFF).map((candidate) => [candidate.id, candidate.linked, candidate.reason.kind])).toEqual([[500, false, 'tag']]);
+});
+
 it('каналы (28.10.2026): аккаунт с чужими исполнителями в большинстве загрузок; его премьеры не в радаре, а на полке', () => {
     const works = (uploader: number, name: string, titles: string[]) => titles.map((title) => ({ uploader, uploaderName: name, credits: trackCredits({ id: 1, title, user: { username: name } }) }));
     const channels = channelSet([
         ...works(80, 'Oslated', ['A - One', 'B - Two', 'C - Three', 'D - Four', 'Oslated Mix']),
         ...works(81, 'Artist', ['One', 'Two', 'Guest - Three', 'Four', 'Five']),
         ...works(82, 'Tiny', ['A - One', 'B - Two']),
+        // Битмейкер и ремиксер выкладывают своё, хотя исполнитель в названии другой
+        ...works(83, 'Beatmaker', ['A - One (prod. Beatmaker)', 'B - Two (prod. Beatmaker)', 'C - Three (prod. Beatmaker)', 'D - Four (prod. Beatmaker)', 'E - Five']),
+        ...works(84, 'Remixer', ['A - One (Remixer Remix)', 'B - Two (Remixer Remix)', 'C - Three (Remixer Remix)', 'D - Four (Remixer Remix)', 'E - Five']),
     ]);
     expect([...channels]).toEqual([80]);
     const profile = { artists: [[80, 3]], credits: [['lovedone', 3]], tags: [['techno', 1]], families: [], markers: [], tracks: [] };
@@ -580,41 +607,6 @@ it('сборка в worker: до конца обхода ждёт, после п
         expect(radar.build(77, '2026-09-25', cutoff, true, false, now)).toEqual({ published: false, waiting: false, edition: null });
         expect(store.editions(77)).toHaveLength(1);
     } finally {
-        index.close();
-        store.close();
-    }
-});
-
-it('сборка в worker (28.10.2026): сбой подсчёта состава для журнала не превращает записанный выпуск в ошибку', () => {
-    const directory = mkdtempSync(join(tmpdir(), 'sc-radar-test-'));
-    folders.push(directory);
-    const store = new RecommendStore(directory);
-    const index = new HistoryIndex(directory, new WaveSignals(directory));
-    const taste = new TasteService(directory, index, () => [], (user, played) => store.tasteLibrary(user, played));
-    const empty: WaveExclusionList = { tracks: [], artists: [], laterTracks: [], laterArtists: [], more: [], families: [] };
-    const radar = new RadarService(store, index, taste, () => empty);
-    const now = Date.now();
-    const cutoff = now - 3600000;
-    const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
-    try {
-        store.syncStart(77, 'followings', false, now);
-        store.syncPage(77, 'followings', 1, [{ key: 'sc:user:5' }], null, now);
-        store.syncFinish(77, 'followings', 1, 'complete', '', now);
-        store.recordUploads(77, [{ id: 51, kind: 'track', title: 'Fresh', user_id: 5, user: { id: 5, username: 'Five' }, duration: 200000, created_at: new Date(cutoff - 2 * DAY).toISOString() }], now);
-        store.catalogChecked(77, 'user:5', 'Five', 'ok', '', 1, now - 60000);
-        store.catalogChecked(77, 'search:five', 'Five', 'ok', '', 0, now - 60000);
-        // План берёт реестр как обычно, подсчёт состава после записи падает
-        const registry = radar.registry.bind(radar);
-        vi.spyOn(radar, 'registry').mockImplementationOnce(registry).mockImplementation(() => {
-            throw new Error('реестр недоступен');
-        });
-        const outcome = radar.build(77, '2026-09-25', cutoff, false, false, now);
-        expect(outcome).toMatchObject({ published: true, waiting: false, edition: { revision: 1 } });
-        expect(outcome.composition).toBeUndefined();
-        expect(store.editions(77)).toHaveLength(1);
-        expect(warn).toHaveBeenCalledWith('Радар: состав выпуска для журнала не посчитан', expect.any(Error));
-    } finally {
-        warn.mockRestore();
         index.close();
         store.close();
     }

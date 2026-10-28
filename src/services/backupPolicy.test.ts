@@ -17,6 +17,13 @@ it('настройки копии: только свои ключи с пров�
     expect(BACKUP_MIGRATION_MARKS).toEqual(['adBlockerDefaultApplied', 'homeLayoutApplied', 'radarSaturdayApplied']);
 });
 
+it('копия до переезда радара на субботу: пятница из неё переезжает, выбранное после переезда остаётся', () => {
+    expect(cleanBackupSettings({ radarDay: 5, radarTime: '01:00' })).toEqual({ radarDay: 6, radarTime: '03:00', radarSaturdayApplied: true });
+    expect(cleanBackupSettings({ radarDay: 0, radarTime: '20:00' })).toEqual({ radarDay: 0, radarTime: '20:00' });
+    expect(cleanBackupSettings({ radarDay: 5, radarTime: '01:00', radarSaturdayApplied: true })).toEqual({ radarDay: 5, radarTime: '01:00', radarSaturdayApplied: true });
+    expect(cleanBackupSettings({ adBlocker: true })).toEqual({ adBlocker: true });
+});
+
 it('папка данных клиента и всё внутри неё не годятся для копии, соседняя папка с похожим именем годится', () => {
     const profile = 'C:\\Users\\me\\AppData\\Roaming\\soundcloud-desktop';
     expect(isInside(profile, profile, true)).toBe(true);

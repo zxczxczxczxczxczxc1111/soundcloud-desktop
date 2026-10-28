@@ -52,7 +52,7 @@ function waveTrace(value: Partial<Record<keyof PlaySignal, unknown>>, now: numbe
     if (seed === 0 || isId(seed)) trace.seed = seed;
     if (typeof score === 'number' && Number.isFinite(score) && Math.abs(score) <= 100) trace.score = Math.round(score * 100) / 100;
     const parts = value.parts;
-    if (Array.isArray(parts) && parts.length === 7 && parts.every((part) => typeof part === 'number' && Number.isFinite(part) && Math.abs(part) <= 10))
+    if (Array.isArray(parts) && parts.length === 7 && parts.every((part) => typeof part === 'number' && Number.isFinite(part) && Math.abs(part) <= 100))
         trace.parts = parts.map((part: number) => Math.round(part * 100) / 100);
     if (typeof value.known === 'boolean') trace.known = value.known;
     if (value.mode === 'similar' || value.mode === 'fresh') trace.mode = value.mode;
@@ -217,7 +217,13 @@ export class WaveSignals {
     }
     public resume(): void {
         this.paused = false;
-        this.flush();
+        this.writeSettled();
+    }
+    /** Сброс перед чтением журнала (профиль, радар, копия): пишется событие с ясной меткой, ждущее остаётся до своей
+     *  минуты. Полный flush решал бы метку тем, что известно сейчас, и отошедший человек выходил бы слушавшим */
+    public writeSettled(): void {
+        if (this.timer !== undefined) clearTimeout(this.timer);
+        this.settle();
     }
     public flush(): void {
         if (this.timer !== undefined) clearTimeout(this.timer);

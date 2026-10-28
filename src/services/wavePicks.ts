@@ -175,10 +175,9 @@ export function isNewArtist(track: WaveTrack, knownIds: Set<number>, knownNames:
     return !credits.some((credit) => knownNames.has(credit.key));
 }
 
-// Разнести по ключу в порядке списка: следующий берётся первый, чей ключ не встречался среди последних gap,
-// а если такого нет, просто первый. Ничего не выбрасывается
 /** Порядок по долям (разбор 28.10.2026): на каждом месте берётся первый оставшийся из группы, которой больше всего
- *  недостаёт до своей доли; порядок внутри группы сохраняется. Группа без доли идёт, когда остальные кончились */
+ *  недостаёт до своей доли; порядок внутри группы сохраняется. Группа без доли встаёт, когда недостачи нет ни у кого
+ *  из групп с долей: обычно после того, как кончилась одна из них */
 export function balanceShares<T>(list: T[], keyOf: (item: T) => string, target: Map<string, number>): T[] {
     const groups = new Map<string, T[]>();
     for (const item of list) {
@@ -207,6 +206,8 @@ export function balanceShares<T>(list: T[], keyOf: (item: T) => string, target: 
     }
     return result;
 }
+// Разнести по ключу в порядке списка: следующий берётся первый, чей ключ не встречался среди последних gap,
+// а если такого нет, просто первый. Ничего не выбрасывается
 export function spreadBy<T>(list: T[], keyOf: (item: T) => string | number, gap: number): T[] {
     const rest = list.slice();
     const result: T[] = [];

@@ -25,7 +25,7 @@ const APP = { version: '0.7.0', build: 'abc1234' };
 const SETTINGS = {
     adBlocker: false, siteLanguage: 'en', radarDay: 5, proxyHost: 'proxy.local', proxyPassword: 'secret-pass', proxyPasswordEncrypted: 'djEw-cipher',
     webhookUrl: 'https://hook.example/private', accounts: [{ id: 'acc_1', name: 'Второй' }], currentAccountId: 'acc_1', gpuCompatibilityMode: 'on',
-    homeLayoutApplied: true, statusDisplayType: 7,
+    homeLayoutApplied: true, radarSaturdayApplied: true, statusDisplayType: 7,
 };
 
 const folders: string[] = [];
@@ -127,10 +127,10 @@ it('A23: копия переносит историю, вкус, отметки,
     const fresh = profile();
     const { inspected, restored } = restoreAll(fresh, file);
     expect(inspected.summary).toMatchObject({
-        version: 1, created: T0 + 120 * DAY, app: APP, settings: 5,
+        version: 1, created: T0 + 120 * DAY, app: APP, settings: 6,
         accounts: [{ id: USER, plays: 3, newPlays: 3, firstAt: T0, lastAt: T0 + 40 * DAY, marks: 2, tasteRemoved: 1, journal: 3, mixes: 1, newMixes: 1, editions: 1, newEditions: 1, links: 1 }],
     });
-    expect(restored.settings).toEqual({ adBlocker: false, siteLanguage: 'en', radarDay: 5, proxyHost: 'proxy.local', homeLayoutApplied: true });
+    expect(restored.settings).toEqual({ adBlocker: false, siteLanguage: 'en', radarDay: 5, proxyHost: 'proxy.local', homeLayoutApplied: true, radarSaturdayApplied: true });
     expect(restored.accounts[0]).toMatchObject({ id: USER, plays: 3, tasteRemoved: 1, mixes: 1, editions: 1, links: 1 });
 
     expect(new WaveSignals(fresh.directory).load(USER).map((signal) => signal.id)).toEqual([1, 2, 3]);
@@ -344,6 +344,6 @@ it('копия без данных волны сохраняет только н
     const p = profile();
     const file = save(p);
     const inspected = p.backup.inspect(file);
-    expect(inspected).toMatchObject({ ok: true, summary: { accounts: [], settings: 5 } });
+    expect(inspected).toMatchObject({ ok: true, summary: { accounts: [], settings: 6 } });
     expect(p.backup.restore(file, inspected.ok ? inspected.hash : '')).toMatchObject({ ok: true, accounts: [] });
 });

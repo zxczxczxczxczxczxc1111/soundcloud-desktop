@@ -187,13 +187,19 @@ export const baseScore = (score: number): number => (score > 0 ? 1 - Math.exp(-s
  *  channel: загрузчик канал, его вес во вкусе не делает загрузку своей работой */
 export function scoreUpload(
     upload: StoredUpload, kind: Freshness, at: number, maps: TasteMaps, follows: Set<number>, heard: boolean, to: number, channel = false,
+    account: RegistryAccount | null = null,
 ): RadarCandidate | null {
     const track = uploadTrack(upload);
     const score = tasteScore(track, maps);
     if (score.track <= -1) return null;
     const followed = follows.has(upload.uploader);
+    // Аккаунт исполнителя реестра без своего веса во вкусе (второй аккаунт, найденный поиском по имени): имя загрузчика
+    // оценка пропускает, поэтому вес исполнителя идёт вместо веса аккаунта, насыщенно, как часть артиста. Минус самого
+    // аккаунта во вкусе (его пропускают) весом исполнителя не перекрывается
+    const registryArtist = !channel && account && score.artist === 0 ? account : null;
+    const registryPart = registryArtist ? (2 * registryArtist.weight) / (2 + registryArtist.weight) : 0;
     // Подписка без истории всё равно слабая связь: её релиз может войти, если остальное не против
-    const raw = score.score + (followed && score.artist <= 0 ? 0.5 : 0);
+    const raw = score.score + Math.max(registryPart, followed && score.artist <= 0 ? 0.5 : 0);
     if (raw <= 0) return null;
     const base = Math.min(1, baseScore(raw) + (to - at <= RADAR_PARAMS.recentDays * DAY ? RADAR_PARAMS.recentBonus : 0));
     const reason: RadarReason = score.creditName && score.creditBest >= Math.max(score.artist, score.tag, 0.3)
@@ -202,18 +208,21 @@ export function scoreUpload(
             ? { kind: 'follow', name: upload.uploaderName }
             : score.artist >= Math.max(score.tag, 0.3) && upload.uploaderName
                 ? { kind: 'artist', name: upload.uploaderName }
+                : registryArtist && registryPart >= Math.max(score.tag, 0.3)
+                    ? { kind: 'artist', name: registryArtist.name || upload.uploaderName }
                 : score.tagKey
                     ? { kind: 'tag', tag: score.tagKey }
                     : { kind: 'taste' };
     const P = RADAR_PARAMS;
-    const linked = followed || score.artist >= P.linkWeight || score.creditBest >= P.linkWeight || score.track > 0 || score.family > 0;
+    const linked = followed || score.artist >= P.linkWeight || score.creditBest >= P.linkWeight || score.track > 0 || score.family > 0
+        || (!!registryArtist && registryArtist.weight >= P.linkWeight);
     const credits = Array.isArray(upload.credits) ? upload.credits : [];
     const uploader = nameKey(upload.uploaderName);
     const weight = (key: string): number => maps.credits.get(key) ?? 0;
     // Участник в титрах (не продюсер и не автор слов) весит во вкусе. Загрузчик известен: аккаунт или его имя
     // как исполнитель весят во вкусе, тогда это второй аккаунт артиста, а не фанат. Канал известным так не становится
     const credited = credits.some((credit) => credit.role !== 'producer' && credit.role !== 'writer' && credit.key !== uploader && weight(credit.key) >= P.linkWeight);
-    const knownUploader = !channel && (score.artist >= P.linkWeight || weight(uploader) >= P.linkWeight);
+    const knownUploader = !channel && (score.artist >= P.linkWeight || weight(uploader) >= P.linkWeight || (!!account && account.weight >= P.linkWeight));
     const archive = !(kind === 'release' && provenDate(upload, channel)) && archiveTitle(upload.title, to);
     return {
         key: upload.key, id: upload.id, base: archive ? Math.max(0, base - P.archivePenalty) : base,
@@ -386,6 +395,8 @@ export interface RadarSource {
     status: CatalogStatus | '';
     /** Порядок при равной давности: подписки и любимые раньше */
     weight: number;
+    /** Аккаунт пришёл только из поиска аккаунтов исполнителя: пока он не проверен ни разу, выпуск его не ждёт */
+    found?: true;
 }
 /** Найденные аккаунты исполнителя реестра (artistAccounts хранилища) */
 export type ResolvedArtists = Map<string, { name: string; accounts: Array<{ id: number; name: string }>; resolved: number }>;
@@ -404,11 +415,11 @@ export function radarSources(
         const check = known.get(source.key);
         sources.push({ ...source, label: check?.label || source.label, checked: check?.checked ?? 0, status: check?.status ?? '' });
     };
-    const accounts = new Map<number, { weight: number; label: string }>();
-    const account = (id: number, weight: number, label: string): void => {
+    const accounts = new Map<number, { weight: number; label: string; found: boolean }>();
+    const account = (id: number, weight: number, label: string, found = false): void => {
         if (hidden.has(id)) return;
         const current = accounts.get(id);
-        accounts.set(id, { weight: Math.max(current?.weight ?? 0, weight), label: current?.label || label });
+        accounts.set(id, { weight: Math.max(current?.weight ?? 0, weight), label: current?.label || label, found: (current ? current.found : true) && found });
     };
     // Скрытые не занимают место в пределе. Подписок больше предела: остаются те, что весят во вкусе, а не первые
     // по номеру аккаунта (дата подписки у сайта неизвестна, хранилище отдаёт их по ключу)
@@ -424,7 +435,7 @@ export function radarSources(
     for (const artist of registry) {
         const found = resolved.get(artist.key);
         for (const id of artist.accounts) account(id, artist.weight, artist.name);
-        for (const item of found?.accounts ?? []) account(item.id, artist.weight, item.name);
+        for (const item of found?.accounts ?? []) account(item.id, artist.weight, item.name, true);
         if (!found || found.resolved < now - P.resolveDays * DAY) {
             // Отказ поиска повторяется через сутки, а не каждым сбором: недоступный поиск не съедает бюджет
             const check = known.get('artist:' + artist.key);
@@ -445,7 +456,7 @@ export function radarSources(
             added++;
         }
     }
-    for (const [id, { weight, label }] of accounts) add({ key: 'user:' + id, kind: 'user', id, q: '', label, weight });
+    for (const [id, { weight, label, found }] of accounts) add({ key: 'user:' + id, kind: 'user', id, q: '', label, weight, ...(found ? { found: true as const } : {}) });
     for (const [key, { name, weight }] of searches) if (name.length >= 2) add({ key: 'search:' + key, kind: 'search', id: 0, q: name, label: name, weight });
     return sources;
 }
@@ -466,6 +477,8 @@ export function radarCoverage(sources: RadarSource[], since: number): RadarCover
     for (const source of sources) {
         // Поиск аккаунтов исполнителя выпуск не держит: найденные аккаунты войдут в план и покрытие следующей проверкой
         if (source.kind === 'artist') continue;
+        // Найденные поиском аккаунты тоже: войдут в покрытие после первой проверки
+        if (source.found && !source.checked) continue;
         const fresh = source.checked >= since;
         if (source.kind === 'user') coverage.accounts++;
         else coverage.searches++;
@@ -582,6 +595,11 @@ export function radarWindow(cutoff: number, previous: PreviousEdition[]): RadarW
     };
 }
 
+/** Аккаунт исполнителя реестра: вес и имя исполнителя */
+export interface RegistryAccount {
+    weight: number;
+    name: string;
+}
 export interface RadarInput {
     period: string;
     now: number;
@@ -601,6 +619,8 @@ export interface RadarInput {
     groups: Map<string, string>;
     /** Каналы: аккаунты, где большинство загрузок это чужие исполнители (премьеры, сборники, перезаливы) */
     channels: Set<number>;
+    /** Аккаунты исполнителей реестра: свои по загрузкам и найденные поиском по имени */
+    accounts: Map<number, RegistryAccount>;
     history: string[][];
     coverage: RadarCoverage;
 }
@@ -645,7 +665,7 @@ export function radarCandidates(input: RadarInput, to: number): RadarCandidate[]
         if (kind !== 'release' && kind !== 'upload') continue;
         const copies = copyKeys(track);
         if (copies.some((key) => window.shownCopies.has(key))) continue;
-        const candidate = scoreUpload(upload, kind, at, maps, follows, input.heard.has(upload.id), to, channel);
+        const candidate = scoreUpload(upload, kind, at, maps, follows, input.heard.has(upload.id), to, channel, input.accounts.get(upload.uploader) ?? null);
         if (!candidate) continue;
         // Канал (премьеры, сборники) связан со вкусом только собой или жанром: это не релизы, их место на полке
         // в жанровой карточке (решение владельца 28.10.2026). Запись любимого исполнителя на канале остаётся
@@ -678,7 +698,10 @@ export function channelSet(works: Array<Pick<StoredUpload, 'uploader' | 'uploade
     for (const work of works) {
         const count = counts.get(work.uploader) ?? { total: 0, foreign: 0 };
         count.total++;
-        if (fanWork(work.uploaderName, work.credits)) count.foreign++;
+        // Продюсер («prod. Me») и ремиксер («Me Remix») выкладывают свою работу, хотя исполнитель в названии другой
+        const own = nameKey(work.uploaderName);
+        const maker = work.credits.some((credit) => (credit.role === 'producer' || credit.role === 'remixer') && credit.key === own);
+        if (fanWork(work.uploaderName, work.credits) && !maker) count.foreign++;
         counts.set(work.uploader, count);
     }
     const P = RADAR_PARAMS;
@@ -899,16 +922,8 @@ export class RadarService {
         if (!edition) return { ...idle, waiting: true };
         const saved = this.store.saveEdition(userId, edition, manual === true);
         if (!saved) return idle;
-        // Выпуск уже записан: сбой подсчёта для журнала не должен превращать его в ошибку сборки
-        try {
-            // Реестр уже собран планом выше и лежит в кэше
-            const hidden = new Set(this.exclusions(userId).artists.map((entry) => entry.id));
-            const own = new Set([...this.registry(userId, hidden, now).flatMap((artist) => artist.accounts), ...inputs.follows]);
-            return { published: true, waiting: false, edition: saved, composition: radarComposition(saved, inputs.uploads, inputs.channels, own, window) };
-        } catch (error) {
-            console.warn('Радар: состав выпуска для журнала не посчитан', error);
-            return { published: true, waiting: false, edition: saved };
-        }
+        const own = new Set([...inputs.accounts.keys(), ...inputs.follows]);
+        return { published: true, waiting: false, edition: saved, composition: radarComposition(saved, inputs.uploads, inputs.channels, own, window) };
     }
     /** Выпуск для страницы: последний или выбранный из архива с отметками «Уже слышал» на сейчас, и список архива */
     public view(userId: unknown, period?: unknown, revision?: unknown, now = Date.now()): RadarView {
@@ -963,10 +978,24 @@ export class RadarService {
         const heard = heardIds(this.index.tastePlays(userId, from - 30 * DAY), memberIds(this.store.libraryMembers(userId, 'likes'), 'sc:track:'), groups);
         const profile = withUploads ? this.taste.profile(userId) : null;
         const channels = this.channelsOf(userId, window.uploads.map((upload) => upload.uploader), now);
+        const exclusions = this.exclusions(userId);
         return {
             now, uploads: window.uploads, reuploads: new Set(window.reuploads), profile, tasteVersion: profile?.version ?? 0,
-            follows: memberIds(this.store.libraryMembers(userId, 'followings'), 'sc:user:'), heard, excluded: exclusionFilter(this.exclusions(userId), groups, now), groups, channels,
+            follows: memberIds(this.store.libraryMembers(userId, 'followings'), 'sc:user:'), heard, excluded: exclusionFilter(exclusions, groups, now), groups, channels,
+            accounts: withUploads ? this.registryAccounts(userId, new Set(exclusions.artists.map((entry) => entry.id)), now) : new Map(),
         };
+    }
+    // Аккаунты исполнителей реестра с весом исполнителя: свои по загрузкам и найденные поиском по имени. Реестр в кэше
+    private registryAccounts(userId: number, hidden: Set<number>, now: number): Map<number, RegistryAccount> {
+        const resolved = this.store.artistAccounts(userId);
+        const result = new Map<number, RegistryAccount>();
+        for (const artist of this.registry(userId, hidden, now)) {
+            for (const id of [...artist.accounts, ...(resolved.get(artist.key)?.accounts ?? []).map((item) => item.id)]) {
+                if (hidden.has(id) || (result.get(id)?.weight ?? -Infinity) >= artist.weight) continue;
+                result.set(id, { weight: artist.weight, name: artist.name });
+            }
+        }
+        return result;
     }
     // Каналы среди загрузчиков: признак аккаунта кэшируется на 6 часов, из хранилища читаются только новые и устаревшие.
     // Без кэша каждая сборка, «Все найденные» и полка читали бы последние загрузки сотен аккаунтов
@@ -975,9 +1004,11 @@ export class RadarService {
         this.channelMarks.set(userId, marks);
         const wanted = [...new Set(uploaders)];
         const stale = wanted.filter((id) => (marks.get(id)?.at ?? -Infinity) < now - 6 * 3600000);
-        if (stale.length) {
-            const found = channelSet(this.store.recentWorks(userId, stale));
-            for (const id of stale) marks.set(id, { at: now, channel: found.has(id) });
+        // Хранилище читает не больше 5000 аккаунтов за раз: остальные иначе получили бы «не канал» без проверки
+        for (let start = 0; start < stale.length; start += 5000) {
+            const chunk = stale.slice(start, start + 5000);
+            const found = channelSet(this.store.recentWorks(userId, chunk));
+            for (const id of chunk) marks.set(id, { at: now, channel: found.has(id) });
         }
         return new Set(wanted.filter((id) => marks.get(id)?.channel === true));
     }

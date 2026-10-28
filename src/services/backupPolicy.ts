@@ -2,6 +2,7 @@ import { readdirSync, rmSync, statSync } from 'node:fs';
 import { join, posix, win32 } from 'node:path';
 import { validateSettingChange } from '../settings/validateSetting';
 import { HOME_BLOCK_KEYS } from './homeBlocks';
+import { DEFAULT_RADAR_SCHEDULE } from './radarSchedule';
 
 // Правила резервной копии профиля без чтения самих данных: что из настроек входит, как зовутся файлы
 // автокопии и какие причины отказа видит человек. Файл общий для главного процесса и worker
@@ -28,6 +29,13 @@ export function cleanBackupSettings(input: unknown): Record<string, unknown> {
     const has = (key: string): boolean => Object.prototype.hasOwnProperty.call(source, key);
     for (const key of BACKUP_SETTING_KEYS) if (has(key) && validateSettingChange({ key, value: source[key] })) result[key] = source[key];
     for (const key of BACKUP_MIGRATION_MARKS) if (has(key) && source[key] === true) result[key] = true;
+    // Копия до переезда радара на субботу: пятница из неё переезжает так же, как при обновлении, иначе отметка
+    // переезда в хранилище уже стоит и пятница осталась бы навсегда
+    if (result.radarDay === 5 && result.radarSaturdayApplied !== true) {
+        result.radarDay = DEFAULT_RADAR_SCHEDULE.day;
+        result.radarTime = DEFAULT_RADAR_SCHEDULE.time;
+        result.radarSaturdayApplied = true;
+    }
     return result;
 }
 

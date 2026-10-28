@@ -143,6 +143,10 @@ it('фон (28.10.2026): автоплей сайта как волна, без �
     expect(weight([play({ id: 1, at, endedBy: 'auto' })])).toBeCloseTo(blended(0.5, HOUR_AGE), 2);
     expect(weight([play({ id: 1, at, endedBy: 'auto' }), play({ id: 2, at: at - 10 * 60000, endedBy: 'auto', picked: true })])).toBeCloseTo(blended(1, HOUR_AGE), 2);
     expect(weight([play({ id: 1, at, endedBy: 'auto' }), play({ id: 2, at: at - 30 * 60000, endedBy: 'auto', picked: true })])).toBeCloseTo(blended(0.5, HOUR_AGE), 2);
+    // Часовой микс пропущен рукой на 50-й минуте, за 10 минут до трека: касание в конце услышанного, а не в начале микса
+    expect(weight([play({ id: 1, at, endedBy: 'auto' }), play({ id: 2, at: at - 60 * 60000, dur: 3600000, heard: 50 * 60000, end: 'skip', endedBy: 'user' })])).toBeCloseTo(blended(1, HOUR_AGE), 2);
+    // Лайк по ходу длинного трека касается и его конца
+    expect(weight([play({ id: 1, at, endedBy: 'auto' }), play({ id: 2, at: at - 60 * 60000, dur: 3600000, heard: 50 * 60000, endedBy: 'auto', likedNow: true })])).toBeCloseTo(blended(1, HOUR_AGE), 2);
     // Отметка тоже касание
     expect(weight([play({ id: 1, at, endedBy: 'auto' })], [{ id: 3, at: at + 60000, artist: 30, genre: '', tags: '' }])).toBeCloseTo(blended(1, HOUR_AGE), 2);
     // Автоплей сайта без касаний: обе скидки

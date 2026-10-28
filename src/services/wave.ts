@@ -1582,7 +1582,9 @@ export function installWave(config: WaveConfig, createPlayback: typeof installPl
         const family = list === ownQueue ? '' : familyKey(candidate.track);
         const held = family && candidate.reason.kind !== 'version' ? families.get(family) : undefined;
         if (held) {
-            const pending = !pooled.has(held.candidate) && (pool.includes(held.candidate) || held.list.includes(held.candidate));
+            // Резерв настроения и развилка вернут свою версию в пул сами: её заменять нельзя, иначе встанут обе
+            const parked = moodReserve.some((entry) => entry.candidate === held.candidate) || !!fork?.options.some((option) => option.candidate === held.candidate);
+            const pending = !pooled.has(held.candidate) && !parked && (pool.includes(held.candidate) || held.list.includes(held.candidate));
             if (!pending || versionValue(candidate) <= versionValue(held.candidate) + 0.1) {
                 filterStats.family++;
                 return false;
@@ -1593,7 +1595,9 @@ export function installWave(config: WaveConfig, createPlayback: typeof installPl
             filterStats.family++;
             filterStats.accepted--;
         }
-        if (family) families.set(family, { candidate, list });
+        // «Другая версия» идёт мимо правила семей и запись семьи не трогает: иначе следующая версия вытеснила бы её,
+        // а принятая раньше осталась бы рядом
+        if (family && candidate.reason.kind !== 'version') families.set(family, { candidate, list });
         for (const key of copyKeys(candidate.track)) signatures.add(key);
         taken.add(candidate.track.id);
         if (!candidate.trace) candidate.trace = { origin: candidate.reason.kind, seed: seedId, score: null, known: false };
@@ -1800,6 +1804,8 @@ export function installWave(config: WaveConfig, createPlayback: typeof installPl
     }
     // Ранний пропуск (sign -1) или лайк и «Больше такого» (sign 1): аккаунт на единицу, теги на половину доли, зерно на половину.
     // Пропуск после 30 секунд, до половины трека, идёт половинной силой (sign -0.5, разбор 28.10.2026)
+    // Поздний пропуск (-0.5) зерно не трогает: по минусу зерна смена зёрен выбрасывает всё найденное от него, а уход
+    // с середины трека это не «зерно мимо»
     function adjustSession(candidate: WaveCandidate, sign: 1 | -1 | -0.5): void {
         const track = candidate.track;
         const add = <K>(map: Map<K, number>, key: K, value: number): void => { map.set(key, (map.get(key) ?? 0) + sign * value); };
@@ -1807,7 +1813,7 @@ export function installWave(config: WaveConfig, createPlayback: typeof installPl
         if (artist) add(sessionArtists, artist, 1);
         for (const [key, share] of tagShares(track.genre, track.tag_list, [track.user?.username])) add(sessionTags, key, 0.5 * share);
         const from = candidate.trace?.seed ?? 0;
-        if (from) add(sessionSeeds, from, 0.5);
+        if (from && sign !== -0.5) add(sessionSeeds, from, 0.5);
     }
     const EMPTY_TASTE: TasteMaps = { version: 0, artists: new Map(), credits: new Map(), families: new Map(), tags: new Map(), markers: new Map(), tracks: new Map(), langs: new Map(), contexts: new Map(), sources: new Map(), tired: new Map(), tagTop: 0 };
     // Пул заново по вкусу с поправками сессии: при каждой догрузке и после пропусков (В2.1, В2.2)
@@ -1949,11 +1955,10 @@ export function installWave(config: WaveConfig, createPlayback: typeof installPl
         if ((candidate.trace?.origin ?? candidate.reason.kind) === 'relatedArtist') return true;
         const current = taste;
         if (!current) return false;
-        const score = tasteScore(candidate.track, current);
-        const uploader = nameKey(candidate.track.user?.username);
-        const foreign = parsed.credits.some((credit) => credit.role === 'artist' && !!credit.key && credit.key !== uploader);
-        if (foreign && score.artist <= 0) return false;
-        return score.score + sessionScore(candidate) >= 1.5;
+        // Перезалив: загрузчика нет среди исполнителей и он не ремиксер (то же правило, что у групп радара). Знакомый вкусу
+        // канал тоже не в счёт: каналы перезаливов сами стоят в верху вкуса
+        if (performerKey(trackArtist(candidate.track), candidate.track.user?.username, parsed.credits).startsWith('a:')) return false;
+        return tasteScore(candidate.track, current).score + sessionScore(candidate) >= 1.5;
     }
     // Один проход по источникам: похожие на три зерна и, если выбраны жанры, свежее и популярное в каждом.
     // У волны от трека, артиста или плейлиста зёрна идут по порядку и жанр не действует
@@ -2083,9 +2088,11 @@ export function installWave(config: WaveConfig, createPlayback: typeof installPl
                 console.warn('Волна: похожие не загружены', error);
             });
         // Трек похожего артиста сам кандидат: «Похож на ...»
-        const neighborCandidate = (entry: { track: WaveTrack; artist: string }): void => {
-            filterStats.neighborFound++;
-            if (trackMatchesGenre(entry.track, keys) && accept(found, { track: entry.track, reason: { kind: 'relatedArtist', artist: entry.artist } }, filter)) filterStats.neighborAccepted++;
+        // counted: счётчики диагностики ведутся только за похожего артиста любимого, ради него они и заведены
+        const neighborCandidate = (entry: { track: WaveTrack; artist: string }, counted = false): void => {
+            if (counted) filterStats.neighborFound++;
+            const accepted = trackMatchesGenre(entry.track, keys) && accept(found, { track: entry.track, reason: { kind: 'relatedArtist', artist: entry.artist } }, filter);
+            if (counted && accepted) filterStats.neighborAccepted++;
         };
         for (const entry of neighbors) neighborCandidate(entry);
         const tasks: Promise<void>[] = picked.map(similarTo);
@@ -2095,10 +2102,11 @@ export function installWave(config: WaveConfig, createPlayback: typeof installPl
             tasks.push(favoriteNeighbor(p).then((entry) => {
                 if (!entry || disposed || own !== generation) return;
                 usedSeeds.add(entry.track.id);
-                neighborCandidate(entry);
+                neighborCandidate(entry, true);
                 return similarTo(entry.track);
             }).catch((error: unknown) => {
-                filterStats.neighborFailed++;
+                // Отказ прошлого поколения в счётчики нового не идёт
+                if (!disposed && own === generation) filterStats.neighborFailed++;
                 console.warn('Волна: похожий артист любимого не загружен', error);
             }));
         }
@@ -2267,8 +2275,11 @@ export function installWave(config: WaveConfig, createPlayback: typeof installPl
             const fromOwn = ownQueue.length > 0 && (smart ? !pool.length || ownRun < 3 : !blend || !pool.length || picked.length % 2 === 0);
             if (smart) ownRun = fromOwn ? ownRun + 1 : 0;
             // Места 1-3 поколения из найденного только уверенные (П2): первые треки после запуска пропускались втрое чаще
-            const sure = !fromOwn && pickedInGeneration < 3 ? pool.filter(confident) : [];
-            const item = fromOwn ? ownQueue.shift() : pickSpaced(sure.length ? sure : pool, 1, recentKeys, gap)[0];
+            const front = !fromOwn && pickedInGeneration < 3;
+            const sure = front ? pool.filter(confident) : [];
+            // Уверенных нет (вкус не загрузился, новый профиль): хотя бы без пометок версии, иначе первым встаёт slowed
+            const plain = front && !sure.length ? pool.filter((entry) => !parseTrackTitle(entry.track.title).version.length) : [];
+            const item = fromOwn ? ownQueue.shift() : pickSpaced(sure.length ? sure : plain.length ? plain : pool, 1, recentKeys, gap)[0];
             if (!item) break;
             if (!fromOwn) {
                 pool = pool.filter((entry) => entry !== item);
@@ -2674,12 +2685,21 @@ export function installWave(config: WaveConfig, createPlayback: typeof installPl
         if (!sessionTraits.size) return;
         for (const trait of trackTraits(track)) sessionTraits.delete(trait.kind + ':' + trait.key);
     }
+    let courseRunning = false;
     async function changeCourse(): Promise<void> {
+        // Уже идёт: второй полный подбор не нужен, очередь впереди пересобирается сразу, зёрна сменит идущий
+        if (courseRunning) {
+            rebuildAhead();
+            return;
+        }
+        courseRunning = true;
         const own = generation;
         try {
             await ensurePool(ready() + BATCH);
         } catch (error) {
             console.warn('Волна: новые зёрна после пропусков не собраны', error);
+        } finally {
+            courseRunning = false;
         }
         if (own !== generation) return;
         const fresh = pool.filter(unskippedSeed);
@@ -2980,9 +3000,9 @@ export function installWave(config: WaveConfig, createPlayback: typeof installPl
                 skipSeries.push(previous.track);
                 fastRun = currentPosition < 5000 ? fastRun + 1 : 0;
             } else if (previous && currentPosition >= 30000) {
-                // Ушёл после 30 секунд, но до половины: сессия реагирует вполсилы, копии не убираются, серия ранних пропусков
-                // обрывается. Раньше сессия видела только пропуски до 30 секунд
-                late = active && byUser && previous.reason.kind !== 'seedTrack' && !jumped && currentDuration > 0 && currentPosition < currentDuration / 2;
+                // Ушёл после 30 секунд, но до 80% (граница позднего пропуска профиля вкуса, дальше это конец трека): сессия
+                // реагирует вполсилы, копии не убираются, серия ранних пропусков обрывается
+                late = active && byUser && previous.reason.kind !== 'seedTrack' && !jumped && currentDuration > 0 && currentPosition < currentDuration * 0.8;
                 if (late) adjustSession(previous, -0.5);
                 skipRun = 0;
                 skipSeries = [];
@@ -3008,7 +3028,9 @@ export function installWave(config: WaveConfig, createPlayback: typeof installPl
                 else void changeCourse();
             } else if (early && skipRun === 2) {
                 // Два ранних пропуска подряд: следующий трек тогда пропускается в половине случаев (разбор 28.10.2026),
-                // поэтому зёрна с пропусками уходят уже сейчас, а не после третьего
+                // поэтому зёрна с пропусками уходят уже сейчас, а не после третьего. Очередь впереди с поправками сессии
+                // пересобирается сразу, не дожидаясь подбора
+                rebuildAhead();
                 void changeCourse();
             } else if (early || late) rebuildAhead();
             render();
