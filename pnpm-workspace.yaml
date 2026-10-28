@@ -1,10 +1,9 @@
-onlyBuiltDependencies:
-    - core-js
-    - electron
-    - electron-winstaller
-    - register-scheme
+# Каким пакетам можно запускать скрипты установки (pnpm 11+). Electron качает себя сам шагом postinstall проекта.
 # Скрипт koffi только проверяет готовую сборку, она приходит пакетом @koromix/koffi-win32-x64
-ignoredBuiltDependencies:
-    - koffi
+allowBuilds:
+    core-js: true
+    electron-winstaller: true
+    register-scheme: true
+    koffi: false
 overrides:
     electron-updater>js-yaml: 4.3.2

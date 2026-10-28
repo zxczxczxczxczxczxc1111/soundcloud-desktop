@@ -270,12 +270,12 @@ flowchart LR
 Нужны Windows x64 и Node.js 24.
 
 ```powershell
-npx pnpm@10.34.5 install --frozen-lockfile
-npx pnpm@10.34.5 typecheck
-npx pnpm@10.34.5 lint
-npx pnpm@10.34.5 test
-npx pnpm@10.34.5 test:electron
-npx pnpm@10.34.5 build-win       # установщик
+npx pnpm@12.15.0 install --frozen-lockfile
+npx pnpm@12.15.0 typecheck
+npx pnpm@12.15.0 lint
+npx pnpm@12.15.0 test
+npx pnpm@12.15.0 test:electron
+npx pnpm@12.15.0 build-win       # установщик
 ```
 
 Готовые файлы окажутся в папке `build`.

@@ -179,7 +179,9 @@ it('открывается сразу на английском, если сай
 });
 
 it('строки карточки: метка встаёт под курсор, ввод сохраняется одной отправкой, «Как было» возвращает шаблон', async () => {
-    const { send } = await openSettings({ discordLine1: '{track} · {genre}', discordHiddenArtists: 'Art' });
+    const { send } = await openSettings({ discordRichPresence: true, discordLine1: '{track} · {genre}', discordHiddenArtists: 'Art' });
+    // Поля строк видны только в открытом разделе при включённой карточке: скрытое поле фокус не получает (jsdom 30.1.2)
+    document.querySelector<HTMLButtonElement>('.nav-list button[data-target="discord"]')!.click();
     const line1 = document.getElementById('discordLine1') as HTMLInputElement;
     const line2 = document.getElementById('discordLine2') as HTMLInputElement;
     const artists = document.getElementById('discordHiddenArtists') as HTMLTextAreaElement;
